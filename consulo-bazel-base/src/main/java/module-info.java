@@ -17,13 +17,14 @@
 import org.jspecify.annotations.NullMarked;
 
 /**
- * Port of upstream {@code intellij.bazel.languages}: Starlark, .bazelrc, Bazel query and .bazelversion syntax.
+ * Upstream Bazel plugin core modules compiled as one module (they share packages), see CONSULO.md:
+ * {@code intellij.bazel.languages}.
  *
  * @author VISTALL
  * @since 2026-10-24
  */
 @NullMarked
-module consulo.bazel.languages {
+module consulo.bazel.base {
     requires transitive consulo.language.api;
     requires consulo.language.impl;
     requires consulo.language.editor.api;

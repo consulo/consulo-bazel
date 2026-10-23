@@ -22,5 +22,5 @@ import org.jspecify.annotations.NullMarked;
  */
 @NullMarked
 module consulo.bazel {
-    requires consulo.bazel.languages;
+    requires consulo.bazel.base;
 }

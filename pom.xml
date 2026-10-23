@@ -46,7 +46,7 @@
     <modules>
         <module>protobuf</module>
         <module>consulo-aspect-sdk</module>
-        <module>intellij.bazel.languages</module>
+        <module>consulo-bazel-base</module>
         <module>consulo-plugin</module>
     </modules>
 </project>

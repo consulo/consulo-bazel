@@ -36,35 +36,32 @@ git merge-base HEAD upstream/main
 ### Paths and names
 
 - Keep the directory, the package (`org.jetbrains.bazel...`) and the class name exactly as upstream.
-- Do not move sources into `src/main/java`. Point Maven at the existing folders instead:
-  ```xml
-  <build>
-      <sourceDirectory>src</sourceDirectory>
-      <resources>
-          <resource>
-              <directory>resources</directory>
-          </resource>
-      </resources>
-  </build>
-  ```
-  This works with the Consulo `arch.bind.java` parent and `maven-consulo-plugin` (verified on
-  `intellij.bazel.languages`).
-- `pom.xml` and `module-info.java` are added next to upstream's `BUILD.bazel` / `.iml`. Upstream build
-  files stay untouched, so they never conflict.
-- Consulo-only code (new classes with no upstream counterpart) goes in `consulo.bazel.*` packages, so it is
-  clear what is ours.
-- The Consulo plugin descriptor lives in the Consulo-only module `consulo-plugin/` (standard Maven layout).
+- Do not move sources into `src/main/java`. Upstream source folders are compiled where they are.
+- **Upstream modules share packages** (25 split packages, e.g. `org.jetbrains.bazel.config` lives in commons,
+  backend and core). IntelliJ allows that, JPMS does not. Therefore the upstream core modules are compiled
+  together as **one** Java module, `consulo.bazel.base`, by the Consulo-only Maven module `consulo-bazel-base/`:
+  - its `pom.xml` adds each ported upstream `src/` folder with `build-helper-maven-plugin` (`add-source`);
+  - its `src/main/java` holds `module-info.java` and all Consulo-only classes (`consulo.bazel.*` packages);
+  - its `src/main/resources` holds the Consulo-only resources (`LOCALIZE-LIB`, `ICON-LIB`).
+  Upstream resource folders are not used.
+- Upstream directories contain only upstream files (converted to Java). No `pom.xml` or `module-info.java` is
+  added there; upstream build files (`BUILD.bazel`, `.iml`) stay untouched.
+- Exception: upstream's generated protobuf code (`protobuf/src/main/gen`) is its own Maven module
+  (`protobuf/pom.xml`, `protobuf/src/main/gen/module-info.java`).
+- Language integrations (`java/`, `golang/`, `python/`, `clion/`) go to the consumer plugins. They also share
+  packages with core (e.g. `org.jetbrains.bazel.config`); this needs a decision when the first one is ported.
+- The Consulo plugin descriptor lives in the Consulo-only module `consulo-plugin/`.
   Upstream's `intellij.bazel.plugin/resources/META-INF/plugin.xml` is left untouched.
 - Upstream `<extensions>` XML (for example `intellij.bazel.languages.xml`) is not used. Consulo registers
   extensions with `@ExtensionImpl` on the class, and file types through a Consulo-only `FileTypeFactory`.
 
 ### Strings, icons, lexers
 
-- `*Bundle.properties` becomes a YAML file in `resources/LOCALIZE-LIB/en_US/consulo.bazel.<module>.<Name>Localize.yaml`
+- `*Bundle.properties` becomes a YAML file in `consulo-bazel-base/src/main/resources/LOCALIZE-LIB/en_US/consulo.bazel.<module>.<Name>Localize.yaml`
   (generated class `consulo.bazel.<module>.localize.<Name>Localize`). The texts are copied verbatim; only the
   key style stays as upstream. `XxxBundle.message("a.b.c")` calls become `XxxLocalize.aBC()`.
   The upstream `XxxBundle.kt` and `.properties` files are deleted.
-- Icons go to `resources/ICON-LIB/{light,dark}/consulo.bazel.<module>.<Name>IconGroup/` (generated class
+- Icons go to `consulo-bazel-base/src/main/resources/ICON-LIB/{light,dark}/consulo.bazel.<module>.<Name>IconGroup/` (generated class
   `consulo.bazel.<module>.icon.<Name>IconGroup`). The upstream `XxxIcons.kt` object is kept as a Java class
   that delegates to the generated icon group.
 - JFlex lexers are generated at build time from upstream's `.flex` files (`generate-lexers`). An empty
@@ -183,18 +180,19 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 
 | Upstream module | Consulo plugin / module | Status |
 |---|---|---|
-| `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.languages` | converted, builds |
-| `intellij.bazel.projectview` | `consulo.bazel.projectview` | not started |
-| `intellij.bazel.commons` | `consulo.bazel.commons` | not started |
-| `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.backend` | not started |
-| `intellij.bazel.core` | `consulo.bazel.core` | not started |
+| `protobuf` (generated) | `consulo.bazel.protobuf` | builds (BES v1 gRPC package excluded) |
+| aspect SDK protos (JetBrains/intellij-aspect) | `consulo.bazel.aspect.sdk` (`consulo-aspect-sdk/`) | builds |
+| `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.base` | converted, builds |
+| `intellij.bazel.commons` | `consulo.bazel.base` | not started |
+| `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | not started |
+| `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | not started |
+| `intellij.bazel.core` | `consulo.bazel.base` | not started |
 | `java/*`, `kotlin/*` | `bazel` module in consulo-java / consulo-kotlin | not started |
 | `golang/*` | `bazel` module in consulo-google-go | not started |
 | `python/*` | `bazel` module in consulo-python | not started |
 | `clion/*` | `bazel` module in incubating-consulo-cpp | not started |
 
-Suggested order: `languages` -> `projectview` -> `commons` -> `backend` -> `core` -> languages.
-`languages` and `projectview` have no coroutines and no sync dependencies, so they are the safest start.
+Order: `languages` -> `commons` -> `projectview` -> `backend` -> `core` -> language integrations.
 
 ## Replaced files
 
