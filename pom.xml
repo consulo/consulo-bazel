@@ -44,6 +44,8 @@
 
     <!-- See CONSULO.md: ported modules keep the upstream directory layout -->
     <modules>
+        <module>protobuf</module>
+        <module>consulo-aspect-sdk</module>
         <module>intellij.bazel.languages</module>
         <module>consulo-plugin</module>
     </modules>
