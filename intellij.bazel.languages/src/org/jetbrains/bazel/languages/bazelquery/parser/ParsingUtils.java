@@ -1,42 +1,55 @@
-package org.jetbrains.bazel.languages.bazelquery.parser
+package org.jetbrains.bazel.languages.bazelquery.parser;
 
-import com.intellij.lang.PsiBuilder
-import com.intellij.psi.tree.IElementType
-import com.intellij.psi.tree.TokenSet
+import consulo.language.ast.IElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.parser.PsiBuilder;
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.localize.LocalizeValue;
+import org.jspecify.annotations.Nullable;
 
-internal class ParsingUtils(private val builder: PsiBuilder) {
-  fun atToken(tokenType: IElementType?): Boolean = builder.tokenType === tokenType
+class ParsingUtils {
+    private final PsiBuilder myBuilder;
 
-  fun atAnyToken(tokenTypes: TokenSet): Boolean = tokenTypes.contains(builder.tokenType)
-
-  fun matchToken(tokenType: IElementType): Boolean {
-    if (atToken(tokenType)) {
-      builder.advanceLexer()
-      return true
+    ParsingUtils(PsiBuilder builder) {
+        myBuilder = builder;
     }
-    return false
-  }
 
-  fun expectToken(tokenType: IElementType): Boolean {
-    if (atToken(tokenType)) {
-      builder.advanceLexer()
-      return true
+    public boolean atToken(@Nullable IElementType tokenType) {
+        return myBuilder.getTokenType() == tokenType;
     }
-    advanceError("<$tokenType> expected")
-    return false
-  }
 
-  fun matchAnyToken(tokens: TokenSet): Boolean {
-    if (atAnyToken(tokens)) {
-      builder.advanceLexer()
-      return true
+    public boolean atAnyToken(TokenSet tokenTypes) {
+        return tokenTypes.contains(myBuilder.getTokenType());
     }
-    return false
-  }
 
-  fun advanceError(message: String) {
-    val err = builder.mark()
-    builder.advanceLexer()
-    err.error(message)
-  }
+    public boolean matchToken(IElementType tokenType) {
+        if (atToken(tokenType)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        return false;
+    }
+
+    public boolean expectToken(IElementType tokenType) {
+        if (atToken(tokenType)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingToken(tokenType));
+        return false;
+    }
+
+    public boolean matchAnyToken(TokenSet tokens) {
+        if (atAnyToken(tokens)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        return false;
+    }
+
+    public void advanceError(LocalizeValue message) {
+        PsiBuilder.Marker err = myBuilder.mark();
+        myBuilder.advanceLexer();
+        err.error(message);
+    }
 }

@@ -1,51 +1,77 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.openapi.components.serviceOrNull
-import com.intellij.psi.PsiReference
-import com.intellij.psi.search.LocalSearchScope
-import com.intellij.psi.search.SearchScope
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.util.PlatformIcons
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.starlarkProjectScope
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkCallable
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement
-import org.jetbrains.bazel.languages.starlark.references.StarlarkLocalVariableElement
-import javax.swing.Icon
+import java.util.Objects;
+import consulo.component.util.Iconable;
+import consulo.content.scope.SearchScope;
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.scope.LocalSearchScope;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.starlark.StarlarkSearchScope;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkCallable;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement;
+import org.jetbrains.bazel.languages.starlark.references.StarlarkLocalVariableElement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkTargetExpression(node: ASTNode) :
-  StarlarkNamedElement(node),
-  StarlarkLocalVariableElement,
-  StarlarkQualifiableExpression {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitTargetExpression(this)
-
-  override fun getReference(): PsiReference? = serviceOrNull<StarlarkReferenceSupport>()?.getReference(this)
-
-  override fun getIcon(flags: Int): Icon? = PlatformIcons.VARIABLE_ICON
-
-  override fun getUseScope(): SearchScope {
-    if (isTopLevel() && !isFilePrivate()) return project.starlarkProjectScope()
-    val parent = PsiTreeUtil
-      .findFirstParent(this) { it is StarlarkCompExpression || it is StarlarkCallable }
-       ?: return super.getUseScope()
-    return LocalSearchScope(parent)
-  }
-
-  fun isTopLevel(): Boolean {
-    val parent = parent
-    val nextParent = parent.parent
-    val assignmentAncestor = when (parent) {
-      is StarlarkAssignmentStatement -> parent
-      is StarlarkTupleExpression if nextParent is StarlarkAssignmentStatement -> nextParent
-      else -> return false
+public class StarlarkTargetExpression extends StarlarkNamedElement
+    implements StarlarkLocalVariableElement, StarlarkQualifiableExpression, Iconable {
+    public StarlarkTargetExpression(ASTNode node) {
+        super(node);
     }
-    return assignmentAncestor.isTopLevel()
-  }
 
-  private fun isFilePrivate() = name?.startsWith("_") == true
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitTargetExpression(this);
+    }
+
+    @Override
+    public @Nullable PsiReference getReference() {
+        StarlarkReferenceSupport support = StarlarkReferenceSupport.getInstance();
+        return support == null ? null : support.getReference(this);
+    }
+
+    @Override
+    public @Nullable Image getIcon(int flags) {
+        return PlatformIconGroup.nodesVariable();
+    }
+
+    @Override
+    public SearchScope getUseScope() {
+        if (isTopLevel() && !isFilePrivate()) {
+            return StarlarkSearchScope.starlarkProjectScope(getProject());
+        }
+        PsiElement parent = PsiTreeUtil
+            .findFirstParent(this, it -> it instanceof StarlarkCompExpression || it instanceof StarlarkCallable);
+        if (parent == null) {
+            return super.getUseScope();
+        }
+        return new LocalSearchScope(parent);
+    }
+
+    public boolean isTopLevel() {
+        PsiElement parent = getParent();
+        PsiElement nextParent = Objects.requireNonNull(parent).getParent();
+        StarlarkAssignmentStatement assignmentAncestor;
+        if (parent instanceof StarlarkAssignmentStatement statement) {
+            assignmentAncestor = statement;
+        }
+        else if (parent instanceof StarlarkTupleExpression && nextParent instanceof StarlarkAssignmentStatement statement) {
+            assignmentAncestor = statement;
+        }
+        else {
+            return false;
+        }
+        return assignmentAncestor.isTopLevel();
+    }
+
+    private boolean isFilePrivate() {
+        String name = getName();
+        return name != null && name.startsWith("_");
+    }
 }

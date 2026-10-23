@@ -1,85 +1,87 @@
-package org.jetbrains.bazel.languages.bazelquery.elements
+package org.jetbrains.bazel.languages.bazelquery.elements;
 
-import com.intellij.psi.TokenType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes.COMMENT
+import consulo.language.ast.TokenSet;
+import consulo.language.ast.TokenType;
 
-@ApiStatus.Internal
-object BazelQueryTokenSets {
-  val WHITE_SPACES = TokenSet.create(TokenType.WHITE_SPACE)
+import static org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes.COMMENT;
 
-  val COMMENTS = TokenSet.create(COMMENT)
+public final class BazelQueryTokenSets {
+    private BazelQueryTokenSets() {
+    }
 
-  val WORDS =
-    TokenSet.create(
-      BazelQueryTokenTypes.UNQUOTED_WORD,
-      BazelQueryTokenTypes.SQ_WORD,
-      BazelQueryTokenTypes.DQ_WORD,
-      BazelQueryTokenTypes.SQ_UNFINISHED,
-      BazelQueryTokenTypes.DQ_UNFINISHED,
-      BazelQueryTokenTypes.SQ_EMPTY,
-      BazelQueryTokenTypes.DQ_EMPTY,
-      BazelQueryTokenTypes.ERR_WORD,
-    )
+    public static final TokenSet WHITE_SPACES = TokenSet.create(TokenType.WHITE_SPACE);
 
-  val PATTERNS =
-    TokenSet.create(
-      BazelQueryTokenTypes.UNQUOTED_WORD,
-      BazelQueryTokenTypes.SQ_PATTERN,
-      BazelQueryTokenTypes.DQ_PATTERN,
-    )
+    public static final TokenSet COMMENTS = TokenSet.create(COMMENT);
 
-  val FLAGS =
-    TokenSet.create(
-      BazelQueryTokenTypes.FLAG,
-      BazelQueryTokenTypes.FLAG_NO_VAL,
-      BazelQueryTokenTypes.UNFINISHED_FLAG,
-    )
+    public static final TokenSet WORDS =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNQUOTED_WORD,
+            BazelQueryTokenTypes.SQ_WORD,
+            BazelQueryTokenTypes.DQ_WORD,
+            BazelQueryTokenTypes.SQ_UNFINISHED,
+            BazelQueryTokenTypes.DQ_UNFINISHED,
+            BazelQueryTokenTypes.SQ_EMPTY,
+            BazelQueryTokenTypes.DQ_EMPTY,
+            BazelQueryTokenTypes.ERR_WORD
+        );
 
-  val FLAG_VALS =
-    TokenSet.create(
-      BazelQueryTokenTypes.UNQUOTED_VAL,
-      BazelQueryTokenTypes.SQ_VAL,
-      BazelQueryTokenTypes.DQ_VAL,
-      BazelQueryTokenTypes.UNFINISHED_VAL,
-    )
+    public static final TokenSet PATTERNS =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNQUOTED_WORD,
+            BazelQueryTokenTypes.SQ_PATTERN,
+            BazelQueryTokenTypes.DQ_PATTERN
+        );
 
-  val OPERATIONS =
-    TokenSet.create(
-      BazelQueryTokenTypes.UNION,
-      BazelQueryTokenTypes.EXCEPT,
-      BazelQueryTokenTypes.INTERSECT,
-      BazelQueryTokenTypes.LET,
-      BazelQueryTokenTypes.SET,
-      BazelQueryTokenTypes.IN,
-    )
+    public static final TokenSet FLAGS =
+        TokenSet.create(
+            BazelQueryTokenTypes.FLAG,
+            BazelQueryTokenTypes.FLAG_NO_VAL,
+            BazelQueryTokenTypes.UNFINISHED_FLAG
+        );
 
-  val INFIX_OPERATORS =
-    TokenSet.create(
-      BazelQueryTokenTypes.UNION,
-      BazelQueryTokenTypes.EXCEPT,
-      BazelQueryTokenTypes.INTERSECT,
-    )
+    public static final TokenSet FLAG_VALS =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNQUOTED_VAL,
+            BazelQueryTokenTypes.SQ_VAL,
+            BazelQueryTokenTypes.DQ_VAL,
+            BazelQueryTokenTypes.UNFINISHED_VAL
+        );
 
-  val COMMANDS =
-    TokenSet.create(
-      BazelQueryTokenTypes.ALLPATHS,
-      BazelQueryTokenTypes.ATTR,
-      BazelQueryTokenTypes.BUILDFILES,
-      BazelQueryTokenTypes.RBUILDFILES,
-      BazelQueryTokenTypes.DEPS,
-      BazelQueryTokenTypes.FILTER,
-      BazelQueryTokenTypes.KIND,
-      BazelQueryTokenTypes.LABELS,
-      BazelQueryTokenTypes.LOADFILES,
-      BazelQueryTokenTypes.RDEPS,
-      BazelQueryTokenTypes.ALLRDEPS,
-      BazelQueryTokenTypes.SAME_PKG_DIRECT_RDEPS,
-      BazelQueryTokenTypes.SIBLINGS,
-      BazelQueryTokenTypes.SOME,
-      BazelQueryTokenTypes.SOMEPATH,
-      BazelQueryTokenTypes.TESTS,
-      BazelQueryTokenTypes.VISIBLE,
-    )
+    public static final TokenSet OPERATIONS =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNION,
+            BazelQueryTokenTypes.EXCEPT,
+            BazelQueryTokenTypes.INTERSECT,
+            BazelQueryTokenTypes.LET,
+            BazelQueryTokenTypes.SET,
+            BazelQueryTokenTypes.IN
+        );
+
+    public static final TokenSet INFIX_OPERATORS =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNION,
+            BazelQueryTokenTypes.EXCEPT,
+            BazelQueryTokenTypes.INTERSECT
+        );
+
+    public static final TokenSet COMMANDS =
+        TokenSet.create(
+            BazelQueryTokenTypes.ALLPATHS,
+            BazelQueryTokenTypes.ATTR,
+            BazelQueryTokenTypes.BUILDFILES,
+            BazelQueryTokenTypes.RBUILDFILES,
+            BazelQueryTokenTypes.DEPS,
+            BazelQueryTokenTypes.FILTER,
+            BazelQueryTokenTypes.KIND,
+            BazelQueryTokenTypes.LABELS,
+            BazelQueryTokenTypes.LOADFILES,
+            BazelQueryTokenTypes.RDEPS,
+            BazelQueryTokenTypes.ALLRDEPS,
+            BazelQueryTokenTypes.SAME_PKG_DIRECT_RDEPS,
+            BazelQueryTokenTypes.SIBLINGS,
+            BazelQueryTokenTypes.SOME,
+            BazelQueryTokenTypes.SOMEPATH,
+            BazelQueryTokenTypes.TESTS,
+            BazelQueryTokenTypes.VISIBLE
+        );
 }

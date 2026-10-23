@@ -1,10 +1,15 @@
-package org.jetbrains.bazel.languages.starlark.elements
+package org.jetbrains.bazel.languages.starlark.elements;
 
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkLanguage
+import consulo.language.ast.IElementType;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
 
-@ApiStatus.Internal
-class StarlarkTokenType(debugName: String) : IElementType(debugName, StarlarkLanguage) {
-  override fun toString(): String = "Starlark:" + super.toString()
+public class StarlarkTokenType extends IElementType {
+    public StarlarkTokenType(String debugName) {
+        super(debugName, StarlarkLanguage.INSTANCE);
+    }
+
+    @Override
+    public String toString() {
+        return "Starlark:" + super.toString();
+    }
 }

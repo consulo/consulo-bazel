@@ -1,22 +1,39 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.lang.ASTNode
-import com.intellij.openapi.components.serviceOrNull
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReference
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelrcImport(node: ASTNode) : BazelrcBaseElement(node) {
-  override fun acceptVisitor(visitor: BazelrcElementVisitor) = visitor.visitImport(this)
+public class BazelrcImport extends BazelrcBaseElement {
+    public BazelrcImport(ASTNode node) {
+        super(node);
+    }
 
-  override fun getReference(): PsiReference? = serviceOrNull<BazelrcReferenceSupport>()?.getReference(this)
+    @Override
+    protected void acceptVisitor(BazelrcElementVisitor visitor) {
+        visitor.visitImport(this);
+    }
 
-  override fun getReferences(): Array<out PsiReference?> =
-    serviceOrNull<BazelrcReferenceSupport>()?.getReferences(this) ?: PsiReference.EMPTY_ARRAY
+    @Override
+    public @Nullable PsiReference getReference() {
+        BazelrcReferenceSupport support = BazelrcReferenceSupport.getInstance();
+        return support == null ? null : support.getReference(this);
+    }
 
-  fun getImportPath(): PsiElement? = findChildByType(BazelrcTokenTypes.VALUE)
+    @Override
+    public PsiReference[] getReferences() {
+        BazelrcReferenceSupport support = BazelrcReferenceSupport.getInstance();
+        return support == null ? PsiReference.EMPTY_ARRAY : support.getReferences(this);
+    }
 
-  fun isOptional(): Boolean = findChildByType<PsiElement>(BazelrcTokenTypes.IMPORT)?.text?.startsWith("try-") == true
+    public @Nullable PsiElement getImportPath() {
+        return findChildByType(BazelrcTokenTypes.VALUE);
+    }
+
+    public boolean isOptional() {
+        PsiElement importElement = findChildByType(BazelrcTokenTypes.IMPORT);
+        return importElement != null && importElement.getText().startsWith("try-");
+    }
 }

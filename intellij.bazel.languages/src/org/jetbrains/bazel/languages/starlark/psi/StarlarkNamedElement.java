@@ -1,29 +1,48 @@
-package org.jetbrains.bazel.languages.starlark.psi
+package org.jetbrains.bazel.languages.starlark.psi;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiNameIdentifierOwner
-import com.intellij.psi.util.startOffset
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.rename.StarlarkElementGenerator
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiNameIdentifierOwner;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.rename.StarlarkElementGenerator;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-abstract class StarlarkNamedElement(node: ASTNode) :
-  StarlarkBaseElement(node),
-  PsiNameIdentifierOwner {
-  override fun getName(): String? = getNameIdentifier()?.text
+public abstract class StarlarkNamedElement extends StarlarkBaseElement implements PsiNameIdentifierOwner {
+    public StarlarkNamedElement(ASTNode node) {
+        super(node);
+    }
 
-  override fun setName(name: String): PsiElement {
-    val oldNode = getNameIdentifier()?.node ?: return this
-    val newNode = StarlarkElementGenerator(project).createNameIdentifier(name)
-    node.replaceChild(oldNode, newNode)
-    return this
-  }
+    @Override
+    public @Nullable String getName() {
+        PsiElement nameIdentifier = getNameIdentifier();
+        return nameIdentifier != null ? nameIdentifier.getText() : null;
+    }
 
-  override fun getNameIdentifier(): PsiElement? = findChildByType(StarlarkTokenTypes.IDENTIFIER)
+    @Override
+    public PsiElement setName(String name) {
+        PsiElement nameIdentifier = getNameIdentifier();
+        ASTNode oldNode = nameIdentifier != null ? nameIdentifier.getNode() : null;
+        if (oldNode == null) {
+            return this;
+        }
+        ASTNode newNode = new StarlarkElementGenerator(getProject()).createNameIdentifier(name);
+        getNode().replaceChild(oldNode, newNode);
+        return this;
+    }
 
-  override fun getTextOffset(): Int = getNameIdentifier()?.startOffset ?: super.getTextOffset()
+    @Override
+    public @Nullable PsiElement getNameIdentifier() {
+        return findChildByType(StarlarkTokenTypes.IDENTIFIER);
+    }
 
-  override fun toString(): String = "${super.toString()}('${getName()}')"
+    @Override
+    public int getTextOffset() {
+        PsiElement nameIdentifier = getNameIdentifier();
+        return nameIdentifier != null ? nameIdentifier.getTextRange().getStartOffset() : super.getTextOffset();
+    }
+
+    @Override
+    public String toString() {
+        return super.toString() + "('" + getName() + "')";
+    }
 }

@@ -1,22 +1,24 @@
-package org.jetbrains.bazel.languages.bazelrc.elements
+package org.jetbrains.bazel.languages.bazelrc.elements;
 
-import com.intellij.psi.TokenType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.COMMAND
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.COMMENT
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.DOUBLE_QUOTE
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.FLAG
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.SINGLE_QUOTE
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.VALUE
+import consulo.language.ast.TokenSet;
+import consulo.language.ast.TokenType;
 
-@ApiStatus.Internal
-object BazelrcTokenSets {
-  val WHITE_SPACES = TokenSet.create(TokenType.WHITE_SPACE)
+import static org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.COMMAND;
+import static org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.COMMENT;
+import static org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.DOUBLE_QUOTE;
+import static org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.FLAG;
+import static org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.SINGLE_QUOTE;
+import static org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes.VALUE;
 
-  val COMMENTS = TokenSet.create(COMMENT)
+public final class BazelrcTokenSets {
+    private BazelrcTokenSets() {
+    }
 
-  val QUOTES = TokenSet.create(DOUBLE_QUOTE, SINGLE_QUOTE)
+    public static final TokenSet WHITE_SPACES = TokenSet.create(TokenType.WHITE_SPACE);
 
-  val BIBI = TokenSet.create(COMMAND, COMMENT, FLAG, VALUE)
+    public static final TokenSet COMMENTS = TokenSet.create(COMMENT);
+
+    public static final TokenSet QUOTES = TokenSet.create(DOUBLE_QUOTE, SINGLE_QUOTE);
+
+    public static final TokenSet BIBI = TokenSet.create(COMMAND, COMMENT, FLAG, VALUE);
 }

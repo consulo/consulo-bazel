@@ -1,42 +1,69 @@
-package org.jetbrains.bazel.languages.bazelrc.parser
+package org.jetbrains.bazel.languages.bazelrc.parser;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.ParserDefinition
-import com.intellij.lang.PsiParser
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.project.Project
-import com.intellij.psi.FileViewProvider
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.tree.IFileElementType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcElementTypes
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenSets
-import org.jetbrains.bazel.languages.bazelrc.lexer.BazelrcLexer
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFile
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IFileElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.file.FileViewProvider;
+import consulo.language.lexer.Lexer;
+import consulo.language.parser.ParserDefinition;
+import consulo.language.parser.PsiParser;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.version.LanguageVersion;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcElementTypes;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenSets;
+import org.jetbrains.bazel.languages.bazelrc.lexer.BazelrcLexer;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFile;
 
-@ApiStatus.Internal
-class BazelrcParserDefinition : ParserDefinition {
-  override fun createLexer(project: Project?): Lexer = BazelrcLexer()
-
-  override fun createParser(project: Project?): PsiParser =
-    PsiParser { root, builder ->
-      Parsing(root, builder).parseFile()
+@ExtensionImpl
+public class BazelrcParserDefinition implements ParserDefinition {
+    @Override
+    public Language getLanguage() {
+        return BazelrcLanguage.INSTANCE;
     }
 
-  override fun getFileNodeType(): IFileElementType = file
+    @Override
+    public Lexer createLexer(LanguageVersion languageVersion) {
+        return new BazelrcLexer();
+    }
 
-  override fun getWhitespaceTokens(): TokenSet = BazelrcTokenSets.WHITE_SPACES
+    @Override
+    public PsiParser createParser(LanguageVersion languageVersion) {
+        return (root, builder, version) -> new Parsing(root, builder).parseFile();
+    }
 
-  override fun getCommentTokens(): TokenSet = BazelrcTokenSets.COMMENTS
+    @Override
+    public IFileElementType getFileNodeType() {
+        return FILE;
+    }
 
-  override fun getStringLiteralElements(): TokenSet = TokenSet.EMPTY
+    @Override
+    public TokenSet getWhitespaceTokens(LanguageVersion languageVersion) {
+        return BazelrcTokenSets.WHITE_SPACES;
+    }
 
-  override fun createElement(node: ASTNode): PsiElement = BazelrcElementTypes.createElement(node)
+    @Override
+    public TokenSet getCommentTokens(LanguageVersion languageVersion) {
+        return BazelrcTokenSets.COMMENTS;
+    }
 
-  override fun createFile(viewProvider: FileViewProvider): PsiFile = BazelrcFile(viewProvider)
+    @Override
+    public TokenSet getStringLiteralElements(LanguageVersion languageVersion) {
+        return TokenSet.EMPTY;
+    }
+
+    @Override
+    public PsiElement createElement(ASTNode node) {
+        return BazelrcElementTypes.createElement(node);
+    }
+
+    @Override
+    public PsiFile createFile(FileViewProvider viewProvider) {
+        return new BazelrcFile(viewProvider);
+    }
+
+    private static final IFileElementType FILE = new IFileElementType(BazelrcLanguage.INSTANCE);
 }
-
-private val file = IFileElementType(BazelrcLanguage)

@@ -1,13 +1,22 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
 
-@ApiStatus.Internal
-class StarlarkParameterList(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitParameterList(this)
+import java.util.List;
 
-  fun getParameters(): List<StarlarkParameter> = findChildrenByClass(StarlarkParameter::class.java).toList()
+public class StarlarkParameterList extends StarlarkBaseElement {
+    public StarlarkParameterList(ASTNode node) {
+        super(node);
+    }
+
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitParameterList(this);
+    }
+
+    public List<StarlarkParameter> getParameters() {
+        return List.of(findChildrenByClass(StarlarkParameter.class));
+    }
 }

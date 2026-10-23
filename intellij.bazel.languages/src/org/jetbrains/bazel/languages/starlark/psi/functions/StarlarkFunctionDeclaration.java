@@ -1,37 +1,68 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.search.SearchScope
-import com.intellij.util.PlatformIcons
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.starlarkProjectScope
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStatementList
-import javax.swing.Icon
+import consulo.component.util.Iconable;
+import consulo.content.scope.SearchScope;
+import consulo.language.ast.ASTNode;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.starlark.StarlarkSearchScope;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStatementList;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkFunctionDeclaration(node: ASTNode) :
-  StarlarkNamedElement(node),
-  StarlarkCallable {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitFunctionDeclaration(this)
+import java.util.List;
+import java.util.Objects;
 
-  override fun getIcon(flags: Int): Icon? = PlatformIcons.FUNCTION_ICON
+public class StarlarkFunctionDeclaration extends StarlarkNamedElement implements StarlarkCallable, Iconable {
+    public StarlarkFunctionDeclaration(ASTNode node) {
+        super(node);
+    }
 
-  override fun getUseScope(): SearchScope = when {
-    isTopLevel() && !isFilePrivate() -> project.starlarkProjectScope()
-    else -> super.getUseScope()
-  }
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitFunctionDeclaration(this);
+    }
 
-  fun isTopLevel(): Boolean = parent is StarlarkFile
+    @Override
+    public @Nullable Image getIcon(int flags) {
+        return PlatformIconGroup.nodesFunction();
+    }
 
-  override fun getNamedParameters(): List<StarlarkParameter> =
-    getParameters().filter { it is StarlarkMandatoryParameter || it is StarlarkOptionalParameter }
+    @Override
+    public SearchScope getUseScope() {
+        if (isTopLevel() && !isFilePrivate()) {
+            return StarlarkSearchScope.starlarkProjectScope(getProject());
+        }
+        else {
+            return super.getUseScope();
+        }
+    }
 
-  override fun getParameters(): List<StarlarkParameter> = findChildByClass(StarlarkParameterList::class.java)?.getParameters().orEmpty()
+    public boolean isTopLevel() {
+        return getParent() instanceof StarlarkFile;
+    }
 
-  fun getStatementList(): StarlarkStatementList = findChildByClass(StarlarkStatementList::class.java)!!
+    @Override
+    public List<StarlarkParameter> getNamedParameters() {
+        return getParameters().stream()
+            .filter(it -> it instanceof StarlarkMandatoryParameter || it instanceof StarlarkOptionalParameter)
+            .toList();
+    }
 
-  private fun isFilePrivate() = name?.startsWith("_") == true
+    @Override
+    public List<StarlarkParameter> getParameters() {
+        StarlarkParameterList parameterList = findChildByClass(StarlarkParameterList.class);
+        return parameterList != null ? parameterList.getParameters() : List.of();
+    }
+
+    public StarlarkStatementList getStatementList() {
+        return Objects.requireNonNull(findChildByClass(StarlarkStatementList.class));
+    }
+
+    private boolean isFilePrivate() {
+        String name = getName();
+        return name != null && name.startsWith("_");
+    }
 }

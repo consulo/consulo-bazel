@@ -1,24 +1,26 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions.arguments
+package org.jetbrains.bazel.languages.starlark.psi.expressions.arguments;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface StarlarkArgumentElement : StarlarkElement {
-  fun getValue(): PsiElement? {
-    var childNode: ASTNode? = node.lastChildNode
-    while (childNode != null) {
-      val type = childNode.elementType
-      if (StarlarkElementTypes.EXPRESSIONS.contains(type)) {
-        return childNode.psi
-      }
-      if (type == StarlarkTokenTypes.EQ) break
-      childNode = childNode.treePrev
+public interface StarlarkArgumentElement extends StarlarkElement {
+    default @Nullable PsiElement getValue() {
+        ASTNode childNode = getNode().getLastChildNode();
+        while (childNode != null) {
+            IElementType type = childNode.getElementType();
+            if (StarlarkElementTypes.EXPRESSIONS.contains(type)) {
+                return childNode.getPsi();
+            }
+            if (type == StarlarkTokenTypes.EQ) {
+                break;
+            }
+            childNode = childNode.getTreePrev();
+        }
+        return null;
     }
-    return null
-  }
 }

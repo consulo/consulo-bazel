@@ -1,11 +1,11 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.psi.PsiElement;
 
-@ApiStatus.Internal
-interface StarlarkCallable: PsiElement {
-  fun getNamedParameters(): List<StarlarkParameter>
+import java.util.List;
 
-  fun getParameters(): List<StarlarkParameter>
+public interface StarlarkCallable extends PsiElement {
+    List<StarlarkParameter> getNamedParameters();
+
+    List<StarlarkParameter> getParameters();
 }

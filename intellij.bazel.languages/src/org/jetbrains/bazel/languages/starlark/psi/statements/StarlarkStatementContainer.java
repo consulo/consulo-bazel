@@ -1,8 +1,7 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import org.jetbrains.annotations.ApiStatus
+import java.util.List;
 
-@ApiStatus.Internal
-interface StarlarkStatementContainer {
-  fun getStatementLists(): List<StarlarkStatementList>
+public interface StarlarkStatementContainer {
+    List<StarlarkStatementList> getStatementLists();
 }

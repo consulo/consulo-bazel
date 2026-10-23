@@ -1,8 +1,8 @@
-package org.jetbrains.bazel.languages.starlark
+package org.jetbrains.bazel.languages.starlark;
 
-import org.jetbrains.annotations.ApiStatus
+public final class StarlarkConstants {
+    private StarlarkConstants() {
+    }
 
-@ApiStatus.Internal
-object StarlarkConstants {
-  const val ALLOW_EMPTY_KEYWORD = "allow_empty"
+    public static final String ALLOW_EMPTY_KEYWORD = "allow_empty";
 }

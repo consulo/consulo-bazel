@@ -1,39 +1,68 @@
-package org.jetbrains.bazel.languages.starlark.indentation
+package org.jetbrains.bazel.languages.starlark.indentation;
 
-import com.intellij.openapi.editor.ex.EditorEx
-import com.intellij.openapi.editor.highlighter.HighlighterIterator
-import com.intellij.psi.tree.IElementType
+import java.util.Objects;
+import consulo.language.ast.IElementType;
+import consulo.language.codeStyle.lineIndent.SemanticEditorPosition;
+import consulo.language.codeStyle.lineIndent.SemanticEditorPositionFactory;
 
-internal class StarlarkSemanticEditorPosition(private var editor: EditorEx, offset: Int) {
-  private var iterator: HighlighterIterator = editor.highlighter.createIterator(offset)
-  private var chars: CharSequence = this.editor.document.charsSequence
+import java.util.List;
 
-  fun getPreviousPositionExcluding(elements: List<IElementType>): StarlarkSemanticEditorPosition {
-    val position: StarlarkSemanticEditorPosition = copy()
-    position.moveBeforeAnyOf(elements)
-    return position
-  }
+// consulo: LineIndentProvider gets no EditorEx, so upstream's editor highlighter iterator is replaced by the
+// platform SemanticEditorPosition (created from the editor highlighter by SemanticEditorPositionFactory)
+class StarlarkSemanticEditorPosition {
+    private final SemanticEditorPositionFactory myFactory;
+    private final SemanticEditorPosition myIterator;
+    private final CharSequence myChars;
 
-  private fun copy(): StarlarkSemanticEditorPosition = StarlarkSemanticEditorPosition(editor, startOffset())
-
-  fun startOffset(): Int = iterator.start
-
-  private fun moveBeforeAnyOf(elements: List<IElementType>) {
-    if (!iterator.atEnd()) iterator.retreat()
-    while (isAtAnyOf(elements)) {
-      iterator.retreat()
+    StarlarkSemanticEditorPosition(SemanticEditorPositionFactory factory, int offset) {
+        myFactory = factory;
+        myIterator = factory.create(offset, TokenElement::new);
+        myChars = myIterator.getChars();
     }
-  }
 
-  fun isAtAnyOf(elements: List<IElementType>): Boolean = !iterator.atEnd() && elements.any { it == getType() }
+    public StarlarkSemanticEditorPosition getPreviousPositionExcluding(List<IElementType> elements) {
+        StarlarkSemanticEditorPosition position = copy();
+        position.moveBeforeAnyOf(elements);
+        return position;
+    }
 
-  private fun getType(): IElementType = iterator.tokenType
+    private StarlarkSemanticEditorPosition copy() {
+        return new StarlarkSemanticEditorPosition(myFactory, startOffset());
+    }
 
-  override fun toString(): String =
-    if (iterator.atEnd()) {
-      "atEnd"
-    } else {
-      iterator.tokenType.toString() + "=>" +
-        chars.subSequence(iterator.start, Integer.min(iterator.start + 255, chars.length))
+    public int startOffset() {
+        return myIterator.getStartOffset();
+    }
+
+    private void moveBeforeAnyOf(List<IElementType> elements) {
+        if (!myIterator.isAtEnd()) {
+            myIterator.moveBefore();
+        }
+        while (isAtAnyOf(elements)) {
+            myIterator.moveBefore();
+        }
+    }
+
+    public boolean isAtAnyOf(List<IElementType> elements) {
+        return !myIterator.isAtEnd() && elements.stream().anyMatch(it -> it == getType());
+    }
+
+    private IElementType getType() {
+        return ((TokenElement) Objects.requireNonNull(myIterator.getCurrElement())).type();
+    }
+
+    @Override
+    public String toString() {
+        if (myIterator.isAtEnd()) {
+            return "atEnd";
+        }
+        else {
+            return getType().toString() + "=>" +
+                myChars.subSequence(myIterator.getStartOffset(), Integer.min(myIterator.getStartOffset() + 255, myChars.length()));
+        }
+    }
+
+    // consulo: maps every token to itself, so that the current token type can be read back from SemanticEditorPosition
+    private record TokenElement(IElementType type) implements SemanticEditorPosition.SyntaxElement {
     }
 }

@@ -1,10 +1,12 @@
 package org.jetbrains.bazel.languages.bazelquery.lexer;
 
-import com.intellij.lexer.FlexLexer;
-import com.intellij.psi.TokenType;
-import com.intellij.psi.tree.IElementType;
+import consulo.language.lexer.FlexLexer;
+import consulo.language.ast.TokenType;
+import consulo.language.ast.IElementType;
 import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes;
 
+// consulo: generated code returns null at the end of input
+@org.jspecify.annotations.NullUnmarked
 @SuppressWarnings("ALL")
 %%
 %class _BazelQueryLexer

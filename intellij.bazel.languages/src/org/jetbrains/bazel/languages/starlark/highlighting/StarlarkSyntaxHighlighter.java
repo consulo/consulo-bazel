@@ -1,64 +1,92 @@
-package org.jetbrains.bazel.languages.starlark.highlighting
+package org.jetbrains.bazel.languages.starlark.highlighting;
 
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.editor.colors.TextAttributesKey
-import com.intellij.openapi.fileTypes.SyntaxHighlighter
-import com.intellij.openapi.fileTypes.SyntaxHighlighterBase
-import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.lexer.StarlarkHighlightingLexer
+import consulo.annotation.component.ExtensionImpl;
+import consulo.colorScheme.TextAttributesKey;
+import consulo.language.Language;
+import consulo.language.ast.IElementType;
+import consulo.language.editor.highlight.SyntaxHighlighter;
+import consulo.language.editor.highlight.SyntaxHighlighterBase;
+import consulo.language.editor.highlight.SyntaxHighlighterFactory;
+import consulo.language.lexer.Lexer;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.lexer.StarlarkHighlightingLexer;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-object StarlarkSyntaxHighlighter : SyntaxHighlighterBase() {
-  private val keys =
-    mapOf(
-      StarlarkTokenTypes.DEF_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.LAMBDA_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.IF_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.ELIF_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.ELSE_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.FOR_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.IN_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.RETURN_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.BREAK_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.CONTINUE_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.PASS_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.LOAD_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.FROM_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      // boolean operators
-      StarlarkTokenTypes.OR_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.AND_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.NOT_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      // code organization
-      StarlarkTokenTypes.SEMICOLON to StarlarkHighlightingColors.SEMICOLON,
-      StarlarkTokenTypes.COMMA to StarlarkHighlightingColors.COMMA,
-      StarlarkTokenTypes.DOT to StarlarkHighlightingColors.DOT,
-      StarlarkTokenTypes.LPAR to StarlarkHighlightingColors.PARENTHESES,
-      StarlarkTokenTypes.RPAR to StarlarkHighlightingColors.PARENTHESES,
-      StarlarkTokenTypes.LBRACE to StarlarkHighlightingColors.BRACKETS,
-      StarlarkTokenTypes.RBRACE to StarlarkHighlightingColors.BRACKETS,
-      // literals
-      StarlarkTokenTypes.INT to StarlarkHighlightingColors.NUMBER,
-      StarlarkTokenTypes.FLOAT to StarlarkHighlightingColors.NUMBER,
-      StarlarkTokenTypes.STRING to StarlarkHighlightingColors.STRING,
-      StarlarkTokenTypes.BYTES to StarlarkHighlightingColors.STRING,
-      StarlarkTokenTypes.NONE_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.TRUE_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      StarlarkTokenTypes.FALSE_KEYWORD to StarlarkHighlightingColors.KEYWORD,
-      // random
-      StarlarkTokenTypes.IDENTIFIER to StarlarkHighlightingColors.IDENTIFIER,
-      StarlarkTokenTypes.COMMENT to StarlarkHighlightingColors.LINE_COMMENT,
-    )
+import java.util.Map;
 
-  override fun getHighlightingLexer(): Lexer = StarlarkHighlightingLexer()
+public class StarlarkSyntaxHighlighter extends SyntaxHighlighterBase {
+    public static final StarlarkSyntaxHighlighter INSTANCE = new StarlarkSyntaxHighlighter();
 
-  override fun getTokenHighlights(tokenType: IElementType): Array<out TextAttributesKey> = pack(keys[tokenType])
+    private StarlarkSyntaxHighlighter() {
+    }
+
+    private static final Map<IElementType, TextAttributesKey> KEYS =
+        Map.ofEntries(
+            Map.entry(StarlarkTokenTypes.DEF_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.LAMBDA_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.IF_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.ELIF_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.ELSE_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.FOR_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.IN_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.RETURN_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.BREAK_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.CONTINUE_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.PASS_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.LOAD_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.FROM_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            // boolean operators
+            Map.entry(StarlarkTokenTypes.OR_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.AND_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.NOT_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            // code organization
+            Map.entry(StarlarkTokenTypes.SEMICOLON, StarlarkHighlightingColors.SEMICOLON),
+            Map.entry(StarlarkTokenTypes.COMMA, StarlarkHighlightingColors.COMMA),
+            Map.entry(StarlarkTokenTypes.DOT, StarlarkHighlightingColors.DOT),
+            Map.entry(StarlarkTokenTypes.LPAR, StarlarkHighlightingColors.PARENTHESES),
+            Map.entry(StarlarkTokenTypes.RPAR, StarlarkHighlightingColors.PARENTHESES),
+            Map.entry(StarlarkTokenTypes.LBRACE, StarlarkHighlightingColors.BRACKETS),
+            Map.entry(StarlarkTokenTypes.RBRACE, StarlarkHighlightingColors.BRACKETS),
+            // literals
+            Map.entry(StarlarkTokenTypes.INT, StarlarkHighlightingColors.NUMBER),
+            Map.entry(StarlarkTokenTypes.FLOAT, StarlarkHighlightingColors.NUMBER),
+            Map.entry(StarlarkTokenTypes.STRING, StarlarkHighlightingColors.STRING),
+            Map.entry(StarlarkTokenTypes.BYTES, StarlarkHighlightingColors.STRING),
+            Map.entry(StarlarkTokenTypes.NONE_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.TRUE_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            Map.entry(StarlarkTokenTypes.FALSE_KEYWORD, StarlarkHighlightingColors.KEYWORD),
+            // random
+            Map.entry(StarlarkTokenTypes.IDENTIFIER, StarlarkHighlightingColors.IDENTIFIER),
+            Map.entry(StarlarkTokenTypes.COMMENT, StarlarkHighlightingColors.LINE_COMMENT)
+        );
+
+    @Override
+    public Lexer getHighlightingLexer() {
+        return new StarlarkHighlightingLexer();
+    }
+
+    @Override
+    public TextAttributesKey[] getTokenHighlights(IElementType tokenType) {
+        return pack(KEYS.get(tokenType));
+    }
 }
 
-internal class StarlarkSyntaxHighlighterFactory : SyntaxHighlighterFactory() {
-  override fun getSyntaxHighlighter(project: Project?, virtualFile: VirtualFile?): SyntaxHighlighter = StarlarkSyntaxHighlighter
+@ExtensionImpl
+class StarlarkSyntaxHighlighterFactory extends SyntaxHighlighterFactory {
+    // consulo: extensions need a public constructor
+    public StarlarkSyntaxHighlighterFactory() {
+    }
+
+    @Override
+    public SyntaxHighlighter getSyntaxHighlighter(@Nullable Project project, @Nullable VirtualFile virtualFile) {
+        return StarlarkSyntaxHighlighter.INSTANCE;
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 }

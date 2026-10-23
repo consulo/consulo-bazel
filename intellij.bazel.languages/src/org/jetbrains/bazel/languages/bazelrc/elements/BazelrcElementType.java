@@ -1,8 +1,10 @@
-package org.jetbrains.bazel.languages.bazelrc.elements
+package org.jetbrains.bazel.languages.bazelrc.elements;
 
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage
+import consulo.language.ast.IElementType;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
 
-@ApiStatus.Internal
-class BazelrcElementType(debugName: String) : IElementType(debugName, BazelrcLanguage)
+public class BazelrcElementType extends IElementType {
+    public BazelrcElementType(String debugName) {
+        super(debugName, BazelrcLanguage.INSTANCE);
+    }
+}

@@ -1,7 +1,9 @@
-package org.jetbrains.bazel.languages.starlark.lexer
+package org.jetbrains.bazel.languages.starlark.lexer;
 
-import com.intellij.lexer.FlexAdapter
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.lexer.FlexAdapter;
 
-@ApiStatus.Internal
-class StarlarkHighlightingLexer : FlexAdapter(_StarlarkLexer(null))
+public class StarlarkHighlightingLexer extends FlexAdapter {
+    public StarlarkHighlightingLexer() {
+        super(new _StarlarkLexer(null));
+    }
+}

@@ -1,66 +1,91 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiWhiteSpace
-import com.intellij.psi.tree.TokenSet
-import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkUtils
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.rename.StarlarkElementGenerator
+import java.util.Objects;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.TokenSet;
+import consulo.language.psi.PsiWhiteSpace;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.languages.starlark.StarlarkUtils;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.rename.StarlarkElementGenerator;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkListLiteralExpression(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitListLiteralExpression(this)
+import java.util.List;
 
-  fun getElementAt(index: Int): StarlarkElement? = getElements().getOrNull(index)
+public class StarlarkListLiteralExpression extends StarlarkBaseElement {
+    public StarlarkListLiteralExpression(ASTNode node) {
+        super(node);
+    }
 
-  fun getElements(): List<StarlarkElement> = PsiTreeUtil.getChildrenOfTypeAsList(this, StarlarkElement::class.java)
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitListLiteralExpression(this);
+    }
 
-  fun appendString(string: String) = appendNode(StarlarkElementGenerator(this.project).createStringLiteralExpression(string))
+    public @Nullable StarlarkElement getElementAt(int index) {
+        List<StarlarkElement> elements = getElements();
+        return index >= 0 && index < elements.size() ? elements.get(index) : null;
+    }
 
-  /**
-   * modified method from `com.jetbrains.python.psi.impl.PyElementGeneratorImpl.insertItemIntoList`
-   */
-  fun insertString(toInsert: String) {
-    val add = StarlarkElementGenerator(this.project).createStringLiteralExpression(toInsert)
-    val exprNode = this.node
-    val closingTokens = exprNode.getChildren(TokenSet.create(StarlarkTokenTypes.LBRACKET, StarlarkTokenTypes.LPAR))
-    if (closingTokens.isEmpty()) {
-      // we tried our best. let's just insert it at the end
-      exprNode.addChild(add)
-    } else {
-      val next = StarlarkUtils.getNextNonWhitespaceSibling(closingTokens.last())
-      if (next != null) {
-        val whitespaceToAdd = (next.treePrev as? PsiWhiteSpace)?.text
-        exprNode.addChild(add, next)
-        val comma = createComma()
-        exprNode.addChild(comma, next)
-        whitespaceToAdd?.let {
-          exprNode.addLeaf(StarlarkTokenTypes.SPACE, whitespaceToAdd, next)
+    public List<StarlarkElement> getElements() {
+        return PsiTreeUtil.getChildrenOfTypeAsList(this, StarlarkElement.class);
+    }
+
+    public void appendString(String string) {
+        appendNode(new StarlarkElementGenerator(this.getProject()).createStringLiteralExpression(string));
+    }
+
+    /**
+     * modified method from `com.jetbrains.python.psi.impl.PyElementGeneratorImpl.insertItemIntoList`
+     */
+    public void insertString(String toInsert) {
+        ASTNode add = new StarlarkElementGenerator(this.getProject()).createStringLiteralExpression(toInsert);
+        ASTNode exprNode = this.getNode();
+        ASTNode[] closingTokens = exprNode.getChildren(TokenSet.create(StarlarkTokenTypes.LBRACKET, StarlarkTokenTypes.LPAR));
+        if (closingTokens.length == 0) {
+            // we tried our best. let's just insert it at the end
+            exprNode.addChild(add);
         }
-      } else {
-        exprNode.addChild(add)
-      }
+        else {
+            ASTNode next = StarlarkUtils.getNextNonWhitespaceSibling(closingTokens[closingTokens.length - 1]);
+            if (next != null) {
+                String whitespaceToAdd = next.getTreePrev() instanceof PsiWhiteSpace whiteSpace ? whiteSpace.getText() : null;
+                exprNode.addChild(add, next);
+                ASTNode comma = createComma();
+                exprNode.addChild(comma, next);
+                if (whitespaceToAdd != null) {
+                    exprNode.addLeaf(StarlarkTokenTypes.SPACE, whitespaceToAdd, next);
+                }
+            }
+            else {
+                exprNode.addChild(add);
+            }
+        }
     }
-  }
 
-  private fun appendNode(node: ASTNode) {
-    val myNode = this.node
-    while (isNotActualListElementOrOpeningBracket(myNode.lastChildNode)) myNode.removeChild(myNode.lastChildNode)
-    if (myNode.lastChildNode.elementType != StarlarkTokenTypes.LBRACKET) {
-      myNode.addChild(StarlarkElementGenerator(this.project).createTokenType(","))
+    private void appendNode(ASTNode node) {
+        ASTNode myNode = this.getNode();
+        while (isNotActualListElementOrOpeningBracket(Objects.requireNonNull(myNode.getLastChildNode()))) {
+            myNode.removeChild(Objects.requireNonNull(myNode.getLastChildNode()));
+        }
+        if (Objects.requireNonNull(myNode.getLastChildNode()).getElementType() != StarlarkTokenTypes.LBRACKET) {
+            myNode.addChild(new StarlarkElementGenerator(this.getProject()).createTokenType(","));
+        }
+
+        myNode.addChild(node);
+        myNode.addChild(new StarlarkElementGenerator(this.getProject()).createTokenType("]"));
     }
 
-    myNode.addChild(node)
-    myNode.addChild(StarlarkElementGenerator(this.project).createTokenType("]"))
-  }
+    private ASTNode createComma() {
+        return new StarlarkElementGenerator(this.getProject()).createTokenType(",");
+    }
 
-  private fun createComma(): ASTNode = StarlarkElementGenerator(this.project).createTokenType(",")
-
-  private fun isNotActualListElementOrOpeningBracket(node: ASTNode): Boolean =
-    node is PsiWhiteSpace || node.elementType == StarlarkTokenTypes.COMMA || node.elementType == StarlarkTokenTypes.RBRACKET
+    private boolean isNotActualListElementOrOpeningBracket(ASTNode node) {
+        return node instanceof PsiWhiteSpace
+            || node.getElementType() == StarlarkTokenTypes.COMMA
+            || node.getElementType() == StarlarkTokenTypes.RBRACKET;
+    }
 }

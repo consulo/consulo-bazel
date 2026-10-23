@@ -1,408 +1,474 @@
-package org.jetbrains.bazel.languages.bazelquery.parser
+package org.jetbrains.bazel.languages.bazelquery.parser;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.PsiBuilder
-import com.intellij.psi.tree.IElementType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.bazel.languages.BazelLanguagesBundle
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementTypes
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.parser.PsiBuilder;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementTypes;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-internal open class ParsingNoFlags(private val root: IElementType, val builder: PsiBuilder) : PsiBuilder by builder {
-  private val utils = ParsingUtils(builder)
+// consulo: Kotlin `PsiBuilder by builder` delegation is replaced by explicit calls on myBuilder
+class ParsingNoFlags {
+    private final IElementType myRoot;
+    private final PsiBuilder myBuilder;
 
-  companion object {
-    private val wordInSqQuery =
-      TokenSet.create(
-        BazelQueryTokenTypes.UNQUOTED_WORD,
-        BazelQueryTokenTypes.DQ_WORD,
-        BazelQueryTokenTypes.DQ_UNFINISHED,
-        BazelQueryTokenTypes.DQ_EMPTY,
-        BazelQueryTokenTypes.ERR_WORD,
-      )
+    private final ParsingUtils myUtils;
 
-    private val wordInDqQuery =
-      TokenSet.create(
-        BazelQueryTokenTypes.UNQUOTED_WORD,
-        BazelQueryTokenTypes.SQ_WORD,
-        BazelQueryTokenTypes.SQ_UNFINISHED,
-        BazelQueryTokenTypes.SQ_EMPTY,
-        BazelQueryTokenTypes.ERR_WORD,
-      )
-
-    private val wordInUnqQuery =
-      TokenSet.create(
-        BazelQueryTokenTypes.UNQUOTED_WORD,
-        BazelQueryTokenTypes.SQ_WORD,
-        BazelQueryTokenTypes.SQ_UNFINISHED,
-        BazelQueryTokenTypes.SQ_EMPTY,
-        BazelQueryTokenTypes.DQ_WORD,
-        BazelQueryTokenTypes.DQ_UNFINISHED,
-        BazelQueryTokenTypes.DQ_EMPTY,
-        BazelQueryTokenTypes.ERR_WORD,
-      )
-
-    private val patternInSqQuery =
-      TokenSet.create(
-        *wordInSqQuery.types,
-        BazelQueryTokenTypes.DQ_PATTERN,
-      )
-
-    private val patternInDqQuery =
-      TokenSet.create(
-        *wordInDqQuery.types,
-        BazelQueryTokenTypes.SQ_PATTERN,
-      )
-
-    private val patternInUnqQuery =
-      TokenSet.create(
-        *wordInUnqQuery.types,
-        BazelQueryTokenTypes.SQ_PATTERN,
-        BazelQueryTokenTypes.DQ_PATTERN,
-      )
-  }
-
-  private fun getAvailableWordsSet(queryQuotes: IElementType): TokenSet =
-    when (queryQuotes) {
-      BazelQueryTokenTypes.WHITE_SPACE -> wordInUnqQuery
-      BazelQueryTokenTypes.SINGLE_QUOTE -> wordInSqQuery
-      BazelQueryTokenTypes.DOUBLE_QUOTE -> wordInDqQuery
-      else -> TokenSet.EMPTY
+    ParsingNoFlags(IElementType root, PsiBuilder builder) {
+        myRoot = root;
+        myBuilder = builder;
+        myUtils = new ParsingUtils(builder);
     }
 
-  private fun getAvailablePatternsSet(queryQuotes: IElementType): TokenSet =
-    when (queryQuotes) {
-      BazelQueryTokenTypes.WHITE_SPACE -> patternInUnqQuery
-      BazelQueryTokenTypes.SINGLE_QUOTE -> patternInSqQuery
-      BazelQueryTokenTypes.DOUBLE_QUOTE -> patternInDqQuery
-      else -> TokenSet.EMPTY
+    public PsiBuilder getBuilder() {
+        return myBuilder;
     }
 
-  fun parseFile(): ASTNode {
-    val prompt = builder.mark()
+    private static final TokenSet WORD_IN_SQ_QUERY =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNQUOTED_WORD,
+            BazelQueryTokenTypes.DQ_WORD,
+            BazelQueryTokenTypes.DQ_UNFINISHED,
+            BazelQueryTokenTypes.DQ_EMPTY,
+            BazelQueryTokenTypes.ERR_WORD
+        );
 
-    parseExpr(BazelQueryTokenTypes.WHITE_SPACE)
+    private static final TokenSet WORD_IN_DQ_QUERY =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNQUOTED_WORD,
+            BazelQueryTokenTypes.SQ_WORD,
+            BazelQueryTokenTypes.SQ_UNFINISHED,
+            BazelQueryTokenTypes.SQ_EMPTY,
+            BazelQueryTokenTypes.ERR_WORD
+        );
 
-    while (!eof()) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unexpected.token"))
-    }
+    private static final TokenSet WORD_IN_UNQ_QUERY =
+        TokenSet.create(
+            BazelQueryTokenTypes.UNQUOTED_WORD,
+            BazelQueryTokenTypes.SQ_WORD,
+            BazelQueryTokenTypes.SQ_UNFINISHED,
+            BazelQueryTokenTypes.SQ_EMPTY,
+            BazelQueryTokenTypes.DQ_WORD,
+            BazelQueryTokenTypes.DQ_UNFINISHED,
+            BazelQueryTokenTypes.DQ_EMPTY,
+            BazelQueryTokenTypes.ERR_WORD
+        );
 
-    prompt.done(root)
-    return treeBuilt
-  }
+    private static final TokenSet PATTERN_IN_SQ_QUERY =
+        TokenSet.orSet(
+            WORD_IN_SQ_QUERY,
+            TokenSet.create(BazelQueryTokenTypes.DQ_PATTERN)
+        );
 
-  // _____parsing queries____
+    private static final TokenSet PATTERN_IN_DQ_QUERY =
+        TokenSet.orSet(
+            WORD_IN_DQ_QUERY,
+            TokenSet.create(BazelQueryTokenTypes.SQ_PATTERN)
+        );
 
-  // expr ::= word
-  //       | let name = expr in expr
-  //       | (expr)
-  //       | expr intersect expr
-  //       | expr ^ expr
-  //       | expr union expr
-  //       | expr + expr
-  //       | expr except expr
-  //       | expr - expr
-  //       | set(word *)
-  //       | word '(' int | word | expr ... ')'
-  private fun parseExpr(queryQuotes: IElementType): IElementType {
-    var queryQuotes = queryQuotes
-    when {
-      utils.atAnyToken(getAvailableWordsSet(queryQuotes)) -> queryQuotes = parseWord(queryQuotes)
+    private static final TokenSet PATTERN_IN_UNQ_QUERY =
+        TokenSet.orSet(
+            WORD_IN_UNQ_QUERY,
+            TokenSet.create(BazelQueryTokenTypes.SQ_PATTERN, BazelQueryTokenTypes.DQ_PATTERN)
+        );
 
-      utils.atToken(BazelQueryTokenTypes.LET) -> {
-        advanceLexer()
-        if (utils.atToken(queryQuotes)) return queryQuotes
-        utils.expectToken(BazelQueryTokenTypes.UNQUOTED_WORD)
-        if (utils.atToken(queryQuotes)) return queryQuotes
-        utils.expectToken(BazelQueryTokenTypes.EQUALS)
-        if (utils.atToken(queryQuotes)) return queryQuotes
-        if (utils.atToken(BazelQueryTokenTypes.IN)) error(BazelLanguagesBundle.message("bazelquery.error.missing.variable.value"))
-        queryQuotes = parseExpr(queryQuotes)
-        utils.expectToken(BazelQueryTokenTypes.IN)
-        if (utils.atToken(queryQuotes)) return queryQuotes
-        queryQuotes = parseExpr(queryQuotes)
-      }
-
-      utils.atToken(BazelQueryTokenTypes.LEFT_PAREN) -> {
-        advanceLexer()
-        queryQuotes = parseExpr(queryQuotes)
-        if (utils.atToken(queryQuotes)) return queryQuotes
-        utils.expectToken(BazelQueryTokenTypes.RIGHT_PAREN)
-      }
-
-      utils.atToken(BazelQueryTokenTypes.SET) -> {
-        advanceLexer()
-        if (utils.atToken(queryQuotes)) return queryQuotes
-        utils.expectToken(BazelQueryTokenTypes.LEFT_PAREN)
-        if (!utils.matchAnyToken(getAvailableWordsSet(queryQuotes))) {
-          utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.target"))
+    private TokenSet getAvailableWordsSet(IElementType queryQuotes) {
+        if (queryQuotes == BazelQueryTokenTypes.WHITE_SPACE) {
+            return WORD_IN_UNQ_QUERY;
         }
-        while (!utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) && !utils.atToken(queryQuotes) && !eof()) {
-          if (!utils.matchAnyToken(getAvailableWordsSet(queryQuotes))) {
-            utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.target"))
-          }
+        else if (queryQuotes == BazelQueryTokenTypes.SINGLE_QUOTE) {
+            return WORD_IN_SQ_QUERY;
         }
-        if (!utils.matchToken(
-            BazelQueryTokenTypes.RIGHT_PAREN,
-          )
-        ) {
-          error(BazelLanguagesBundle.message("bazelquery.error.missing.right.parenthesis"))
+        else if (queryQuotes == BazelQueryTokenTypes.DOUBLE_QUOTE) {
+            return WORD_IN_DQ_QUERY;
         }
-      }
-
-      utils.atAnyToken(BazelQueryTokenSets.COMMANDS) -> queryQuotes = parseCommand(queryQuotes)
-
-      utils.atToken(queryQuotes) -> return queryQuotes
-
-      utils.atToken(BazelQueryTokenTypes.UNION) ||
-        utils.atToken(BazelQueryTokenTypes.EXCEPT) ||
-        utils.atToken(BazelQueryTokenTypes.INTERSECT) ->
-        utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unexpected.token.infix.operator"))
-
-      utils.atToken(BazelQueryTokenTypes.INTEGER) ->
-        utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unexpected.token.integer"))
-
-      utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ->
-        utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unexpected.token.paren"))
+        else {
+            return TokenSet.EMPTY;
+        }
     }
 
-    when {
-      utils.atToken(BazelQueryTokenTypes.INTERSECT) -> {
-        advanceLexer()
-        queryQuotes = parseExpr(queryQuotes)
-      }
-      utils.atToken(BazelQueryTokenTypes.EXCEPT) -> {
-        advanceLexer()
-        queryQuotes = parseExpr(queryQuotes)
-      }
-      utils.atToken(BazelQueryTokenTypes.UNION) -> {
-        advanceLexer()
-        queryQuotes = parseExpr(queryQuotes)
-      }
+    private TokenSet getAvailablePatternsSet(IElementType queryQuotes) {
+        if (queryQuotes == BazelQueryTokenTypes.WHITE_SPACE) {
+            return PATTERN_IN_UNQ_QUERY;
+        }
+        else if (queryQuotes == BazelQueryTokenTypes.SINGLE_QUOTE) {
+            return PATTERN_IN_SQ_QUERY;
+        }
+        else if (queryQuotes == BazelQueryTokenTypes.DOUBLE_QUOTE) {
+            return PATTERN_IN_DQ_QUERY;
+        }
+        else {
+            return TokenSet.EMPTY;
+        }
     }
 
-    return queryQuotes
-  }
+    public ASTNode parseFile() {
+        PsiBuilder.Marker prompt = myBuilder.mark();
+
+        parseExpr(BazelQueryTokenTypes.WHITE_SPACE);
+
+        while (!myBuilder.eof()) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnexpectedToken());
+        }
+
+        prompt.done(myRoot);
+        return myBuilder.getTreeBuilt();
+    }
+
+    // _____parsing queries____
+
+    // expr ::= word
+    //       | let name = expr in expr
+    //       | (expr)
+    //       | expr intersect expr
+    //       | expr ^ expr
+    //       | expr union expr
+    //       | expr + expr
+    //       | expr except expr
+    //       | expr - expr
+    //       | set(word *)
+    //       | word '(' int | word | expr ... ')'
+    private IElementType parseExpr(IElementType initialQueryQuotes) {
+        IElementType queryQuotes = initialQueryQuotes;
+        if (myUtils.atAnyToken(getAvailableWordsSet(queryQuotes))) {
+            queryQuotes = parseWord(queryQuotes);
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.LET)) {
+            myBuilder.advanceLexer();
+            if (myUtils.atToken(queryQuotes)) {
+                return queryQuotes;
+            }
+            myUtils.expectToken(BazelQueryTokenTypes.UNQUOTED_WORD);
+            if (myUtils.atToken(queryQuotes)) {
+                return queryQuotes;
+            }
+            myUtils.expectToken(BazelQueryTokenTypes.EQUALS);
+            if (myUtils.atToken(queryQuotes)) {
+                return queryQuotes;
+            }
+            if (myUtils.atToken(BazelQueryTokenTypes.IN)) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingVariableValue());
+            }
+            queryQuotes = parseExpr(queryQuotes);
+            myUtils.expectToken(BazelQueryTokenTypes.IN);
+            if (myUtils.atToken(queryQuotes)) {
+                return queryQuotes;
+            }
+            queryQuotes = parseExpr(queryQuotes);
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.LEFT_PAREN)) {
+            myBuilder.advanceLexer();
+            queryQuotes = parseExpr(queryQuotes);
+            if (myUtils.atToken(queryQuotes)) {
+                return queryQuotes;
+            }
+            myUtils.expectToken(BazelQueryTokenTypes.RIGHT_PAREN);
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.SET)) {
+            myBuilder.advanceLexer();
+            if (myUtils.atToken(queryQuotes)) {
+                return queryQuotes;
+            }
+            myUtils.expectToken(BazelQueryTokenTypes.LEFT_PAREN);
+            if (!myUtils.matchAnyToken(getAvailableWordsSet(queryQuotes))) {
+                myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingTarget());
+            }
+            while (!myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) && !myUtils.atToken(queryQuotes) && !myBuilder.eof()) {
+                if (!myUtils.matchAnyToken(getAvailableWordsSet(queryQuotes))) {
+                    myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingTarget());
+                }
+            }
+            if (!myUtils.matchToken(
+                BazelQueryTokenTypes.RIGHT_PAREN
+            )
+            ) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingRightParenthesis());
+            }
+        }
+        else if (myUtils.atAnyToken(BazelQueryTokenSets.COMMANDS)) {
+            queryQuotes = parseCommand(queryQuotes);
+        }
+        else if (myUtils.atToken(queryQuotes)) {
+            return queryQuotes;
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.UNION) ||
+            myUtils.atToken(BazelQueryTokenTypes.EXCEPT) ||
+            myUtils.atToken(BazelQueryTokenTypes.INTERSECT)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnexpectedTokenInfixOperator());
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.INTEGER)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnexpectedTokenInteger());
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnexpectedTokenParen());
+        }
+
+        if (myUtils.atToken(BazelQueryTokenTypes.INTERSECT)) {
+            myBuilder.advanceLexer();
+            queryQuotes = parseExpr(queryQuotes);
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.EXCEPT)) {
+            myBuilder.advanceLexer();
+            queryQuotes = parseExpr(queryQuotes);
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.UNION)) {
+            myBuilder.advanceLexer();
+            queryQuotes = parseExpr(queryQuotes);
+        }
+
+        return queryQuotes;
+    }
 
 // _____parsing commands____
 
-  private fun parseExprArg(queryQuotes: IElementType): IElementType {
-    var queryQuotes = queryQuotes
-    if (utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
-      utils.atToken(BazelQueryTokenTypes.COMMA) ||
-      eof()
-    ) {
-      error(BazelLanguagesBundle.message("bazelquery.error.missing.expression"))
-    } else if (utils.atToken(BazelQueryTokenTypes.INTEGER)) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.expression.got.integer"))
-    } else if (utils.atToken(BazelQueryTokenTypes.SQ_PATTERN) ||
-      utils.atToken(BazelQueryTokenTypes.DQ_PATTERN)
-    ) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.incorrect.word"))
-    } else {
-      queryQuotes = parseExpr(queryQuotes)
-    }
-    return queryQuotes
-  }
-
-  private fun parseWordArg(queryQuotes: IElementType): IElementType {
-    var queryQuotes = queryQuotes
-    if (utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
-      utils.atToken(BazelQueryTokenTypes.COMMA) ||
-      eof()
-    ) {
-      error(BazelLanguagesBundle.message("bazelquery.error.missing.word"))
-    } else if (!utils.atAnyToken(getAvailableWordsSet(queryQuotes))) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.word"))
-    } else {
-      queryQuotes = parseWord(queryQuotes)
-    }
-
-    return queryQuotes
-  }
-
-  private fun parsePatternArg(queryQuotes: IElementType): IElementType {
-    var queryQuotes = queryQuotes
-    if (utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
-      utils.atToken(BazelQueryTokenTypes.COMMA) ||
-      eof()
-    ) {
-      error(BazelLanguagesBundle.message("bazelquery.error.missing.word"))
-    } else if (!utils.atAnyToken(getAvailablePatternsSet(queryQuotes)) &&
-      !utils.atToken(BazelQueryTokenTypes.INTEGER)
-    ) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.word"))
-    } else {
-      queryQuotes = parseWord(queryQuotes)
-    }
-
-    return queryQuotes
-  }
-
-  private fun parseOptionalIntArg(queryQuotes: IElementType) {
-    if (utils.matchToken(BazelQueryTokenTypes.COMMA)) {
-      if (utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
-        utils.atToken(BazelQueryTokenTypes.COMMA) ||
-        eof()
-      ) {
-        error(BazelLanguagesBundle.message("bazelquery.error.missing.expression"))
-      } else if (!utils.atToken(BazelQueryTokenTypes.INTEGER)) {
-        utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.integer"))
-      } else {
-        parseInteger()
-      }
-    }
-  }
-
-  private fun parseUnknownArgs(queryQuotes: IElementType): IElementType {
-    var queryQuotes = queryQuotes
-    if (utils.atToken(BazelQueryTokenTypes.INTEGER)) {
-      parseInteger()
-    } else if (!utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
-      parseExpr(queryQuotes)
-    }
-    while (!utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) && !utils.atToken(queryQuotes) && !eof()) {
-      utils.expectToken(BazelQueryTokenTypes.COMMA)
-      if (utils.atToken(queryQuotes) ||
-        utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
-        eof()
-      ) {
-        error(BazelLanguagesBundle.message("bazelquery.error.missing.expression"))
-      } else if (utils.atToken(BazelQueryTokenTypes.INTEGER)) {
-        parseInteger()
-      } else {
-        queryQuotes = parseExpr(queryQuotes)
-      }
-    }
-    return queryQuotes
-  }
-
-  private fun parseCommand(queryQuotes: IElementType): IElementType {
-    var queryQuotes = queryQuotes
-
-    val command = mark()
-
-    val commandKeyword = builder.tokenType
-    advanceLexer()
-    if (utils.atToken(queryQuotes)) return queryQuotes
-    utils.expectToken(BazelQueryTokenTypes.LEFT_PAREN)
-    if (utils.atToken(queryQuotes)) return queryQuotes
-
-    when (commandKeyword) {
-      BazelQueryTokenTypes.SAME_PKG_DIRECT_RDEPS,
-      BazelQueryTokenTypes.SIBLINGS,
-      BazelQueryTokenTypes.TESTS,
-      BazelQueryTokenTypes.BUILDFILES,
-      BazelQueryTokenTypes.LOADFILES,
-      -> {
-        queryQuotes = parseExprArg(queryQuotes)
-      }
-
-      BazelQueryTokenTypes.ALLPATHS,
-      BazelQueryTokenTypes.SOMEPATH,
-      BazelQueryTokenTypes.VISIBLE,
-      -> {
-        queryQuotes = parseExprArg(queryQuotes)
-        if (!utils.matchToken(BazelQueryTokenTypes.COMMA)) error(BazelLanguagesBundle.message("bazelquery.error.missing.comma"))
-        queryQuotes = parseExprArg(queryQuotes)
-      }
-
-      BazelQueryTokenTypes.LABELS,
-      BazelQueryTokenTypes.KIND,
-      BazelQueryTokenTypes.FILTER,
-      -> {
-        queryQuotes = parsePatternArg(queryQuotes)
-        if (!utils.matchToken(BazelQueryTokenTypes.COMMA)) error(BazelLanguagesBundle.message("bazelquery.error.missing.comma"))
-        queryQuotes = parseExprArg(queryQuotes)
-      }
-
-      BazelQueryTokenTypes.DEPS,
-      BazelQueryTokenTypes.ALLRDEPS,
-      BazelQueryTokenTypes.SOME,
-      -> {
-        queryQuotes = parseExprArg(queryQuotes)
-        parseOptionalIntArg(queryQuotes)
-      }
-
-      BazelQueryTokenTypes.RDEPS -> {
-        queryQuotes = parseExprArg(queryQuotes)
-        if (!utils.matchToken(BazelQueryTokenTypes.COMMA)) error(BazelLanguagesBundle.message("bazelquery.error.missing.comma"))
-        queryQuotes = parseExprArg(queryQuotes)
-        parseOptionalIntArg(queryQuotes)
-      }
-
-      BazelQueryTokenTypes.ATTR -> {
-        queryQuotes = parseWordArg(queryQuotes)
-        if (!utils.matchToken(BazelQueryTokenTypes.COMMA)) error(BazelLanguagesBundle.message("bazelquery.error.missing.comma"))
-        queryQuotes = parsePatternArg(queryQuotes)
-        if (!utils.matchToken(BazelQueryTokenTypes.COMMA)) error(BazelLanguagesBundle.message("bazelquery.error.missing.comma"))
-        queryQuotes = parseExprArg(queryQuotes)
-      }
-
-      BazelQueryTokenTypes.RBUILDFILES -> {
-        queryQuotes = parseWordArg(queryQuotes)
-        while (utils.atToken(BazelQueryTokenTypes.COMMA) && !eof()) {
-          if (!utils.matchToken(BazelQueryTokenTypes.COMMA)) utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.comma"))
-          queryQuotes = parseWordArg(queryQuotes)
+    private IElementType parseExprArg(IElementType initialQueryQuotes) {
+        IElementType queryQuotes = initialQueryQuotes;
+        if (myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
+            myUtils.atToken(BazelQueryTokenTypes.COMMA) ||
+            myBuilder.eof()
+        ) {
+            myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingExpression());
         }
-      }
-      else -> queryQuotes = parseUnknownArgs(queryQuotes)
-    }
-
-    if (eof() || utils.atToken(queryQuotes)) error(BazelLanguagesBundle.message("bazelquery.error.missing.right.parenthesis"))
-    while (!eof() && !utils.atToken(queryQuotes) && !utils.atToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unexpected.token"))
-    }
-    if (!utils.matchToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
-      error(BazelLanguagesBundle.message("bazelquery.error.missing.right.parenthesis"))
-    }
-    command.done(BazelQueryElementTypes.COMMAND)
-
-    return queryQuotes
-  }
-
-  // _____parsing words____
-
-  private fun parseWord(queryQuotes: IElementType): IElementType {
-    val word = mark()
-    var queryQuotes = queryQuotes
-
-    if (utils.atToken(BazelQueryTokenTypes.SQ_EMPTY) ||
-      utils.atToken(BazelQueryTokenTypes.DQ_EMPTY)
-    ) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.empty.quotation"))
-    } else if (utils.matchToken(BazelQueryTokenTypes.SQ_UNFINISHED) ||
-      utils.matchToken(BazelQueryTokenTypes.DQ_UNFINISHED)
-    ) {
-      error(BazelLanguagesBundle.message("bazelquery.error.missing.quote"))
-    } else if (utils.atToken(BazelQueryTokenTypes.ERR_WORD)) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.incorrect.word"))
-    } else {
-      if (queryQuotes == BazelQueryTokenTypes.WHITE_SPACE) {
-        if (utils.atToken(BazelQueryTokenTypes.SQ_WORD)) {
-          queryQuotes = BazelQueryTokenTypes.DOUBLE_QUOTE
-        } else if (utils.atToken(BazelQueryTokenTypes.DQ_WORD)) {
-          queryQuotes = BazelQueryTokenTypes.SINGLE_QUOTE
+        else if (myUtils.atToken(BazelQueryTokenTypes.INTEGER)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingExpressionGotInteger());
         }
-      }
-      advanceLexer()
-    }
-    word.done(BazelQueryElementTypes.WORD)
-    return queryQuotes
-  }
-
-  // _____parsing integers____
-
-  private fun parseInteger() {
-    val integer = mark()
-
-    if (utils.atToken(BazelQueryTokenTypes.INTEGER)) {
-      advanceLexer()
-    } else {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.integer"))
+        else if (myUtils.atToken(BazelQueryTokenTypes.SQ_PATTERN) ||
+            myUtils.atToken(BazelQueryTokenTypes.DQ_PATTERN)
+        ) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorIncorrectWord());
+        }
+        else {
+            queryQuotes = parseExpr(queryQuotes);
+        }
+        return queryQuotes;
     }
 
-    integer.done(BazelQueryElementTypes.INTEGER)
-  }
+    private IElementType parseWordArg(IElementType initialQueryQuotes) {
+        IElementType queryQuotes = initialQueryQuotes;
+        if (myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
+            myUtils.atToken(BazelQueryTokenTypes.COMMA) ||
+            myBuilder.eof()
+        ) {
+            myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingWord());
+        }
+        else if (!myUtils.atAnyToken(getAvailableWordsSet(queryQuotes))) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingWord());
+        }
+        else {
+            queryQuotes = parseWord(queryQuotes);
+        }
+
+        return queryQuotes;
+    }
+
+    private IElementType parsePatternArg(IElementType initialQueryQuotes) {
+        IElementType queryQuotes = initialQueryQuotes;
+        if (myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
+            myUtils.atToken(BazelQueryTokenTypes.COMMA) ||
+            myBuilder.eof()
+        ) {
+            myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingWord());
+        }
+        else if (!myUtils.atAnyToken(getAvailablePatternsSet(queryQuotes)) &&
+            !myUtils.atToken(BazelQueryTokenTypes.INTEGER)
+        ) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingWord());
+        }
+        else {
+            queryQuotes = parseWord(queryQuotes);
+        }
+
+        return queryQuotes;
+    }
+
+    private void parseOptionalIntArg(IElementType queryQuotes) {
+        if (myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+            if (myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
+                myUtils.atToken(BazelQueryTokenTypes.COMMA) ||
+                myBuilder.eof()
+            ) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingExpression());
+            }
+            else if (!myUtils.atToken(BazelQueryTokenTypes.INTEGER)) {
+                myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingInteger());
+            }
+            else {
+                parseInteger();
+            }
+        }
+    }
+
+    private IElementType parseUnknownArgs(IElementType initialQueryQuotes) {
+        IElementType queryQuotes = initialQueryQuotes;
+        if (myUtils.atToken(BazelQueryTokenTypes.INTEGER)) {
+            parseInteger();
+        }
+        else if (!myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
+            parseExpr(queryQuotes);
+        }
+        while (!myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) && !myUtils.atToken(queryQuotes) && !myBuilder.eof()) {
+            myUtils.expectToken(BazelQueryTokenTypes.COMMA);
+            if (myUtils.atToken(queryQuotes) ||
+                myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN) ||
+                myBuilder.eof()
+            ) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingExpression());
+            }
+            else if (myUtils.atToken(BazelQueryTokenTypes.INTEGER)) {
+                parseInteger();
+            }
+            else {
+                queryQuotes = parseExpr(queryQuotes);
+            }
+        }
+        return queryQuotes;
+    }
+
+    private IElementType parseCommand(IElementType initialQueryQuotes) {
+        IElementType queryQuotes = initialQueryQuotes;
+
+        PsiBuilder.Marker command = myBuilder.mark();
+
+        @Nullable IElementType commandKeyword = myBuilder.getTokenType();
+        myBuilder.advanceLexer();
+        if (myUtils.atToken(queryQuotes)) {
+            return queryQuotes;
+        }
+        myUtils.expectToken(BazelQueryTokenTypes.LEFT_PAREN);
+        if (myUtils.atToken(queryQuotes)) {
+            return queryQuotes;
+        }
+
+        if (commandKeyword == BazelQueryTokenTypes.SAME_PKG_DIRECT_RDEPS ||
+            commandKeyword == BazelQueryTokenTypes.SIBLINGS ||
+            commandKeyword == BazelQueryTokenTypes.TESTS ||
+            commandKeyword == BazelQueryTokenTypes.BUILDFILES ||
+            commandKeyword == BazelQueryTokenTypes.LOADFILES
+        ) {
+            queryQuotes = parseExprArg(queryQuotes);
+        }
+        else if (commandKeyword == BazelQueryTokenTypes.ALLPATHS ||
+            commandKeyword == BazelQueryTokenTypes.SOMEPATH ||
+            commandKeyword == BazelQueryTokenTypes.VISIBLE
+        ) {
+            queryQuotes = parseExprArg(queryQuotes);
+            if (!myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingComma());
+            }
+            queryQuotes = parseExprArg(queryQuotes);
+        }
+        else if (commandKeyword == BazelQueryTokenTypes.LABELS ||
+            commandKeyword == BazelQueryTokenTypes.KIND ||
+            commandKeyword == BazelQueryTokenTypes.FILTER
+        ) {
+            queryQuotes = parsePatternArg(queryQuotes);
+            if (!myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingComma());
+            }
+            queryQuotes = parseExprArg(queryQuotes);
+        }
+        else if (commandKeyword == BazelQueryTokenTypes.DEPS ||
+            commandKeyword == BazelQueryTokenTypes.ALLRDEPS ||
+            commandKeyword == BazelQueryTokenTypes.SOME
+        ) {
+            queryQuotes = parseExprArg(queryQuotes);
+            parseOptionalIntArg(queryQuotes);
+        }
+        else if (commandKeyword == BazelQueryTokenTypes.RDEPS) {
+            queryQuotes = parseExprArg(queryQuotes);
+            if (!myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingComma());
+            }
+            queryQuotes = parseExprArg(queryQuotes);
+            parseOptionalIntArg(queryQuotes);
+        }
+        else if (commandKeyword == BazelQueryTokenTypes.ATTR) {
+            queryQuotes = parseWordArg(queryQuotes);
+            if (!myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingComma());
+            }
+            queryQuotes = parsePatternArg(queryQuotes);
+            if (!myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+                myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingComma());
+            }
+            queryQuotes = parseExprArg(queryQuotes);
+        }
+        else if (commandKeyword == BazelQueryTokenTypes.RBUILDFILES) {
+            queryQuotes = parseWordArg(queryQuotes);
+            while (myUtils.atToken(BazelQueryTokenTypes.COMMA) && !myBuilder.eof()) {
+                if (!myUtils.matchToken(BazelQueryTokenTypes.COMMA)) {
+                    myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingComma());
+                }
+                queryQuotes = parseWordArg(queryQuotes);
+            }
+        }
+        else {
+            queryQuotes = parseUnknownArgs(queryQuotes);
+        }
+
+        if (myBuilder.eof() || myUtils.atToken(queryQuotes)) {
+            myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingRightParenthesis());
+        }
+        while (!myBuilder.eof() && !myUtils.atToken(queryQuotes) && !myUtils.atToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnexpectedToken());
+        }
+        if (!myUtils.matchToken(BazelQueryTokenTypes.RIGHT_PAREN)) {
+            myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingRightParenthesis());
+        }
+        command.done(BazelQueryElementTypes.COMMAND);
+
+        return queryQuotes;
+    }
+
+    // _____parsing words____
+
+    private IElementType parseWord(IElementType initialQueryQuotes) {
+        PsiBuilder.Marker word = myBuilder.mark();
+        IElementType queryQuotes = initialQueryQuotes;
+
+        if (myUtils.atToken(BazelQueryTokenTypes.SQ_EMPTY) ||
+            myUtils.atToken(BazelQueryTokenTypes.DQ_EMPTY)
+        ) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorEmptyQuotation());
+        }
+        else if (myUtils.matchToken(BazelQueryTokenTypes.SQ_UNFINISHED) ||
+            myUtils.matchToken(BazelQueryTokenTypes.DQ_UNFINISHED)
+        ) {
+            myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingQuote());
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.ERR_WORD)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorIncorrectWord());
+        }
+        else {
+            if (queryQuotes == BazelQueryTokenTypes.WHITE_SPACE) {
+                if (myUtils.atToken(BazelQueryTokenTypes.SQ_WORD)) {
+                    queryQuotes = BazelQueryTokenTypes.DOUBLE_QUOTE;
+                }
+                else if (myUtils.atToken(BazelQueryTokenTypes.DQ_WORD)) {
+                    queryQuotes = BazelQueryTokenTypes.SINGLE_QUOTE;
+                }
+            }
+            myBuilder.advanceLexer();
+        }
+        word.done(BazelQueryElementTypes.WORD);
+        return queryQuotes;
+    }
+
+    // _____parsing integers____
+
+    private void parseInteger() {
+        PsiBuilder.Marker integer = myBuilder.mark();
+
+        if (myUtils.atToken(BazelQueryTokenTypes.INTEGER)) {
+            myBuilder.advanceLexer();
+        }
+        else {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingInteger());
+        }
+
+        integer.done(BazelQueryElementTypes.INTEGER);
+    }
 }

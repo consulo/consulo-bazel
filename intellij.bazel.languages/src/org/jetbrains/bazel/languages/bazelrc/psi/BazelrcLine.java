@@ -1,25 +1,34 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.TokenSet;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelrcLine(node: ASTNode) : BazelrcBaseElement(node) {
-  override fun acceptVisitor(visitor: BazelrcElementVisitor) = visitor.visitLine(this)
+public class BazelrcLine extends BazelrcBaseElement {
+    public BazelrcLine(ASTNode node) {
+        super(node);
+    }
 
-  val config: String?
-    get() = this.findChildByType<PsiElement>(BazelrcTokenTypes.CONFIG)?.text
+    @Override
+    protected void acceptVisitor(BazelrcElementVisitor visitor) {
+        visitor.visitLine(this);
+    }
 
-  val command: String
-    get() = this.findChildByType<PsiElement>(COMMAND_TOKENS)?.text ?: ""
+    public @Nullable String getConfig() {
+        PsiElement config = this.findChildByType(BazelrcTokenTypes.CONFIG);
+        return config != null ? config.getText() : null;
+    }
 
-  val flags: Array<BazelrcFlag>
-    get() = this.findChildrenByClass(BazelrcFlag::class.java)
+    public String getCommand() {
+        PsiElement command = this.findChildByType(COMMAND_TOKENS);
+        return command != null ? command.getText() : "";
+    }
 
-  companion object {
-    val COMMAND_TOKENS = TokenSet.create(BazelrcTokenTypes.COMMAND)
-  }
+    public BazelrcFlag[] getFlags() {
+        return this.findChildrenByClass(BazelrcFlag.class);
+    }
+
+    public static final TokenSet COMMAND_TOKENS = TokenSet.create(BazelrcTokenTypes.COMMAND);
 }

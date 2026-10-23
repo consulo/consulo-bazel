@@ -1,20 +1,36 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkLoadStatement(node: ASTNode) : StarlarkBaseElement(node) {
+import java.util.Arrays;
+import java.util.List;
 
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitLoadStatement(this)
+public class StarlarkLoadStatement extends StarlarkBaseElement {
+    public StarlarkLoadStatement(ASTNode node) {
+        super(node);
+    }
 
-  fun getLoadedFileNamePsi(): StarlarkStringLiteralExpression? =
-    (findChildByType(StarlarkElementTypes.FILENAME_LOAD_VALUE) as? StarlarkFilenameLoadValue)?.getLoadValueExpression()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitLoadStatement(this);
+    }
 
-  fun getLoadedSymbolsPsi(): List<StarlarkElement> = children.filterIsInstance<StarlarkLoadValue>().toList()
+    public @Nullable StarlarkStringLiteralExpression getLoadedFileNamePsi() {
+        PsiElement filenameLoadValue = findChildByType(StarlarkElementTypes.FILENAME_LOAD_VALUE);
+        return filenameLoadValue instanceof StarlarkFilenameLoadValue value ? value.getLoadValueExpression() : null;
+    }
+
+    public List<StarlarkElement> getLoadedSymbolsPsi() {
+        return Arrays.stream(getChildren())
+            .filter(it -> it instanceof StarlarkLoadValue)
+            .map(it -> (StarlarkElement) it)
+            .toList();
+    }
 }

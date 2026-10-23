@@ -1,37 +1,27 @@
-package org.jetbrains.bazel.languages.bazelrc.elements
+package org.jetbrains.bazel.languages.bazelrc.elements;
 
-import org.jetbrains.annotations.ApiStatus
+public final class BazelrcTokenTypes {
+    private BazelrcTokenTypes() {
+    }
 
-@ApiStatus.Internal
-object BazelrcTokenTypes {
-  @JvmField
-  val IMPORT = BazelrcTokenType("IMPORT")
+    public static final BazelrcTokenType IMPORT = new BazelrcTokenType("IMPORT");
 
-  // Comment
-  @JvmField
-  val COMMENT = BazelrcTokenType("COMMENT")
+    // Comment
+    public static final BazelrcTokenType COMMENT = new BazelrcTokenType("COMMENT");
 
-  @JvmField
-  val DOUBLE_QUOTE = BazelrcTokenType("\"")
+    public static final BazelrcTokenType DOUBLE_QUOTE = new BazelrcTokenType("\"");
 
-  @JvmField
-  val SINGLE_QUOTE = BazelrcTokenType("'")
+    public static final BazelrcTokenType SINGLE_QUOTE = new BazelrcTokenType("'");
 
-  @JvmField
-  val COMMAND = BazelrcTokenType("COMMAND")
+    public static final BazelrcTokenType COMMAND = new BazelrcTokenType("COMMAND");
 
-  @JvmField
-  val COLON = BazelrcTokenType(":")
+    public static final BazelrcTokenType COLON = new BazelrcTokenType(":");
 
-  @JvmField
-  val CONFIG = BazelrcTokenType("CONFIG")
+    public static final BazelrcTokenType CONFIG = new BazelrcTokenType("CONFIG");
 
-  @JvmField
-  val FLAG = BazelrcTokenType("FLAG")
+    public static final BazelrcTokenType FLAG = new BazelrcTokenType("FLAG");
 
-  @JvmField
-  val EQ = BazelrcTokenType("=")
+    public static final BazelrcTokenType EQ = new BazelrcTokenType("=");
 
-  @JvmField
-  val VALUE = BazelrcTokenType("VALUE")
+    public static final BazelrcTokenType VALUE = new BazelrcTokenType("VALUE");
 }

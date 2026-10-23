@@ -1,11 +1,16 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
 
-@ApiStatus.Internal
-class StarlarkBreakStatement(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitBreakStatement(this)
+public class StarlarkBreakStatement extends StarlarkBaseElement {
+    public StarlarkBreakStatement(ASTNode node) {
+        super(node);
+    }
+
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitBreakStatement(this);
+    }
 }

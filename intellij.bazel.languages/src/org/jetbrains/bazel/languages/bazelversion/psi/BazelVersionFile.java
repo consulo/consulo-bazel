@@ -1,16 +1,23 @@
-package org.jetbrains.bazel.languages.bazelversion.psi
+package org.jetbrains.bazel.languages.bazelversion.psi;
 
-import com.intellij.extapi.psi.PsiFileBase
-import com.intellij.openapi.fileTypes.FileType
-import com.intellij.psi.FileViewProvider
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelversion.BazelVersionFileType
-import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage
+import consulo.language.file.FileViewProvider;
+import consulo.language.impl.psi.PsiFileBase;
+import consulo.virtualFileSystem.fileType.FileType;
+import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage;
+import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage.BazelVersionFileType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelVersionFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, BazelVersionLanguage) {
-  override fun getFileType(): FileType = BazelVersionFileType
+public class BazelVersionFile extends PsiFileBase {
+    public BazelVersionFile(FileViewProvider viewProvider) {
+        super(viewProvider, BazelVersionLanguage.INSTANCE);
+    }
 
-  val bazelVersion: BazelVersionLiteral?
-    get() = this.text.toBazelVersionLiteral()
+    @Override
+    public FileType getFileType() {
+        return BazelVersionFileType.INSTANCE;
+    }
+
+    public @Nullable BazelVersionLiteral getBazelVersion() {
+        return BazelVersionLiteral.toBazelVersionLiteral(this.getText());
+    }
 }

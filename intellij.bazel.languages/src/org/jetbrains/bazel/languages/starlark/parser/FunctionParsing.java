@@ -1,109 +1,121 @@
-package org.jetbrains.bazel.languages.starlark.parser
+package org.jetbrains.bazel.languages.starlark.parser;
 
-import com.intellij.lang.PsiBuilder.Marker
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.ast.IElementType;
+import consulo.language.parser.PsiBuilder.Marker;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementType;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
 
-internal class FunctionParsing(context: ParsingContext) : Parsing(context) {
-  fun parseFunction(functionMarker: Marker) {
-    assertCurrentToken(StarlarkTokenTypes.DEF_KEYWORD)
-    builder.advanceLexer()
-    parseIdentifierOrSkip()
-    parseParameterList()
-    checkMatches(StarlarkTokenTypes.COLON, StarlarkBundle.message("parser.expected.colon"))
-    context.pushScope(context.getScope().withFunction())
-    context.statementParser.parseSuite(functionMarker, StarlarkElementTypes.FUNCTION_DECLARATION)
-    context.popScope()
-  }
+import java.util.Arrays;
+import java.util.List;
 
-  private fun parseParameterList() {
-    if (!atToken(StarlarkTokenTypes.LPAR)) {
-      builder.error(StarlarkBundle.message("parser.expected.lpar"))
-      builder.mark().done(StarlarkElementTypes.PARAMETER_LIST) // To have non-empty parameters list at all the time.
-      return
+class FunctionParsing extends Parsing {
+    FunctionParsing(ParsingContext context) {
+        super(context);
     }
-    parseParameterListContents(StarlarkTokenTypes.RPAR, true)
-  }
 
-  fun parseParameterListContents(endToken: IElementType, advanceLexer: Boolean) {
-    val parameterList = builder.mark()
-    if (advanceLexer) {
-      builder.advanceLexer()
+    public void parseFunction(Marker functionMarker) {
+        assertCurrentToken(StarlarkTokenTypes.DEF_KEYWORD);
+        myBuilder.advanceLexer();
+        parseIdentifierOrSkip();
+        parseParameterList();
+        checkMatches(StarlarkTokenTypes.COLON, StarlarkLocalize.parserExpectedColon());
+        getContext().pushScope(getContext().getScope().withFunction());
+        getContext().getStatementParser().parseSuite(functionMarker, StarlarkElementTypes.FUNCTION_DECLARATION);
+        getContext().popScope();
     }
-    var first = true
-    var afterStarParameter = false
-    while (!atToken(endToken)) {
-      if (first) {
-        first = false
-      } else {
-        if (atToken(StarlarkTokenTypes.COMMA)) {
-          builder.advanceLexer()
-        } else {
-          builder.error(StarlarkBundle.message("parser.expected.comma.lpar.rpar"))
-          break
+
+    private void parseParameterList() {
+        if (!atToken(StarlarkTokenTypes.LPAR)) {
+            myBuilder.error(StarlarkLocalize.parserExpectedLpar());
+            myBuilder.mark().done(StarlarkElementTypes.PARAMETER_LIST); // To have non-empty parameters list at all the time.
+            return;
         }
-      }
-      val isStarParameter = atAnyOfTokens(listOf(StarlarkTokenTypes.MULT, StarlarkTokenTypes.EXP))
-      if (!parseParameter(endToken)) {
-        if (afterStarParameter) {
-          builder.error(StarlarkBundle.message("parser.expected.expression"))
-        }
-        break
-      }
-      if (isStarParameter) {
-        afterStarParameter = true
-      }
+        parseParameterListContents(StarlarkTokenTypes.RPAR, true);
     }
-    if (atToken(endToken) && endToken === StarlarkTokenTypes.RPAR) {
-      builder.advanceLexer()
-    }
-    parameterList.done(StarlarkElementTypes.PARAMETER_LIST)
-    if (atToken(endToken) && endToken === StarlarkTokenTypes.COLON) {
-      builder.advanceLexer()
-    }
-  }
 
-  private fun parseParameter(endToken: IElementType): Boolean {
-    val parameter = builder.mark()
-    var parameterType = StarlarkElementTypes.MANDATORY_PARAMETER
-    if (atToken(StarlarkTokenTypes.MULT)) {
-      builder.advanceLexer()
-      if (atToken(StarlarkTokenTypes.COMMA)) {
-        parameter.done(StarlarkElementTypes.KEYWORD_ONLY_BOUNDARY)
-        return true
-      }
-      parameterType = StarlarkElementTypes.VARIADIC_PARAMETER
-    } else if (atToken(StarlarkTokenTypes.EXP)) {
-      builder.advanceLexer()
-      parameterType = StarlarkElementTypes.KEYWORD_VARIADIC_PARAMETER
-    }
-    if (matchToken(StarlarkTokenTypes.IDENTIFIER)) {
-      if (parameterType == StarlarkElementTypes.MANDATORY_PARAMETER && matchToken(StarlarkTokenTypes.EQ)) {
-        if (!context.expressionParser.parseSingleExpression(isTarget = false)) {
-          val invalidElements = builder.mark()
-          while (!atAnyOfTokens(listOf(endToken, StarlarkTokenTypes.LINE_BREAK, StarlarkTokenTypes.COMMA, null))) {
-            nextToken()
-          }
-          invalidElements.error(StarlarkBundle.message("parser.expected.expression"))
+    public void parseParameterListContents(IElementType endToken, boolean advanceLexer) {
+        Marker parameterList = myBuilder.mark();
+        if (advanceLexer) {
+            myBuilder.advanceLexer();
         }
-        parameter.done(StarlarkElementTypes.OPTIONAL_PARAMETER)
-        return true
-      }
-      parameter.done(parameterType)
-      return true
-    } else {
-      parameter.rollbackTo()
-      if (atToken(endToken)) {
-        return false
-      }
-      val invalidElements = builder.mark()
-      while (!atAnyOfTokens(listOf(endToken, StarlarkTokenTypes.LINE_BREAK, StarlarkTokenTypes.COMMA, null))) {
-        nextToken()
-      }
-      invalidElements.error(StarlarkBundle.message("parser.expected.formal.param.name"))
-      return atToken(endToken) || atToken(StarlarkTokenTypes.COMMA)
+        boolean first = true;
+        boolean afterStarParameter = false;
+        while (!atToken(endToken)) {
+            if (first) {
+                first = false;
+            }
+            else {
+                if (atToken(StarlarkTokenTypes.COMMA)) {
+                    myBuilder.advanceLexer();
+                }
+                else {
+                    myBuilder.error(StarlarkLocalize.parserExpectedCommaLparRpar());
+                    break;
+                }
+            }
+            boolean isStarParameter = atAnyOfTokens(List.of(StarlarkTokenTypes.MULT, StarlarkTokenTypes.EXP));
+            if (!parseParameter(endToken)) {
+                if (afterStarParameter) {
+                    myBuilder.error(StarlarkLocalize.parserExpectedExpression());
+                }
+                break;
+            }
+            if (isStarParameter) {
+                afterStarParameter = true;
+            }
+        }
+        if (atToken(endToken) && endToken == StarlarkTokenTypes.RPAR) {
+            myBuilder.advanceLexer();
+        }
+        parameterList.done(StarlarkElementTypes.PARAMETER_LIST);
+        if (atToken(endToken) && endToken == StarlarkTokenTypes.COLON) {
+            myBuilder.advanceLexer();
+        }
     }
-  }
+
+    private boolean parseParameter(IElementType endToken) {
+        Marker parameter = myBuilder.mark();
+        StarlarkElementType parameterType = StarlarkElementTypes.MANDATORY_PARAMETER;
+        if (atToken(StarlarkTokenTypes.MULT)) {
+            myBuilder.advanceLexer();
+            if (atToken(StarlarkTokenTypes.COMMA)) {
+                parameter.done(StarlarkElementTypes.KEYWORD_ONLY_BOUNDARY);
+                return true;
+            }
+            parameterType = StarlarkElementTypes.VARIADIC_PARAMETER;
+        }
+        else if (atToken(StarlarkTokenTypes.EXP)) {
+            myBuilder.advanceLexer();
+            parameterType = StarlarkElementTypes.KEYWORD_VARIADIC_PARAMETER;
+        }
+        if (matchToken(StarlarkTokenTypes.IDENTIFIER)) {
+            if (parameterType == StarlarkElementTypes.MANDATORY_PARAMETER && matchToken(StarlarkTokenTypes.EQ)) {
+                if (!getContext().getExpressionParser().parseSingleExpression(false)) {
+                    Marker invalidElements = myBuilder.mark();
+                    while (!atAnyOfTokens(Arrays.asList(endToken, StarlarkTokenTypes.LINE_BREAK, StarlarkTokenTypes.COMMA, null))) {
+                        nextToken();
+                    }
+                    invalidElements.error(StarlarkLocalize.parserExpectedExpression());
+                }
+                parameter.done(StarlarkElementTypes.OPTIONAL_PARAMETER);
+                return true;
+            }
+            parameter.done(parameterType);
+            return true;
+        }
+        else {
+            parameter.rollbackTo();
+            if (atToken(endToken)) {
+                return false;
+            }
+            Marker invalidElements = myBuilder.mark();
+            while (!atAnyOfTokens(Arrays.asList(endToken, StarlarkTokenTypes.LINE_BREAK, StarlarkTokenTypes.COMMA, null))) {
+                nextToken();
+            }
+            invalidElements.error(StarlarkLocalize.parserExpectedFormalParamName());
+            return atToken(endToken) || atToken(StarlarkTokenTypes.COMMA);
+        }
+    }
 }

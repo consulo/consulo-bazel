@@ -1,6 +1,20 @@
-package org.jetbrains.bazel.languages.bazelrc.matching
+package org.jetbrains.bazel.languages.bazelrc.matching;
 
-import com.intellij.codeInsight.editorActions.SimpleTokenSetQuoteHandler
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenSets
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.editor.action.LanguageQuoteHandler;
+import consulo.language.editor.action.SimpleTokenSetQuoteHandler;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenSets;
 
-internal class BazelrcQuoteHandler : SimpleTokenSetQuoteHandler(BazelrcTokenSets.BIBI)
+@ExtensionImpl
+public class BazelrcQuoteHandler extends SimpleTokenSetQuoteHandler implements LanguageQuoteHandler {
+    public BazelrcQuoteHandler() {
+        super(BazelrcTokenSets.BIBI);
+    }
+
+    @Override
+    public Language getLanguage() {
+        return BazelrcLanguage.INSTANCE;
+    }
+}

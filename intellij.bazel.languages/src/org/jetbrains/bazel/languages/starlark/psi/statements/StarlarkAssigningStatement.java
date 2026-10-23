@@ -1,14 +1,18 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkUtils.nearestRelevantChildAfter
-import org.jetbrains.bazel.languages.starlark.StarlarkUtils.nearestRelevantBeforeOperator
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenType
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.StarlarkUtils;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface StarlarkAssigningStatement: PsiElement {
-  fun operator(): StarlarkTokenType
-  fun leftHandSide(): PsiElement? = nearestRelevantBeforeOperator(firstChild)
-  fun rightHandSide(): PsiElement? = nearestRelevantChildAfter(this, operator())
+public interface StarlarkAssigningStatement extends PsiElement {
+    StarlarkTokenType operator();
+
+    default @Nullable PsiElement leftHandSide() {
+        return StarlarkUtils.nearestRelevantBeforeOperator(getFirstChild());
+    }
+
+    default @Nullable PsiElement rightHandSide() {
+        return StarlarkUtils.nearestRelevantChildAfter(this, operator());
+    }
 }

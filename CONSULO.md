@@ -47,7 +47,8 @@ git merge-base HEAD upstream/main
       </resources>
   </build>
   ```
-  > TODO: verify this works with the Consulo `arch.*` parent POMs and `maven-consulo-plugin`.
+  This works with the Consulo `arch.bind.java` parent and `maven-consulo-plugin` (verified on
+  `intellij.bazel.languages`).
 - `pom.xml` and `module-info.java` are added next to upstream's `BUILD.bazel` / `.iml`. Upstream build
   files stay untouched, so they never conflict.
 - Consulo-only code (new classes with no upstream counterpart) goes in `consulo.bazel.*` packages, so it is
@@ -97,6 +98,19 @@ The build may be broken between the two commits; that is fine.
 - Keep method order and names as in the Kotlin file. Future upstream diffs are then easy to locate in the
   Java file.
 - IntelliJ API -> Consulo API mapping is done in place. Do not move logic between files during conversion.
+- Kotlin allows several top-level declarations per file; Java does not. Extra public declarations become
+  `public static` nested classes of the file's main class (for example `StarlarkLanguage.StarlarkFileType`),
+  package-private ones stay package-private top-level classes in the same file. Never move them to new files.
+- Kotlin platform types (`node.firstChildNode.firstChildNode` without `?.`) become
+  `Objects.requireNonNull(...)`: same runtime behavior, and the build enforces null safety (NullAway).
+- Package-private `@ExtensionImpl` classes need an explicit `public` no-arg constructor.
+- `com.intellij.model.psi.PsiSymbolReference` (IntelliJ's symbol API) does not exist in Consulo. Upstream uses it
+  only for references to non-PSI targets (Bazel flags, built-in rules). `getOwnReferences()` returns
+  `Collection<PsiReference>` and the PSI element merges them into `getReferences()`. The targets become light PSI
+  elements with a documentation provider (when `intellij.bazel.core` is ported).
+- Optional services (`serviceOrNull<X>()`) become `@ExtensionAPI` interfaces with a static nullable `getInstance()`.
+- Hard-coded user-visible strings that upstream never put in a bundle are still moved to the YAML file
+  (no `LocalizeValue.localizeTODO` in committed code).
 
 ### Files we never port
 
@@ -169,7 +183,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 
 | Upstream module | Consulo plugin / module | Status |
 |---|---|---|
-| `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.languages` | not started |
+| `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.languages` | converted, builds |
 | `intellij.bazel.projectview` | `consulo.bazel.projectview` | not started |
 | `intellij.bazel.commons` | `consulo.bazel.commons` | not started |
 | `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.backend` | not started |
@@ -189,7 +203,9 @@ and port the logic into the replacement.
 
 | Upstream file | Reason | Replacement |
 |---|---|---|
-| _(none yet)_ | | |
+| `intellij.bazel.languages/resources/intellij.bazel.languages.xml` | Consulo registers extensions with annotations | `@ExtensionImpl` on each class, `consulo.bazel.languages.BazelLanguagesFileTypeFactory` for file types |
+| `intellij.bazel.languages/resources/colorSchemes/Starlark{Default,Darcula}.xml` | Consulo color schemes are extended in code | `consulo.bazel.languages.Starlark{Default,Darcula}ColorSchemeExtender` |
+| `intellij.bazel.languages/resources/messages/*.properties` (deleted) | Consulo localization | `resources/LOCALIZE-LIB/en_US/*.yaml` |
 
 Expected entries: the `clion/*` files that import `com.jetbrains.cidr.*` (compiler resolver, OC workspace,
 CIDR execution and debugger). They are replaced by code in `incubating-consulo-cpp/bazel`, built on

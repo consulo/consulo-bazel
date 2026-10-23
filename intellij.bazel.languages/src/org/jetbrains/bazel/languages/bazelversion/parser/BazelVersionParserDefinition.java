@@ -1,44 +1,80 @@
-package org.jetbrains.bazel.languages.bazelversion.parser
+package org.jetbrains.bazel.languages.bazelversion.parser;
 
-import com.intellij.lang.ASTFactory
-import com.intellij.lang.ASTNode
-import com.intellij.lang.ParserDefinition
-import com.intellij.lang.PsiParser
-import com.intellij.lexer.EmptyLexer
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.project.Project
-import com.intellij.psi.FileViewProvider
-import com.intellij.psi.PlainTextTokenTypes
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.tree.IFileElementType
-import com.intellij.psi.tree.TokenSet
-import com.intellij.psi.util.PsiUtilCore
-import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage
-import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionFile
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IFileElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.file.FileViewProvider;
+import consulo.language.impl.ast.ASTFactory;
+import consulo.language.lexer.EmptyLexer;
+import consulo.language.lexer.Lexer;
+import consulo.language.parser.ParserDefinition;
+import consulo.language.parser.PsiParser;
+import consulo.language.plain.ast.PlainTextTokenTypes;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiUtilCore;
+import consulo.language.version.LanguageVersion;
+import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage;
+import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionFile;
 
 /**
- * @see com.intellij.openapi.fileTypes.PlainTextParserDefinition
+ * @see consulo.language.impl.plain.PlainTextParserDefinition
  */
-internal class BazelVersionParserDefinition : ParserDefinition {
-  // avoid creating new IFileElementType on each getFileNodeType
-  // to ensure IFileElementType is registered only once inside an internal registry
-  val file =
-    object : IFileElementType(BazelVersionLanguage) {
-      override fun parseContents(chameleon: ASTNode): ASTNode = ASTFactory.leaf(PlainTextTokenTypes.PLAIN_TEXT, chameleon.chars)
+@ExtensionImpl
+public class BazelVersionParserDefinition implements ParserDefinition {
+    // avoid creating new IFileElementType on each getFileNodeType
+    // to ensure IFileElementType is registered only once inside an internal registry
+    private final IFileElementType myFile =
+        new IFileElementType(BazelVersionLanguage.INSTANCE) {
+            @Override
+            public ASTNode parseContents(ASTNode chameleon) {
+                return ASTFactory.leaf(PlainTextTokenTypes.PLAIN_TEXT, chameleon.getChars());
+            }
+        };
+
+    public IFileElementType getFile() {
+        return myFile;
     }
 
-  override fun createLexer(project: Project?): Lexer = EmptyLexer()
+    @Override
+    public Language getLanguage() {
+        return BazelVersionLanguage.INSTANCE;
+    }
 
-  override fun createParser(project: Project?): PsiParser = throw UnsupportedOperationException()
+    @Override
+    public Lexer createLexer(LanguageVersion languageVersion) {
+        return new EmptyLexer();
+    }
 
-  override fun getFileNodeType(): IFileElementType = file
+    @Override
+    public PsiParser createParser(LanguageVersion languageVersion) {
+        throw new UnsupportedOperationException();
+    }
 
-  override fun getCommentTokens(): TokenSet = TokenSet.EMPTY
+    @Override
+    public IFileElementType getFileNodeType() {
+        return myFile;
+    }
 
-  override fun getStringLiteralElements(): TokenSet = TokenSet.EMPTY
+    @Override
+    public TokenSet getCommentTokens(LanguageVersion languageVersion) {
+        return TokenSet.EMPTY;
+    }
 
-  override fun createElement(node: ASTNode?): PsiElement = PsiUtilCore.NULL_PSI_ELEMENT
+    @Override
+    public TokenSet getStringLiteralElements(LanguageVersion languageVersion) {
+        return TokenSet.EMPTY;
+    }
 
-  override fun createFile(viewProvider: FileViewProvider): PsiFile = BazelVersionFile(viewProvider)
+    @Override
+    public PsiElement createElement(ASTNode node) {
+        return PsiUtilCore.NULL_PSI_ELEMENT;
+    }
+
+    @Override
+    public PsiFile createFile(FileViewProvider viewProvider) {
+        return new BazelVersionFile(viewProvider);
+    }
 }

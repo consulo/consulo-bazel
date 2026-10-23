@@ -1,81 +1,109 @@
-package org.jetbrains.bazel.languages.bazelversion.psi
+package org.jetbrains.bazel.languages.bazelversion.psi;
 
-import com.intellij.util.text.SemVer
-import org.jetbrains.annotations.ApiStatus
+import consulo.util.lang.SemVer;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-sealed interface BazelVersionLiteral {
-  data class Forked(val fork: String, val version: BazelVersionLiteral) : BazelVersionLiteral
+import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-  data class Specific(val version: SemVer) : BazelVersionLiteral
+public sealed interface BazelVersionLiteral {
+    record Forked(String fork, BazelVersionLiteral version) implements BazelVersionLiteral {
+    }
 
-  data class Other(val version: String) : BazelVersionLiteral
+    record Specific(SemVer version) implements BazelVersionLiteral {
+    }
 
-  data class Latest(val offset: Int) : BazelVersionLiteral
+    record Other(String version) implements BazelVersionLiteral {
+    }
 
-  enum class Special : BazelVersionLiteral {
-    LAST_GREEN,
-    LAST_RC,
-    ROLLING,
-  }
-}
+    record Latest(int offset) implements BazelVersionLiteral {
+    }
 
-@ApiStatus.Internal
-fun BazelVersionLiteral.toBazelVersionStringLiteral(): String =
-  when (this) {
-    is BazelVersionLiteral.Forked -> "$fork/${version.toBazelVersionStringLiteral()}"
-    is BazelVersionLiteral.Latest -> if (offset == 0) "latest" else "latest-$offset"
-    is BazelVersionLiteral.Other -> version
-    BazelVersionLiteral.Special.LAST_GREEN -> "last_green"
-    BazelVersionLiteral.Special.LAST_RC -> "last_rc"
-    BazelVersionLiteral.Special.ROLLING -> "rolling"
-    is BazelVersionLiteral.Specific -> "$version"
-  }
+    enum Special implements BazelVersionLiteral {
+        LAST_GREEN,
+        LAST_RC,
+        ROLLING,
+    }
 
-@ApiStatus.Internal
-fun BazelVersionLiteral.toSemVer(): SemVer? =
-  when (this) {
-    is BazelVersionLiteral.Forked -> this.version.toSemVer()
-    is BazelVersionLiteral.Other -> SemVer.parseFromText(version)
-    is BazelVersionLiteral.Specific -> version
-    else -> null
-  }
+    static String toBazelVersionStringLiteral(BazelVersionLiteral receiver) {
+        return switch (receiver) {
+            case Forked forked -> forked.fork() + "/" + toBazelVersionStringLiteral(forked.version());
+            case Latest latest -> latest.offset() == 0 ? "latest" : "latest-" + latest.offset();
+            case Other other -> other.version();
+            case Special.LAST_GREEN -> "last_green";
+            case Special.LAST_RC -> "last_rc";
+            case Special.ROLLING -> "rolling";
+            case Specific specific -> String.valueOf(specific.version());
+        };
+    }
 
-@ApiStatus.Internal
-fun BazelVersionLiteral.withNewVersionWhenPossible(newVersion: String): BazelVersionLiteral =
-  when (this) {
-    is BazelVersionLiteral.Forked -> BazelVersionLiteral.Forked(fork, version.withNewVersionWhenPossible(newVersion))
-    is BazelVersionLiteral.Other -> newVersion.toBazelVersionLiteral() ?: this
-    is BazelVersionLiteral.Specific -> newVersion.toBazelVersionLiteral() ?: this
-    else -> this
-  }
+    static @Nullable SemVer toSemVer(BazelVersionLiteral receiver) {
+        return switch (receiver) {
+            case Forked forked -> toSemVer(forked.version());
+            case Other other -> SemVer.parseFromText(other.version());
+            case Specific specific -> specific.version();
+            default -> null;
+        };
+    }
 
-internal val BAZEL_FORK_VERSION_REGEX = """(?:([^/]+)/)?(.+)""".toRegex()
-internal val BAZEL_VERSION_LATEST_REGEX = """latest(?:-(\d+))?""".toRegex()
+    static BazelVersionLiteral withNewVersionWhenPossible(BazelVersionLiteral receiver, String newVersion) {
+        return switch (receiver) {
+            case Forked forked -> new Forked(forked.fork(), withNewVersionWhenPossible(forked.version(), newVersion));
+            case Other other -> Objects.requireNonNullElse(toBazelVersionLiteral(newVersion), receiver);
+            case Specific specific -> Objects.requireNonNullElse(toBazelVersionLiteral(newVersion), receiver);
+            default -> receiver;
+        };
+    }
 
-@ApiStatus.Internal
-fun String.toBazelVersionLiteral(): BazelVersionLiteral? {
-  val forkMatch = BAZEL_FORK_VERSION_REGEX.matchEntire(trim()) ?: return null
-  val (fork, version) = forkMatch.destructured
-  if (fork.isNotBlank()) {
-    return BazelVersionLiteral.Forked(fork, version.toBazelVersionLiteral() ?: return null)
-  }
+    Pattern BAZEL_FORK_VERSION_REGEX = Pattern.compile("(?:([^/]+)/)?(.+)");
+    Pattern BAZEL_VERSION_LATEST_REGEX = Pattern.compile("latest(?:-(\\d+))?");
 
-  val latestMatch = BAZEL_VERSION_LATEST_REGEX.matchEntire(version)
-  if (latestMatch != null) {
-    val (_, offset) = latestMatch.destructured
-    return BazelVersionLiteral.Latest(offset.toIntOrNull() ?: return null)
-  }
+    static @Nullable BazelVersionLiteral toBazelVersionLiteral(String receiver) {
+        Matcher forkMatch = BAZEL_FORK_VERSION_REGEX.matcher(receiver.trim());
+        if (!forkMatch.matches()) {
+            return null;
+        }
+        String fork = Objects.requireNonNullElse(forkMatch.group(1), "");
+        String version = Objects.requireNonNullElse(forkMatch.group(2), "");
+        if (!fork.isBlank()) {
+            BazelVersionLiteral forkVersion = toBazelVersionLiteral(version);
+            if (forkVersion == null) {
+                return null;
+            }
+            return new Forked(fork, forkVersion);
+        }
 
-  when (version) {
-    "last_green" -> return BazelVersionLiteral.Special.LAST_GREEN
-    "last_rc" -> return BazelVersionLiteral.Special.LAST_RC
-    "rolling" -> return BazelVersionLiteral.Special.ROLLING
-    else -> {}
-  }
+        Matcher latestMatch = BAZEL_VERSION_LATEST_REGEX.matcher(version);
+        if (latestMatch.matches()) {
+            // consulo: ported as-is, upstream `val (_, offset) = latestMatch.destructured` reads group 2
+            String offset = Objects.requireNonNullElse(latestMatch.group(2), "");
+            int offsetValue;
+            try {
+                offsetValue = Integer.parseInt(offset);
+            }
+            catch (NumberFormatException e) {
+                return null;
+            }
+            return new Latest(offsetValue);
+        }
 
-  val semver =
-    SemVer.parseFromText(version)
-      ?: return BazelVersionLiteral.Other(version)
-  return BazelVersionLiteral.Specific(semver)
+        switch (version) {
+            case "last_green":
+                return Special.LAST_GREEN;
+            case "last_rc":
+                return Special.LAST_RC;
+            case "rolling":
+                return Special.ROLLING;
+            default:
+                break;
+        }
+
+        SemVer semver =
+            SemVer.parseFromText(version);
+        if (semver == null) {
+            return new Other(version);
+        }
+        return new Specific(semver);
+    }
 }

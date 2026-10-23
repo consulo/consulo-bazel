@@ -1,14 +1,20 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface StarlarkLoadValue : StarlarkElement {
-  fun getLoadStatement(): StarlarkLoadStatement? = parent as? StarlarkLoadStatement
+public interface StarlarkLoadValue extends StarlarkElement {
+    default @Nullable StarlarkLoadStatement getLoadStatement() {
+        return getParent() instanceof StarlarkLoadStatement loadStatement ? loadStatement : null;
+    }
 
-  fun getLoadValueExpression(): StarlarkStringLiteralExpression? = lastChild as? StarlarkStringLiteralExpression
+    default @Nullable StarlarkStringLiteralExpression getLoadValueExpression() {
+        return getLastChild() instanceof StarlarkStringLiteralExpression expression ? expression : null;
+    }
 
-  fun getLoadValueExpressionContent(): String? = getLoadValueExpression()?.getStringContents()
+    default @Nullable String getLoadValueExpressionContent() {
+        StarlarkStringLiteralExpression loadValueExpression = getLoadValueExpression();
+        return loadValueExpression != null ? loadValueExpression.getStringContents() : null;
+    }
 }

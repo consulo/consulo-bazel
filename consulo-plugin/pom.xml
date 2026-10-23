@@ -73,5 +73,11 @@
             <artifactId>consulo.bazel.languages</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>consulo</groupId>
+            <artifactId>consulo-language-api</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

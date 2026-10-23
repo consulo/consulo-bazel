@@ -1,19 +1,17 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.psi.PsiElementVisitor
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.psi.PsiElementVisitor;
 
-@ApiStatus.Internal
-open class BazelrcElementVisitor : PsiElementVisitor() {
-  fun visitImport(node: BazelrcImport) {
-    visitElement(node)
-  }
+public class BazelrcElementVisitor extends PsiElementVisitor {
+    public void visitImport(BazelrcImport node) {
+        visitElement(node);
+    }
 
-  fun visitLine(node: BazelrcLine) {
-    visitElement(node)
-  }
+    public void visitLine(BazelrcLine node) {
+        visitElement(node);
+    }
 
-  fun visitFlag(node: BazelrcFlag) {
-    visitElement(node)
-  }
+    public void visitFlag(BazelrcFlag node) {
+        visitElement(node);
+    }
 }

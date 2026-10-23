@@ -1,26 +1,42 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkDictLiteralExpression(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitDictLiteralExpression(this)
+import java.util.ArrayList;
+import java.util.List;
 
-  fun getKeys(): List<PsiElement>? {
-    val keys = mutableListOf<PsiElement>()
-    var current = firstChild
-    while (current != null) {
-      when (current) {
-        is StarlarkKeyValueExpression -> keys.add(current.node.findChildByType(StarlarkElementTypes.EXPRESSIONS)?.psi ?: return null)
-        is StarlarkBaseElement -> return null
-      }
-      current = current.nextSibling
+public class StarlarkDictLiteralExpression extends StarlarkBaseElement {
+    public StarlarkDictLiteralExpression(ASTNode node) {
+        super(node);
     }
-    return keys
-  }
+
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitDictLiteralExpression(this);
+    }
+
+    public @Nullable List<PsiElement> getKeys() {
+        List<PsiElement> keys = new ArrayList<>();
+        PsiElement current = getFirstChild();
+        while (current != null) {
+            if (current instanceof StarlarkKeyValueExpression) {
+                ASTNode keyNode = current.getNode().findChildByType(StarlarkElementTypes.EXPRESSIONS);
+                PsiElement key = keyNode == null ? null : keyNode.getPsi();
+                if (key == null) {
+                    return null;
+                }
+                keys.add(key);
+            }
+            else if (current instanceof StarlarkBaseElement) {
+                return null;
+            }
+            current = current.getNextSibling();
+        }
+        return keys;
+    }
 }

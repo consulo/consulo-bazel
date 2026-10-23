@@ -1,43 +1,92 @@
-package org.jetbrains.bazel.languages.bazelquery.highlighting
+package org.jetbrains.bazel.languages.bazelquery.highlighting;
 
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.editor.colors.TextAttributesKey
-import com.intellij.openapi.fileTypes.SyntaxHighlighter
-import com.intellij.openapi.fileTypes.SyntaxHighlighterBase
-import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes
-import org.jetbrains.bazel.languages.bazelquery.lexer.BazelQueryLexer
+import consulo.annotation.component.ExtensionImpl;
+import consulo.colorScheme.TextAttributesKey;
+import consulo.language.Language;
+import consulo.language.ast.IElementType;
+import consulo.language.editor.highlight.SyntaxHighlighter;
+import consulo.language.editor.highlight.SyntaxHighlighterBase;
+import consulo.language.editor.highlight.SyntaxHighlighterFactory;
+import consulo.language.lexer.Lexer;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryLanguage;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes;
+import org.jetbrains.bazel.languages.bazelquery.lexer.BazelQueryLexer;
+import org.jspecify.annotations.Nullable;
 
-internal object BazelQuerySyntaxHighlighter : SyntaxHighlighterBase() {
-  private val keys =
-    mapOf(
-      *BazelQueryTokenSets.WORDS.types
-        .map { it to BazelQueryHighlightingColors.WORD }
-        .toTypedArray(),
-      *BazelQueryTokenSets.PATTERNS.types
-        .map { it to BazelQueryHighlightingColors.WORD }
-        .toTypedArray(),
-      BazelQueryTokenTypes.INTEGER to BazelQueryHighlightingColors.INTEGER,
-      *BazelQueryTokenSets.OPERATIONS.types
-        .map { it to BazelQueryHighlightingColors.OPERATION }
-        .toTypedArray(),
-      *BazelQueryTokenSets.FLAGS.types
-        .map { it to BazelQueryHighlightingColors.FLAG }
-        .toTypedArray(),
-      *BazelQueryTokenSets.FLAG_VALS.types
-        .map { it to BazelQueryHighlightingColors.FLAG_VAL }
-        .toTypedArray(),
-    )
+import java.util.HashMap;
+import java.util.Map;
 
-  override fun getHighlightingLexer(): Lexer = BazelQueryLexer()
+public class BazelQuerySyntaxHighlighter extends SyntaxHighlighterBase {
+    public static final BazelQuerySyntaxHighlighter INSTANCE = new BazelQuerySyntaxHighlighter();
 
-  override fun getTokenHighlights(tokenType: IElementType): Array<out TextAttributesKey> = pack(keys[tokenType])
+    private static final Map<IElementType, TextAttributesKey> KEYS = new HashMap<>();
+
+    static {
+        for (IElementType type : BazelQueryTokenSets.WORDS.getTypes()) {
+            KEYS.put(type, BazelQueryHighlightingColors.WORD);
+        }
+        for (IElementType type : BazelQueryTokenSets.PATTERNS.getTypes()) {
+            KEYS.put(type, BazelQueryHighlightingColors.WORD);
+        }
+        KEYS.put(BazelQueryTokenTypes.INTEGER, BazelQueryHighlightingColors.INTEGER);
+        for (IElementType type : BazelQueryTokenSets.OPERATIONS.getTypes()) {
+            KEYS.put(type, BazelQueryHighlightingColors.OPERATION);
+        }
+        for (IElementType type : BazelQueryTokenSets.FLAGS.getTypes()) {
+            KEYS.put(type, BazelQueryHighlightingColors.FLAG);
+        }
+        for (IElementType type : BazelQueryTokenSets.FLAG_VALS.getTypes()) {
+            KEYS.put(type, BazelQueryHighlightingColors.FLAG_VAL);
+        }
+    }
+
+    private BazelQuerySyntaxHighlighter() {
+    }
+
+    @Override
+    public Lexer getHighlightingLexer() {
+        return new BazelQueryLexer();
+    }
+
+    @Override
+    public TextAttributesKey[] getTokenHighlights(IElementType tokenType) {
+        return pack(KEYS.get(tokenType));
+    }
 }
 
-internal class BazelQuerySyntaxHighlighterFactory : SyntaxHighlighterFactory() {
-  override fun getSyntaxHighlighter(project: Project?, virtualFile: VirtualFile?): SyntaxHighlighter = BazelQuerySyntaxHighlighter
+@ExtensionImpl
+class BazelQuerySyntaxHighlighterFactory extends SyntaxHighlighterFactory {
+    // consulo: extensions need a public constructor
+    public BazelQuerySyntaxHighlighterFactory() {
+    }
+
+    @Override
+    public SyntaxHighlighter getSyntaxHighlighter(@Nullable Project project, @Nullable VirtualFile virtualFile) {
+        return BazelQuerySyntaxHighlighter.INSTANCE;
+    }
+
+    @Override
+    public Language getLanguage() {
+        return BazelQueryLanguage.INSTANCE;
+    }
+}
+
+/**
+ * Consulo: upstream registers {@link BazelQuerySyntaxHighlighterFactory} for both BazelQuery and BazelQueryFlags,
+ * a Consulo extension is bound to a single language.
+ */
+@ExtensionImpl
+class BazelQueryFlagsSyntaxHighlighterFactory extends BazelQuerySyntaxHighlighterFactory {
+    // consulo: extensions need a public constructor
+    public BazelQueryFlagsSyntaxHighlighterFactory() {
+    }
+
+    @Override
+    public Language getLanguage() {
+        return BazelQueryFlagsLanguage.INSTANCE;
+    }
 }

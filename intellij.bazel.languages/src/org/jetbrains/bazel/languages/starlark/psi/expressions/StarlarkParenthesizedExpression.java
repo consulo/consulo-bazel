@@ -1,13 +1,21 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkParenthesizedExpression(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitParenthesizedExpression(this)
+public class StarlarkParenthesizedExpression extends StarlarkBaseElement {
+    public StarlarkParenthesizedExpression(ASTNode node) {
+        super(node);
+    }
 
-  fun getTuple(): StarlarkTupleExpression? = findChildByClass(StarlarkTupleExpression::class.java)
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitParenthesizedExpression(this);
+    }
+
+    public @Nullable StarlarkTupleExpression getTuple() {
+        return findChildByClass(StarlarkTupleExpression.class);
+    }
 }

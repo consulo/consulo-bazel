@@ -1,7 +1,6 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.psi.NavigatablePsiElement
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.psi.NavigatablePsiElement;
 
-@ApiStatus.Internal
-interface BazelrcElement : NavigatablePsiElement
+public interface BazelrcElement extends NavigatablePsiElement {
+}

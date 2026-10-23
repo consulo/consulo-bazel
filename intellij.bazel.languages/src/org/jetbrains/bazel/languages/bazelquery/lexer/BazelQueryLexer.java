@@ -1,7 +1,9 @@
-package org.jetbrains.bazel.languages.bazelquery.lexer
+package org.jetbrains.bazel.languages.bazelquery.lexer;
 
-import com.intellij.lexer.FlexAdapter
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.lexer.FlexAdapter;
 
-@ApiStatus.Internal
-class BazelQueryLexer : FlexAdapter(_BazelQueryLexer(null))
+public class BazelQueryLexer extends FlexAdapter {
+    public BazelQueryLexer() {
+        super(new _BazelQueryLexer(null));
+    }
+}

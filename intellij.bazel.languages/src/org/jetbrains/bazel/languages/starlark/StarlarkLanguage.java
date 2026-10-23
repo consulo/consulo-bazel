@@ -1,22 +1,45 @@
-package org.jetbrains.bazel.languages.starlark
+package org.jetbrains.bazel.languages.starlark;
 
-import com.intellij.lang.Language
-import com.intellij.openapi.fileTypes.LanguageFileType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.BazelLanguagesBundle
-import org.jetbrains.bazel.languages.BazelLanguagesIcons
-import javax.swing.Icon
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.language.Language;
+import consulo.language.file.LanguageFileType;
+import consulo.localize.LocalizeValue;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.BazelLanguagesIcons;
 
-@ApiStatus.Internal
-object StarlarkLanguage : Language("Starlark")
+public class StarlarkLanguage extends Language {
+    public static final StarlarkLanguage INSTANCE = new StarlarkLanguage();
 
-@ApiStatus.Internal
-object StarlarkFileType : LanguageFileType(StarlarkLanguage) {
-  override fun getName(): String = "Starlark"
+    private StarlarkLanguage() {
+        super("Starlark");
+    }
 
-  override fun getDescription(): String = BazelLanguagesBundle.message("starlark.language.description")
+    // consulo: upstream declares this object as a top-level declaration in the same file
+    public static class StarlarkFileType extends LanguageFileType {
+        public static final StarlarkFileType INSTANCE = new StarlarkFileType();
 
-  override fun getDefaultExtension(): String = "bzl"
+        private StarlarkFileType() {
+            super(StarlarkLanguage.INSTANCE);
+        }
 
-  override fun getIcon(): Icon = BazelLanguagesIcons.bazel
+        @Override
+        public String getId() {
+            return "Starlark";
+        }
+
+        @Override
+        public LocalizeValue getDescription() {
+            return BazelLanguagesLocalize.starlarkLanguageDescription();
+        }
+
+        @Override
+        public String getDefaultExtension() {
+            return "bzl";
+        }
+
+        @Override
+        public Image getIcon() {
+            return BazelLanguagesIcons.bazel();
+        }
+    }
 }

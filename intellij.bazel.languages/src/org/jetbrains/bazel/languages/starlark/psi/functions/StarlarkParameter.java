@@ -1,22 +1,33 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.search.LocalSearchScope
-import com.intellij.psi.search.SearchScope
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.util.PlatformIcons
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import javax.swing.Icon
+import consulo.component.util.Iconable;
+import consulo.content.scope.SearchScope;
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.scope.LocalSearchScope;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-abstract class StarlarkParameter(node: ASTNode) : StarlarkNamedElement(node) {
-  override fun getIcon(flags: Int): Icon? = PlatformIcons.PARAMETER_ICON
+public abstract class StarlarkParameter extends StarlarkNamedElement implements Iconable {
+    public StarlarkParameter(ASTNode node) {
+        super(node);
+    }
 
-  override fun getUseScope(): SearchScope {
-    val callable = PsiTreeUtil
-      .findFirstParent(this) { it is StarlarkCallable }
-      ?: return super.getUseScope()
-    return LocalSearchScope(callable)
-  }
+    @Override
+    public @Nullable Image getIcon(int flags) {
+        return PlatformIconGroup.nodesParameter();
+    }
+
+    @Override
+    public SearchScope getUseScope() {
+        PsiElement callable = PsiTreeUtil
+            .findFirstParent(this, it -> it instanceof StarlarkCallable);
+        if (callable == null) {
+            return super.getUseScope();
+        }
+        return new LocalSearchScope(callable);
+    }
 }

@@ -1,33 +1,36 @@
-package org.jetbrains.bazel.languages.starlark.psi
+package org.jetbrains.bazel.languages.starlark.psi;
 
-import com.intellij.extapi.psi.ASTWrapperPsiElement
-import com.intellij.lang.ASTNode
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.search.LocalSearchScope
-import com.intellij.psi.search.SearchScope
-import com.intellij.psi.util.startOffset
-import org.jetbrains.annotations.ApiStatus
+import consulo.content.scope.SearchScope;
+import consulo.document.util.TextRange;
+import consulo.language.ast.ASTNode;
+import consulo.language.impl.psi.ASTWrapperPsiElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.scope.LocalSearchScope;
 
-@ApiStatus.Internal
-abstract class StarlarkBaseElement(node: ASTNode) :
-  ASTWrapperPsiElement(node),
-  StarlarkElement {
-  override fun accept(visitor: PsiElementVisitor) {
-    if (visitor is StarlarkElementVisitor) {
-      acceptVisitor(visitor)
-    } else {
-      super.accept(visitor)
+public abstract class StarlarkBaseElement extends ASTWrapperPsiElement implements StarlarkElement {
+    public StarlarkBaseElement(ASTNode node) {
+        super(node);
     }
-  }
 
-  protected abstract fun acceptVisitor(visitor: StarlarkElementVisitor)
+    @Override
+    public void accept(PsiElementVisitor visitor) {
+        if (visitor instanceof StarlarkElementVisitor starlarkVisitor) {
+            acceptVisitor(starlarkVisitor);
+        }
+        else {
+            super.accept(visitor);
+        }
+    }
 
-  override fun getUseScope(): SearchScope = LocalSearchScope(containingFile)
+    protected abstract void acceptVisitor(StarlarkElementVisitor visitor);
 
-  @ApiStatus.Internal
-  companion object {
-    fun TextRange.relativeTo(element: PsiElement): TextRange = shiftLeft(element.startOffset)
-  }
+    @Override
+    public SearchScope getUseScope() {
+        return new LocalSearchScope(getContainingFile());
+    }
+
+    public static TextRange relativeTo(TextRange receiver, PsiElement element) {
+        return receiver.shiftLeft(element.getTextRange().getStartOffset());
+    }
 }

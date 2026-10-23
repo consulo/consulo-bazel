@@ -1,23 +1,37 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkCallable
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkMandatoryParameter
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkOptionalParameter
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkParameter
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkParameterList
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkCallable;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkMandatoryParameter;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkOptionalParameter;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkParameter;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkParameterList;
 
-@ApiStatus.Internal
-class StarlarkLambdaExpression(node: ASTNode) :
-  StarlarkBaseElement(node),
-  StarlarkCallable {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitLambdaExpression(this)
+import java.util.List;
 
-  override fun getNamedParameters(): List<StarlarkParameter> =
-    getParameters().filter { it is StarlarkMandatoryParameter || it is StarlarkOptionalParameter }
+public class StarlarkLambdaExpression extends StarlarkBaseElement implements StarlarkCallable {
+    public StarlarkLambdaExpression(ASTNode node) {
+        super(node);
+    }
 
-  override fun getParameters(): List<StarlarkParameter> = findChildByClass(StarlarkParameterList::class.java)?.getParameters().orEmpty()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitLambdaExpression(this);
+    }
+
+    @Override
+    public List<StarlarkParameter> getNamedParameters() {
+        return getParameters()
+            .stream()
+            .filter(it -> it instanceof StarlarkMandatoryParameter || it instanceof StarlarkOptionalParameter)
+            .toList();
+    }
+
+    @Override
+    public List<StarlarkParameter> getParameters() {
+        StarlarkParameterList parameterList = findChildByClass(StarlarkParameterList.class);
+        return parameterList == null ? List.of() : parameterList.getParameters();
+    }
 }

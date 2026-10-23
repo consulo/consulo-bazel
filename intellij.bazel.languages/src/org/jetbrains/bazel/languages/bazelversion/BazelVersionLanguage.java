@@ -1,22 +1,44 @@
-package org.jetbrains.bazel.languages.bazelversion
+package org.jetbrains.bazel.languages.bazelversion;
 
-import com.intellij.lang.Language
-import com.intellij.openapi.fileTypes.LanguageFileType
-import com.intellij.openapi.util.NlsSafe
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.BazelLanguagesBundle
-import org.jetbrains.bazel.languages.BazelLanguagesIcons
-import javax.swing.Icon
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.language.Language;
+import consulo.language.file.LanguageFileType;
+import consulo.localize.LocalizeValue;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.BazelLanguagesIcons;
 
-internal object BazelVersionLanguage : Language("BazelVersion")
+public class BazelVersionLanguage extends Language {
+    public static final BazelVersionLanguage INSTANCE = new BazelVersionLanguage();
 
-@ApiStatus.Internal
-object BazelVersionFileType : LanguageFileType(BazelVersionLanguage) {
-  override fun getName(): String = "BazelVersion"
+    private BazelVersionLanguage() {
+        super("BazelVersion");
+    }
 
-  override fun getDescription(): String = BazelLanguagesBundle.message("bazel.language.description")
+    public static class BazelVersionFileType extends LanguageFileType {
+        public static final BazelVersionFileType INSTANCE = new BazelVersionFileType();
 
-  override fun getDefaultExtension(): @NlsSafe String = "bazelversion"
+        private BazelVersionFileType() {
+            super(BazelVersionLanguage.INSTANCE);
+        }
 
-  override fun getIcon(): Icon = BazelLanguagesIcons.bazel
+        @Override
+        public String getId() {
+            return "BazelVersion";
+        }
+
+        @Override
+        public LocalizeValue getDescription() {
+            return BazelLanguagesLocalize.bazelLanguageDescription();
+        }
+
+        @Override
+        public String getDefaultExtension() {
+            return "bazelversion";
+        }
+
+        @Override
+        public Image getIcon() {
+            return BazelLanguagesIcons.bazel();
+        }
+    }
 }

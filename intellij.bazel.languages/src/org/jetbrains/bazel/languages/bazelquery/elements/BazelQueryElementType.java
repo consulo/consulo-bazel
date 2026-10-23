@@ -1,12 +1,17 @@
-package org.jetbrains.bazel.languages.bazelquery.elements
+package org.jetbrains.bazel.languages.bazelquery.elements;
 
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryLanguage
+import consulo.language.ast.IElementType;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryLanguage;
 
-@ApiStatus.Internal
-class BazelQueryElementType(debugName: String) : IElementType(debugName, BazelQueryLanguage)
+public class BazelQueryElementType extends IElementType {
+    public BazelQueryElementType(String debugName) {
+        super(debugName, BazelQueryLanguage.INSTANCE);
+    }
 
-@ApiStatus.Internal
-class BazelQueryFlagsElementType(debugName: String) : IElementType(debugName, BazelQueryFlagsLanguage)
+    public static class BazelQueryFlagsElementType extends IElementType {
+        public BazelQueryFlagsElementType(String debugName) {
+            super(debugName, BazelQueryFlagsLanguage.INSTANCE);
+        }
+    }
+}

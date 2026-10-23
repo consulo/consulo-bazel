@@ -1,25 +1,40 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.openapi.components.serviceOrNull
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReference
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport
-import org.jetbrains.bazel.languages.starlark.references.StarlarkLocalVariableElement
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport;
+import org.jetbrains.bazel.languages.starlark.references.StarlarkLocalVariableElement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkReferenceExpression(node: ASTNode) :
-  StarlarkBaseElement(node),
-  StarlarkLocalVariableElement,
-  StarlarkQualifiableExpression {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitReferenceExpression(this)
+public class StarlarkReferenceExpression extends StarlarkBaseElement
+    implements StarlarkLocalVariableElement, StarlarkQualifiableExpression {
+    public StarlarkReferenceExpression(ASTNode node) {
+        super(node);
+    }
 
-  override fun getReference(): PsiReference? = serviceOrNull<StarlarkReferenceSupport>()?.getReference(this)
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitReferenceExpression(this);
+    }
 
-  override fun getNameIdentifier(): PsiElement? = findChildByType(StarlarkTokenTypes.IDENTIFIER)
-  override fun getName(): String? = getNameIdentifier()?.text
+    @Override
+    public @Nullable PsiReference getReference() {
+        StarlarkReferenceSupport support = StarlarkReferenceSupport.getInstance();
+        return support == null ? null : support.getReference(this);
+    }
+
+    @Override
+    public @Nullable PsiElement getNameIdentifier() {
+        return findChildByType(StarlarkTokenTypes.IDENTIFIER);
+    }
+
+    @Override
+    public @Nullable String getName() {
+        PsiElement nameIdentifier = getNameIdentifier();
+        return nameIdentifier == null ? null : nameIdentifier.getText();
+    }
 }

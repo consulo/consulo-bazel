@@ -1,62 +1,84 @@
-package org.jetbrains.bazel.languages.starlark.indentation
+package org.jetbrains.bazel.languages.starlark.indentation;
 
-import com.intellij.application.options.CodeStyle
-import com.intellij.formatting.IndentInfo
-import com.intellij.lang.Language
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.ex.EditorEx
-import com.intellij.openapi.project.Project
-import com.intellij.psi.codeStyle.CodeStyleSettings
-import com.intellij.psi.codeStyle.lineIndent.LineIndentProvider
-import com.intellij.psi.tree.IElementType
-import com.intellij.util.text.CharArrayUtil
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.StarlarkLanguage
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
+import consulo.annotation.component.ExtensionImpl;
+import consulo.document.Document;
+import consulo.language.Language;
+import consulo.language.ast.IElementType;
+import consulo.language.codeStyle.CodeStyle;
+import consulo.language.codeStyle.CodeStyleSettings;
+import consulo.language.codeStyle.CommonCodeStyleSettings;
+import consulo.language.codeStyle.IndentInfo;
+import consulo.language.codeStyle.lineIndent.LineIndentProvider;
+import consulo.language.codeStyle.lineIndent.SemanticEditorPositionFactory;
+import consulo.project.Project;
+import consulo.util.lang.CharArrayUtil;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage.StarlarkFileType;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-private val WHITE_SPACE_OR_COMMENT: List<IElementType> =
-  StarlarkTokenSets.WHITESPACE.types.toList() +
-    StarlarkTokenSets.COMMENT.types.toList()
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Stream;
 
-private val BLOCK_OPENING: List<IElementType> =
-  StarlarkTokenSets.OPEN_BRACKETS.types.toList() +
-    listOf(StarlarkTokenTypes.COLON)
+// consulo: the Consulo LineIndentProvider receives the Document and a SemanticEditorPositionFactory instead of the Editor
+@ExtensionImpl
+public class StarlarkLineIndentProvider implements LineIndentProvider {
+    private static final List<IElementType> WHITE_SPACE_OR_COMMENT =
+        Stream.concat(
+            Arrays.stream(StarlarkTokenSets.WHITESPACE.getTypes()),
+            Arrays.stream(StarlarkTokenSets.COMMENT.getTypes())
+        ).toList();
 
-internal class StarlarkLineIndentProvider : LineIndentProvider {
-  override fun getLineIndent(
-    project: Project,
-    editor: Editor,
-    language: Language?,
-    offset: Int,
-  ): String? = if (offset > 0) getIndent(editor, offset) else ""
+    private static final List<IElementType> BLOCK_OPENING =
+        Stream.concat(
+            Arrays.stream(StarlarkTokenSets.OPEN_BRACKETS.getTypes()),
+            Stream.of(StarlarkTokenTypes.COLON)
+        ).toList();
 
-  private fun getIndent(editor: Editor, offset: Int): String? {
-    val currentPosition = StarlarkSemanticEditorPosition(editor as EditorEx, offset)
-    val previousPosition = currentPosition.getPreviousPositionExcluding(WHITE_SPACE_OR_COMMENT)
-    return when {
-      previousPosition.isAtAnyOf(BLOCK_OPENING) ->
-        getIndentString(editor, previousPosition.startOffset())
-      else -> null
+    @Override
+    public @Nullable String getLineIndent(
+        Project project,
+        Document document,
+        SemanticEditorPositionFactory factory,
+        Language language,
+        int offset
+    ) {
+        return offset > 0 ? getIndent(project, document, factory, offset) : "";
     }
-  }
 
-  private fun getIndentString(editor: Editor, offset: Int): String {
-    val settings: CodeStyleSettings = CodeStyle.getSettings(editor)
-    val indentOptions = settings.getIndentOptions(StarlarkFileType)
-    val docChars = editor.document.charsSequence
-
-    var baseIndent = ""
-    val indentStart = CharArrayUtil.shiftBackwardUntil(docChars, offset, "\n") + 1
-    if (indentStart >= 0) {
-      val indentEnd = CharArrayUtil.shiftForward(docChars, indentStart, " \t")
-      if (indentEnd > indentStart) {
-        baseIndent = docChars.subSequence(indentStart, indentEnd).toString()
-      }
+    private @Nullable String getIndent(Project project, Document document, SemanticEditorPositionFactory factory, int offset) {
+        StarlarkSemanticEditorPosition currentPosition = new StarlarkSemanticEditorPosition(factory, offset);
+        StarlarkSemanticEditorPosition previousPosition = currentPosition.getPreviousPositionExcluding(WHITE_SPACE_OR_COMMENT);
+        if (previousPosition.isAtAnyOf(BLOCK_OPENING)) {
+            return getIndentString(project, document, previousPosition.startOffset());
+        }
+        else {
+            return null;
+        }
     }
-    baseIndent += IndentInfo(0, indentOptions.INDENT_SIZE, 0).generateNewWhiteSpace(indentOptions)
-    return baseIndent
-  }
 
-  override fun isSuitableFor(language: Language?): Boolean = language is StarlarkLanguage
+    private String getIndentString(Project project, Document document, int offset) {
+        // consulo: upstream used CodeStyle.getSettings(editor)
+        CodeStyleSettings settings = CodeStyle.getSettings(project, document);
+        CommonCodeStyleSettings.IndentOptions indentOptions = settings.getIndentOptions(StarlarkFileType.INSTANCE);
+        CharSequence docChars = document.getCharsSequence();
+
+        String baseIndent = "";
+        int indentStart = CharArrayUtil.shiftBackwardUntil(docChars, offset, "\n") + 1;
+        if (indentStart >= 0) {
+            int indentEnd = CharArrayUtil.shiftForward(docChars, indentStart, " \t");
+            if (indentEnd > indentStart) {
+                baseIndent = docChars.subSequence(indentStart, indentEnd).toString();
+            }
+        }
+        baseIndent += new IndentInfo(0, indentOptions.INDENT_SIZE, 0).generateNewWhiteSpace(indentOptions);
+        return baseIndent;
+    }
+
+    @Override
+    public boolean isSuitableFor(@Nullable Language language) {
+        return language instanceof StarlarkLanguage;
+    }
 }

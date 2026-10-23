@@ -1,34 +1,50 @@
-package org.jetbrains.bazel.languages.starlark
+package org.jetbrains.bazel.languages.starlark;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.search.DelegatingGlobalSearchScope
-import com.intellij.psi.search.GlobalSearchScope
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage.StarlarkFileType;
+import consulo.language.psi.scope.DelegatingGlobalSearchScope;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType;
 
-@ApiStatus.Internal
-fun Project.starlarkProjectScope(): GlobalSearchScope = GlobalSearchScope
-  .projectScope(this)
-  .restrictToStarlarkFiles()
+import java.util.Set;
 
-@ApiStatus.Internal
-fun GlobalSearchScope.restrictToStarlarkFiles(): GlobalSearchScope {
-  return GlobalSearchScope.getScopeRestrictedByFileTypes(
-    this,
-    StarlarkFileType,
-  )
+public final class StarlarkSearchScope {
+    private StarlarkSearchScope() {
+    }
+
+    public static GlobalSearchScope starlarkProjectScope(Project receiver) {
+        return restrictToStarlarkFiles(GlobalSearchScope.projectScope(receiver));
+    }
+
+    public static GlobalSearchScope restrictToStarlarkFiles(GlobalSearchScope receiver) {
+        return GlobalSearchScope.getScopeRestrictedByFileTypes(
+            receiver,
+            StarlarkFileType.INSTANCE
+        );
+    }
+
+    public static GlobalSearchScope restrictToStarlarkFiles(
+        GlobalSearchScope receiver,
+        BazelFileType... types
+    ) {
+        return new StarlarkFilesByTypeScope(restrictToStarlarkFiles(receiver), Set.of(types));
+    }
 }
 
-@ApiStatus.Internal
-fun GlobalSearchScope.restrictToStarlarkFiles(
-  vararg types: BazelFileType
-): GlobalSearchScope = StarlarkFilesByTypeScope(restrictToStarlarkFiles(), types.toSet())
+class StarlarkFilesByTypeScope extends DelegatingGlobalSearchScope {
+    private final Set<BazelFileType> myTypes;
 
-private class StarlarkFilesByTypeScope(
-  base: GlobalSearchScope,
-  private val types: Set<BazelFileType>,
-) : DelegatingGlobalSearchScope(base) {
+    StarlarkFilesByTypeScope(
+        GlobalSearchScope base,
+        Set<BazelFileType> types
+    ) {
+        super(base);
+        myTypes = types;
+    }
 
-  override fun contains(file: VirtualFile): Boolean = super.contains(file) && BazelFileType.ofFileName(file.name) in types
+    @Override
+    public boolean contains(VirtualFile file) {
+        return super.contains(file) && myTypes.contains(BazelFileType.ofFileName(file.getName()));
+    }
 }

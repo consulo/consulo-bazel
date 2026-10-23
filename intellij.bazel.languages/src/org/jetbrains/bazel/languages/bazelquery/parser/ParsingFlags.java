@@ -1,56 +1,77 @@
-package org.jetbrains.bazel.languages.bazelquery.parser
+package org.jetbrains.bazel.languages.bazelquery.parser;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.PsiBuilder
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.bazel.languages.BazelLanguagesBundle
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementTypes
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.parser.PsiBuilder;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementTypes;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenTypes;
 
-internal open class ParsingFlags(private val root: IElementType, val builder: PsiBuilder) : PsiBuilder by builder {
-  private val utils = ParsingUtils(builder)
+// consulo: Kotlin `PsiBuilder by builder` delegation is replaced by explicit calls on myBuilder
+class ParsingFlags {
+    private final IElementType myRoot;
+    private final PsiBuilder myBuilder;
 
-  fun parseFile(): ASTNode {
-    val flagsList = builder.mark()
-    while (!eof()) {
-      when {
-        utils.atAnyToken(BazelQueryTokenSets.FLAGS) -> parseFlag()
-        else -> utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unexpected.token"))
-      }
+    private final ParsingUtils myUtils;
+
+    ParsingFlags(IElementType root, PsiBuilder builder) {
+        myRoot = root;
+        myBuilder = builder;
+        myUtils = new ParsingUtils(builder);
     }
-    flagsList.done(root)
-    return treeBuilt
-  }
 
-  private fun parseFlag() {
-    val flag = mark()
+    public PsiBuilder getBuilder() {
+        return myBuilder;
+    }
 
-    if (utils.atToken(BazelQueryTokenTypes.UNFINISHED_FLAG)) {
-      utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.unfinished.flag"))
-      utils.expectToken(BazelQueryTokenTypes.WHITE_SPACE)
-    } else if (utils.atToken(BazelQueryTokenTypes.FLAG)) {
-      advanceLexer()
-
-      if (!utils.matchToken(BazelQueryTokenTypes.EQUALS)) {
-        utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.flag"))
-      } else {
-        if (utils.matchToken(BazelQueryTokenTypes.UNFINISHED_VAL)) {
-          error(BazelLanguagesBundle.message("bazelquery.error.missing.quote"))
-        } else if (!utils.matchAnyToken(BazelQueryTokenSets.FLAG_VALS)) {
-          error(BazelLanguagesBundle.message("bazelquery.error.missing.flag"))
-        } else if (!eof()) {
-          utils.expectToken(BazelQueryTokenTypes.WHITE_SPACE)
+    public ASTNode parseFile() {
+        PsiBuilder.Marker flagsList = myBuilder.mark();
+        while (!myBuilder.eof()) {
+            if (myUtils.atAnyToken(BazelQueryTokenSets.FLAGS)) {
+                parseFlag();
+            }
+            else {
+                myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnexpectedToken());
+            }
         }
-      }
-    } else {
-      advanceLexer()
-      while (utils.matchToken(BazelQueryTokenTypes.MISSING_SPACE)) {
-        utils.advanceError(BazelLanguagesBundle.message("bazelquery.error.missing.space"))
-      }
-      utils.matchToken(BazelQueryTokenTypes.WHITE_SPACE)
+        flagsList.done(myRoot);
+        return myBuilder.getTreeBuilt();
     }
 
-    flag.done(BazelQueryElementTypes.FLAG)
-  }
+    private void parseFlag() {
+        PsiBuilder.Marker flag = myBuilder.mark();
+
+        if (myUtils.atToken(BazelQueryTokenTypes.UNFINISHED_FLAG)) {
+            myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorUnfinishedFlag());
+            myUtils.expectToken(BazelQueryTokenTypes.WHITE_SPACE);
+        }
+        else if (myUtils.atToken(BazelQueryTokenTypes.FLAG)) {
+            myBuilder.advanceLexer();
+
+            if (!myUtils.matchToken(BazelQueryTokenTypes.EQUALS)) {
+                myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingFlag());
+            }
+            else {
+                if (myUtils.matchToken(BazelQueryTokenTypes.UNFINISHED_VAL)) {
+                    myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingQuote());
+                }
+                else if (!myUtils.matchAnyToken(BazelQueryTokenSets.FLAG_VALS)) {
+                    myBuilder.error(BazelLanguagesLocalize.bazelqueryErrorMissingFlag());
+                }
+                else if (!myBuilder.eof()) {
+                    myUtils.expectToken(BazelQueryTokenTypes.WHITE_SPACE);
+                }
+            }
+        }
+        else {
+            myBuilder.advanceLexer();
+            while (myUtils.matchToken(BazelQueryTokenTypes.MISSING_SPACE)) {
+                myUtils.advanceError(BazelLanguagesLocalize.bazelqueryErrorMissingSpace());
+            }
+            myUtils.matchToken(BazelQueryTokenTypes.WHITE_SPACE);
+        }
+
+        flag.done(BazelQueryElementTypes.FLAG);
+    }
 }

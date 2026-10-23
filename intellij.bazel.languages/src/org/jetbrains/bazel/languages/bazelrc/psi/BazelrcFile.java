@@ -1,19 +1,26 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.extapi.psi.PsiFileBase
-import com.intellij.openapi.fileTypes.FileType
-import com.intellij.psi.FileViewProvider
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.BazelrcFileType
-import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage
+import consulo.language.file.FileViewProvider;
+import consulo.language.impl.psi.PsiFileBase;
+import consulo.virtualFileSystem.fileType.FileType;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage.BazelrcFileType;
 
-@ApiStatus.Internal
-class BazelrcFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, BazelrcLanguage) {
-  override fun getFileType(): FileType = BazelrcFileType
+public class BazelrcFile extends PsiFileBase {
+    public BazelrcFile(FileViewProvider viewProvider) {
+        super(viewProvider, BazelrcLanguage.INSTANCE);
+    }
 
-  val imports: Array<BazelrcImport>
-    get() = this.findChildrenByClass(BazelrcImport::class.java)
+    @Override
+    public FileType getFileType() {
+        return BazelrcFileType.INSTANCE;
+    }
 
-  val lines: Array<BazelrcLine>
-    get() = this.findChildrenByClass(BazelrcLine::class.java)
+    public BazelrcImport[] getImports() {
+        return this.findChildrenByClass(BazelrcImport.class);
+    }
+
+    public BazelrcLine[] getLines() {
+        return this.findChildrenByClass(BazelrcLine.class);
+    }
 }

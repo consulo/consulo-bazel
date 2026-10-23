@@ -1,18 +1,25 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions.arguments
+package org.jetbrains.bazel.languages.starlark.psi.expressions.arguments;
 
-import com.intellij.lang.ASTNode
-import com.intellij.openapi.components.serviceOrNull
-import com.intellij.psi.PsiReference
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkArgumentExpression(node: ASTNode) :
-  StarlarkBaseElement(node),
-  StarlarkArgumentElement {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitArgumentExpression(this)
+public class StarlarkArgumentExpression extends StarlarkBaseElement implements StarlarkArgumentElement {
+    public StarlarkArgumentExpression(ASTNode node) {
+        super(node);
+    }
 
-  override fun getReference(): PsiReference? = serviceOrNull<StarlarkReferenceSupport>()?.getReference(this)
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitArgumentExpression(this);
+    }
+
+    @Override
+    public @Nullable PsiReference getReference() {
+        StarlarkReferenceSupport support = StarlarkReferenceSupport.getInstance();
+        return support == null ? null : support.getReference(this);
+    }
 }

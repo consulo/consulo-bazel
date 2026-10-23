@@ -1,17 +1,25 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.lang.ASTNode
-import com.intellij.util.PlatformIcons
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import javax.swing.Icon
+import consulo.component.util.Iconable;
+import consulo.language.ast.ASTNode;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkStringLoadValue(node: ASTNode) :
-  StarlarkBaseElement(node),
-  StarlarkLoadValue {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitStringLoadValue(this)
+public class StarlarkStringLoadValue extends StarlarkBaseElement implements StarlarkLoadValue, Iconable {
+    public StarlarkStringLoadValue(ASTNode node) {
+        super(node);
+    }
 
-  override fun getIcon(flags: Int): Icon? = PlatformIcons.IMPORT_ICON
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitStringLoadValue(this);
+    }
+
+    @Override
+    public @Nullable Image getIcon(int flags) {
+        return PlatformIconGroup.actionsImport();
+    }
 }

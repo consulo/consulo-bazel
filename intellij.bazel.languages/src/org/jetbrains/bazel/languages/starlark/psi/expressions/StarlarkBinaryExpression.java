@@ -1,34 +1,55 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import com.intellij.psi.tree.IElementType
-import com.intellij.psi.util.elementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiUtilCore;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkBinaryExpression(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitBinaryExpression(this)
+import java.util.List;
 
-  fun getOperands(): List<PsiElement> = findChildrenByType(StarlarkElementTypes.EXPRESSIONS)
+public class StarlarkBinaryExpression extends StarlarkBaseElement {
+    public StarlarkBinaryExpression(ASTNode node) {
+        super(node);
+    }
 
-  fun getLeftOperand(): PsiElement? = getOperands().firstOrNull()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitBinaryExpression(this);
+    }
 
-  fun getRightOperand(): PsiElement? = getOperands().getOrNull(1)
+    public List<PsiElement> getOperands() {
+        return findChildrenByType(StarlarkElementTypes.EXPRESSIONS);
+    }
 
-  /**
-   * The PsiElement of the operator token that sits between the two operands.
-   * For compound operations the first keyword element is returned.
-   */
-  fun getOperatorElement(): PsiElement? = findChildByType<PsiElement>(StarlarkTokenSets.BINARY_OPERATIONS)
+    public @Nullable PsiElement getLeftOperand() {
+        List<PsiElement> operands = getOperands();
+        return operands.isEmpty() ? null : operands.get(0);
+    }
 
-  /**
-   * The IElementType of the operator token that sits between the two operands (e.g. `+`, `-`).
-   * For compound operations ("not in" and "is not") the first keyword is returned.
-   */
-  fun getOperator(): IElementType? = getOperatorElement()?.elementType
+    public @Nullable PsiElement getRightOperand() {
+        List<PsiElement> operands = getOperands();
+        return operands.size() > 1 ? operands.get(1) : null;
+    }
+
+    /**
+     * The PsiElement of the operator token that sits between the two operands.
+     * For compound operations the first keyword element is returned.
+     */
+    public @Nullable PsiElement getOperatorElement() {
+        return findChildByType(StarlarkTokenSets.BINARY_OPERATIONS);
+    }
+
+    /**
+     * The IElementType of the operator token that sits between the two operands (e.g. `+`, `-`).
+     * For compound operations ("not in" and "is not") the first keyword is returned.
+     */
+    public @Nullable IElementType getOperator() {
+        PsiElement operatorElement = getOperatorElement();
+        return operatorElement == null ? null : PsiUtilCore.getElementType(operatorElement);
+    }
 }

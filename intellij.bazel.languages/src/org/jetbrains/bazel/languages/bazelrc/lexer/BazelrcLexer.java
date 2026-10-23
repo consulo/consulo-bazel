@@ -1,7 +1,9 @@
-package org.jetbrains.bazel.languages.bazelrc.lexer
+package org.jetbrains.bazel.languages.bazelrc.lexer;
 
-import com.intellij.lexer.FlexAdapter
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.lexer.FlexAdapter;
 
-@ApiStatus.Internal
-class BazelrcLexer : FlexAdapter(_BazelrcLexer(null))
+public class BazelrcLexer extends FlexAdapter {
+    public BazelrcLexer() {
+        super(new _BazelrcLexer(null));
+    }
+}

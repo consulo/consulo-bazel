@@ -1,72 +1,78 @@
-package org.jetbrains.bazel.languages.starlark.rename
+package org.jetbrains.bazel.languages.starlark.rename;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.tree.util.children
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiFileFactory
-import com.intellij.psi.impl.PsiFileFactoryImpl
-import com.intellij.testFramework.LightVirtualFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.StarlarkLanguage
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
+import java.util.Objects;
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiFileFactory;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
 
-private const val DUMMY_FILENAME = "dummy.bzl"
+public class StarlarkElementGenerator {
+    private static final String DUMMY_FILENAME = "dummy.bzl";
 
-@ApiStatus.Internal
-class StarlarkElementGenerator(val project: Project) {
-  fun createTokenType(tokenString: String): ASTNode = createDummyFile(tokenString).node.firstChildNode
+    private final Project myProject;
 
-  fun createNameIdentifier(name: String): ASTNode {
-    val dummyFile = createDummyFile(name)
-    val referenceNode = dummyFile.node.firstChildNode.firstChildNode
-    val nameNode = referenceNode.firstChildNode
-    if (nameNode.elementType !== StarlarkTokenTypes.IDENTIFIER) {
-      error("Expected elementType to be IDENTIFIER while creating dummy file")
+    public StarlarkElementGenerator(Project project) {
+        myProject = project;
     }
-    return nameNode
-  }
 
-  fun createStringLiteral(contents: String): ASTNode {
-    val dummyFile = createDummyFile("\"$contents\"")
-    val stringNode = dummyFile.node.firstChildNode.firstChildNode.firstChildNode
-    if (stringNode.elementType !== StarlarkTokenTypes.STRING) {
-      error("Expected elementType to be STRING while creating dummy file")
+    public Project getProject() {
+        return myProject;
     }
-    return stringNode
-  }
 
-  fun createStringLiteralExpression(contents: String): ASTNode {
-    val dummyFile = createDummyFile("\"$contents\"")
-    val stringNode = dummyFile.node.firstChildNode.firstChildNode
-    if (stringNode.elementType !== StarlarkElementTypes.STRING_LITERAL_EXPRESSION) {
-      error("Expected elementType to be STRING_LITERAL_EXPRESSION")
+    public ASTNode createTokenType(String tokenString) {
+        return Objects.requireNonNull(createDummyFile(tokenString).getNode().getFirstChildNode());
     }
-    return stringNode
-  }
 
-  /**
-   * You want to be passing contents sort of in the form
-   *     `deps = [],`
-   */
-  fun createNamedArgument(contents: String): ASTNode {
-    val dummyFile = createDummyFile("dummy($contents)")
-    val argumentNode =
-      dummyFile.node.firstChildNode.firstChildNode.lastChildNode
-        .children()
-        .elementAt(1)
-    if (argumentNode.elementType !== StarlarkElementTypes.NAMED_ARGUMENT_EXPRESSION) {
-      error("Expected elementType to be NAMED_ARGUMENT_EXPRESSION")
+    public ASTNode createNameIdentifier(String name) {
+        PsiFile dummyFile = createDummyFile(name);
+        ASTNode referenceNode = Objects.requireNonNull(Objects.requireNonNull(dummyFile.getNode().getFirstChildNode()).getFirstChildNode());
+        ASTNode nameNode = Objects.requireNonNull(referenceNode.getFirstChildNode());
+        if (nameNode.getElementType() != StarlarkTokenTypes.IDENTIFIER) {
+            throw new IllegalStateException("Expected elementType to be IDENTIFIER while creating dummy file");
+        }
+        return nameNode;
     }
-    return argumentNode
-  }
 
-  private fun createDummyFile(contents: String): PsiFile {
-    val factory = PsiFileFactory.getInstance(project)
-    val virtualFile = LightVirtualFile(DUMMY_FILENAME, StarlarkFileType, contents)
-    val psiFile = (factory as PsiFileFactoryImpl).trySetupPsiForFile(virtualFile, StarlarkLanguage, false, true)
-    return psiFile ?: error("Failed to create dummy file")
-  }
+    public ASTNode createStringLiteral(String contents) {
+        PsiFile dummyFile = createDummyFile("\"" + contents + "\"");
+        ASTNode stringNode = Objects.requireNonNull(Objects.requireNonNull(Objects.requireNonNull(dummyFile.getNode().getFirstChildNode()).getFirstChildNode()).getFirstChildNode());
+        if (stringNode.getElementType() != StarlarkTokenTypes.STRING) {
+            throw new IllegalStateException("Expected elementType to be STRING while creating dummy file");
+        }
+        return stringNode;
+    }
+
+    public ASTNode createStringLiteralExpression(String contents) {
+        PsiFile dummyFile = createDummyFile("\"" + contents + "\"");
+        ASTNode stringNode = Objects.requireNonNull(Objects.requireNonNull(dummyFile.getNode().getFirstChildNode()).getFirstChildNode());
+        if (stringNode.getElementType() != StarlarkElementTypes.STRING_LITERAL_EXPRESSION) {
+            throw new IllegalStateException("Expected elementType to be STRING_LITERAL_EXPRESSION");
+        }
+        return stringNode;
+    }
+
+    /**
+     * You want to be passing contents sort of in the form
+     * {@code deps = [],}
+     */
+    public ASTNode createNamedArgument(String contents) {
+        PsiFile dummyFile = createDummyFile("dummy(" + contents + ")");
+        ASTNode argumentNode =
+            Objects.requireNonNull(Objects.requireNonNull(Objects.requireNonNull(dummyFile.getNode().getFirstChildNode()).getFirstChildNode()).getLastChildNode())
+                .getChildren(null)[1];
+        if (argumentNode.getElementType() != StarlarkElementTypes.NAMED_ARGUMENT_EXPRESSION) {
+            throw new IllegalStateException("Expected elementType to be NAMED_ARGUMENT_EXPRESSION");
+        }
+        return argumentNode;
+    }
+
+    private PsiFile createDummyFile(String contents) {
+        PsiFileFactory factory = PsiFileFactory.getInstance(myProject);
+        // consulo: upstream used PsiFileFactoryImpl.trySetupPsiForFile(LightVirtualFile(DUMMY_FILENAME, StarlarkFileType, contents),
+        // StarlarkLanguage, false, true) and failed with "Failed to create dummy file" on null
+        return factory.createFileFromText(DUMMY_FILENAME, StarlarkLanguage.INSTANCE, contents, false, true);
+    }
 }

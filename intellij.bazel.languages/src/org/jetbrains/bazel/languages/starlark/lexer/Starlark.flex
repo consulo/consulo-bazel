@@ -1,10 +1,12 @@
 package org.jetbrains.bazel.languages.starlark.lexer;
 
-import com.intellij.lexer.FlexLexer;
-import com.intellij.psi.TokenType;
-import com.intellij.psi.tree.IElementType;
+import consulo.language.lexer.FlexLexer;
+import consulo.language.ast.TokenType;
+import consulo.language.ast.IElementType;
 import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
 
+// consulo: generated code returns null at the end of input
+@org.jspecify.annotations.NullUnmarked
 @SuppressWarnings("ALL")
 %%
 

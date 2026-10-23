@@ -1,29 +1,49 @@
-package org.jetbrains.bazel.languages.starlark.psi
+package org.jetbrains.bazel.languages.starlark.psi;
 
-import com.intellij.lang.Language
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.FileViewProviderFactory
-import com.intellij.psi.PsiManager
-import com.intellij.psi.SingleRootFileViewProvider
-import org.jetbrains.bazel.languages.starlark.StarlarkLanguage
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.file.FileViewProvider;
+import consulo.language.file.LanguageFileViewProviderFactory;
+import consulo.language.impl.file.SingleRootFileViewProvider;
+import consulo.language.psi.PsiManager;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
 
-internal class StarlarkViewProvider(
-  manager: PsiManager,
-  virtualFile: VirtualFile,
-  eventSystemEnabled: Boolean,
-  language: Language,
-) : SingleRootFileViewProvider(manager, virtualFile, eventSystemEnabled, language) {
-  // Make sure to create Starlark PSI even for excluded directories (such as bazel-out)
-  override fun shouldCreatePsi() = baseLanguage is StarlarkLanguage
+class StarlarkViewProvider extends SingleRootFileViewProvider {
+    StarlarkViewProvider(PsiManager manager, VirtualFile virtualFile, boolean eventSystemEnabled, Language language) {
+        super(manager, virtualFile, eventSystemEnabled, language);
+    }
 
-  override fun createCopy(copy: VirtualFile): SingleRootFileViewProvider = StarlarkViewProvider(manager, copy, false, baseLanguage)
+    // Make sure to create Starlark PSI even for excluded directories (such as bazel-out)
+    @Override
+    protected boolean shouldCreatePsi() {
+        return getBaseLanguage() instanceof StarlarkLanguage;
+    }
+
+    @Override
+    public SingleRootFileViewProvider createCopy(VirtualFile copy) {
+        return new StarlarkViewProvider(getManager(), copy, false, getBaseLanguage());
+    }
 }
 
-internal class StarlarkViewProviderFactory : FileViewProviderFactory {
-  override fun createFileViewProvider(
-    file: VirtualFile,
-    language: Language,
-    manager: PsiManager,
-    eventSystemEnabled: Boolean,
-  ) = StarlarkViewProvider(manager, file, eventSystemEnabled, language)
+@ExtensionImpl
+class StarlarkViewProviderFactory implements LanguageFileViewProviderFactory {
+    // consulo: extensions need a public constructor
+    public StarlarkViewProviderFactory() {
+    }
+
+    @Override
+    public FileViewProvider createFileViewProvider(
+        VirtualFile file,
+        Language language,
+        PsiManager manager,
+        boolean eventSystemEnabled
+    ) {
+        return new StarlarkViewProvider(manager, file, eventSystemEnabled, language);
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 }

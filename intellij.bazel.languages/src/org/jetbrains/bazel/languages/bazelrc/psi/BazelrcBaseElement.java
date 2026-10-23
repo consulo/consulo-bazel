@@ -1,21 +1,23 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.extapi.psi.ASTWrapperPsiElement
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElementVisitor
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.ast.ASTNode;
+import consulo.language.impl.psi.ASTWrapperPsiElement;
+import consulo.language.psi.PsiElementVisitor;
 
-@ApiStatus.Internal
-abstract class BazelrcBaseElement(node: ASTNode) :
-  ASTWrapperPsiElement(node),
-  BazelrcElement {
-  override fun accept(visitor: PsiElementVisitor) {
-    if (visitor is BazelrcElementVisitor) {
-      acceptVisitor(visitor)
-    } else {
-      super.accept(visitor)
+public abstract class BazelrcBaseElement extends ASTWrapperPsiElement implements BazelrcElement {
+    public BazelrcBaseElement(ASTNode node) {
+        super(node);
     }
-  }
 
-  protected abstract fun acceptVisitor(visitor: BazelrcElementVisitor)
+    @Override
+    public void accept(PsiElementVisitor visitor) {
+        if (visitor instanceof BazelrcElementVisitor bazelrcVisitor) {
+            acceptVisitor(bazelrcVisitor);
+        }
+        else {
+            super.accept(visitor);
+        }
+    }
+
+    protected abstract void acceptVisitor(BazelrcElementVisitor visitor);
 }

@@ -1,31 +1,61 @@
-package org.jetbrains.bazel.languages.bazelrc.highlighting
+package org.jetbrains.bazel.languages.bazelrc.highlighting;
 
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.editor.colors.TextAttributesKey
-import com.intellij.openapi.fileTypes.SyntaxHighlighter
-import com.intellij.openapi.fileTypes.SyntaxHighlighterBase
-import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes
-import org.jetbrains.bazel.languages.bazelrc.lexer.BazelrcLexer
+import consulo.annotation.component.ExtensionImpl;
+import consulo.colorScheme.TextAttributesKey;
+import consulo.language.Language;
+import consulo.language.ast.IElementType;
+import consulo.language.editor.highlight.SyntaxHighlighter;
+import consulo.language.editor.highlight.SyntaxHighlighterBase;
+import consulo.language.editor.highlight.SyntaxHighlighterFactory;
+import consulo.language.lexer.Lexer;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes;
+import org.jetbrains.bazel.languages.bazelrc.lexer.BazelrcLexer;
+import org.jspecify.annotations.Nullable;
 
-internal object BazelrcSyntaxHighlighter : SyntaxHighlighterBase() {
-  private val keys =
-    mapOf(
-      BazelrcTokenTypes.COMMENT to BazelrcHighlightingColors.COMMENT,
-      BazelrcTokenTypes.IMPORT to BazelrcHighlightingColors.IMPORT,
-      BazelrcTokenTypes.COMMAND to BazelrcHighlightingColors.COMMAND,
-      BazelrcTokenTypes.CONFIG to BazelrcHighlightingColors.IDENTIFIER,
-      BazelrcTokenTypes.FLAG to BazelrcHighlightingColors.STRING,
-    )
+import java.util.Map;
 
-  override fun getHighlightingLexer(): Lexer = BazelrcLexer()
+public class BazelrcSyntaxHighlighter extends SyntaxHighlighterBase {
+    public static final BazelrcSyntaxHighlighter INSTANCE = new BazelrcSyntaxHighlighter();
 
-  override fun getTokenHighlights(tokenType: IElementType): Array<out TextAttributesKey> = pack(keys[tokenType])
+    private static final Map<IElementType, TextAttributesKey> KEYS =
+        Map.of(
+            BazelrcTokenTypes.COMMENT, BazelrcHighlightingColors.COMMENT,
+            BazelrcTokenTypes.IMPORT, BazelrcHighlightingColors.IMPORT,
+            BazelrcTokenTypes.COMMAND, BazelrcHighlightingColors.COMMAND,
+            BazelrcTokenTypes.CONFIG, BazelrcHighlightingColors.IDENTIFIER,
+            BazelrcTokenTypes.FLAG, BazelrcHighlightingColors.STRING
+        );
+
+    private BazelrcSyntaxHighlighter() {
+    }
+
+    @Override
+    public Lexer getHighlightingLexer() {
+        return new BazelrcLexer();
+    }
+
+    @Override
+    public TextAttributesKey[] getTokenHighlights(IElementType tokenType) {
+        return pack(KEYS.get(tokenType));
+    }
 }
 
-internal class BazelrcSyntaxHighlighterFactory : SyntaxHighlighterFactory() {
-  override fun getSyntaxHighlighter(project: Project?, virtualFile: VirtualFile?): SyntaxHighlighter = BazelrcSyntaxHighlighter
+@ExtensionImpl
+class BazelrcSyntaxHighlighterFactory extends SyntaxHighlighterFactory {
+    // consulo: extensions need a public constructor
+    public BazelrcSyntaxHighlighterFactory() {
+    }
+
+    @Override
+    public SyntaxHighlighter getSyntaxHighlighter(@Nullable Project project, @Nullable VirtualFile virtualFile) {
+        return BazelrcSyntaxHighlighter.INSTANCE;
+    }
+
+    @Override
+    public Language getLanguage() {
+        return BazelrcLanguage.INSTANCE;
+    }
 }

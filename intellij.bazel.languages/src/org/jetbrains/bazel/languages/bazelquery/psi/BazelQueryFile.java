@@ -1,20 +1,31 @@
-package org.jetbrains.bazel.languages.bazelquery.psi
+package org.jetbrains.bazel.languages.bazelquery.psi;
 
-import com.intellij.extapi.psi.PsiFileBase
-import com.intellij.openapi.fileTypes.FileType
-import com.intellij.psi.FileViewProvider
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryFileType
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsFileType
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryLanguage
+import consulo.language.file.FileViewProvider;
+import consulo.language.impl.psi.PsiFileBase;
+import consulo.virtualFileSystem.fileType.FileType;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage.BazelQueryFlagsFileType;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryLanguage;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryLanguage.BazelQueryFileType;
 
-@ApiStatus.Internal
-class BazelQueryFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, BazelQueryLanguage) {
-  override fun getFileType(): FileType = BazelQueryFileType
-}
+public class BazelQueryFile extends PsiFileBase {
+    public BazelQueryFile(FileViewProvider viewProvider) {
+        super(viewProvider, BazelQueryLanguage.INSTANCE);
+    }
 
-@ApiStatus.Internal
-class BazelQueryFlagsFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, BazelQueryFlagsLanguage) {
-  override fun getFileType(): FileType = BazelQueryFlagsFileType
+    @Override
+    public FileType getFileType() {
+        return BazelQueryFileType.INSTANCE;
+    }
+
+    public static class BazelQueryFlagsFile extends PsiFileBase {
+        public BazelQueryFlagsFile(FileViewProvider viewProvider) {
+            super(viewProvider, BazelQueryFlagsLanguage.INSTANCE);
+        }
+
+        @Override
+        public FileType getFileType() {
+            return BazelQueryFlagsFileType.INSTANCE;
+        }
+    }
 }

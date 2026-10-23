@@ -1,287 +1,196 @@
-package org.jetbrains.bazel.languages.starlark.elements
+package org.jetbrains.bazel.languages.starlark.elements;
 
-import org.jetbrains.annotations.ApiStatus
+public final class StarlarkTokenTypes {
+    private StarlarkTokenTypes() {
+    }
 
-@ApiStatus.Internal
-object StarlarkTokenTypes {
-  // Whitespaces
-  @JvmField
-  val SPACE = StarlarkTokenType("SPACE")
+    // Whitespaces
+    public static final StarlarkTokenType SPACE = new StarlarkTokenType("SPACE");
 
-  @JvmField
-  val TAB = StarlarkTokenType("TAB")
+    public static final StarlarkTokenType TAB = new StarlarkTokenType("TAB");
 
-  @JvmField
-  val LINE_CONTINUATION = StarlarkTokenType("LINE_CONTINUATION")
+    public static final StarlarkTokenType LINE_CONTINUATION = new StarlarkTokenType("LINE_CONTINUATION");
 
-  @JvmField
-  val LINE_BREAK = StarlarkTokenType("LINE_BREAK")
+    public static final StarlarkTokenType LINE_BREAK = new StarlarkTokenType("LINE_BREAK");
 
-  // Significant whitespaces
-  @JvmField
-  val INDENT = StarlarkTokenType("INDENT")
+    // Significant whitespaces
+    public static final StarlarkTokenType INDENT = new StarlarkTokenType("INDENT");
 
-  @JvmField
-  val DEDENT = StarlarkTokenType("DEDENT")
+    public static final StarlarkTokenType DEDENT = new StarlarkTokenType("DEDENT");
 
-  @JvmField
-  val INCONSISTENT_DEDENT = StarlarkTokenType("INCONSISTENT_DEDENT")
+    public static final StarlarkTokenType INCONSISTENT_DEDENT = new StarlarkTokenType("INCONSISTENT_DEDENT");
 
-  @JvmField
-  val STATEMENT_BREAK = StarlarkTokenType("STATEMENT_BREAK")
+    public static final StarlarkTokenType STATEMENT_BREAK = new StarlarkTokenType("STATEMENT_BREAK");
 
-  // Comment
-  @JvmField
-  val COMMENT = StarlarkTokenType("COMMENT")
+    // Comment
+    public static final StarlarkTokenType COMMENT = new StarlarkTokenType("COMMENT");
 
-  // Literals
-  @JvmField
-  val STRING = StarlarkTokenType("STRING")
+    // Literals
+    public static final StarlarkTokenType STRING = new StarlarkTokenType("STRING");
 
-  @JvmField
-  val BYTES = StarlarkTokenType("BYTES")
+    public static final StarlarkTokenType BYTES = new StarlarkTokenType("BYTES");
 
-  @JvmField
-  val INT = StarlarkTokenType("INT")
+    public static final StarlarkTokenType INT = new StarlarkTokenType("INT");
 
-  @JvmField
-  val FLOAT = StarlarkTokenType("FLOAT")
+    public static final StarlarkTokenType FLOAT = new StarlarkTokenType("FLOAT");
 
-  // Keywords
-  @JvmField
-  val AND_KEYWORD = StarlarkTokenType("and")
+    // Keywords
+    public static final StarlarkTokenType AND_KEYWORD = new StarlarkTokenType("and");
 
-  @JvmField
-  val BREAK_KEYWORD = StarlarkTokenType("break")
+    public static final StarlarkTokenType BREAK_KEYWORD = new StarlarkTokenType("break");
 
-  @JvmField
-  val CONTINUE_KEYWORD = StarlarkTokenType("continue")
+    public static final StarlarkTokenType CONTINUE_KEYWORD = new StarlarkTokenType("continue");
 
-  @JvmField
-  val DEF_KEYWORD = StarlarkTokenType("def")
+    public static final StarlarkTokenType DEF_KEYWORD = new StarlarkTokenType("def");
 
-  @JvmField
-  val ELIF_KEYWORD = StarlarkTokenType("elif")
+    public static final StarlarkTokenType ELIF_KEYWORD = new StarlarkTokenType("elif");
 
-  @JvmField
-  val ELSE_KEYWORD = StarlarkTokenType("else")
+    public static final StarlarkTokenType ELSE_KEYWORD = new StarlarkTokenType("else");
 
-  @JvmField
-  val FOR_KEYWORD = StarlarkTokenType("for")
+    public static final StarlarkTokenType FOR_KEYWORD = new StarlarkTokenType("for");
 
-  @JvmField
-  val IF_KEYWORD = StarlarkTokenType("if")
+    public static final StarlarkTokenType IF_KEYWORD = new StarlarkTokenType("if");
 
-  @JvmField
-  val IN_KEYWORD = StarlarkTokenType("in")
+    public static final StarlarkTokenType IN_KEYWORD = new StarlarkTokenType("in");
 
-  @JvmField
-  val LAMBDA_KEYWORD = StarlarkTokenType("lambda")
+    public static final StarlarkTokenType LAMBDA_KEYWORD = new StarlarkTokenType("lambda");
 
-  @JvmField
-  val LOAD_KEYWORD = StarlarkTokenType("load")
+    public static final StarlarkTokenType LOAD_KEYWORD = new StarlarkTokenType("load");
 
-  @JvmField
-  val NOT_KEYWORD = StarlarkTokenType("not")
+    public static final StarlarkTokenType NOT_KEYWORD = new StarlarkTokenType("not");
 
-  @JvmField
-  val OR_KEYWORD = StarlarkTokenType("or")
+    public static final StarlarkTokenType OR_KEYWORD = new StarlarkTokenType("or");
 
-  @JvmField
-  val PASS_KEYWORD = StarlarkTokenType("pass")
+    public static final StarlarkTokenType PASS_KEYWORD = new StarlarkTokenType("pass");
 
-  @JvmField
-  val RETURN_KEYWORD = StarlarkTokenType("return")
+    public static final StarlarkTokenType RETURN_KEYWORD = new StarlarkTokenType("return");
 
-  @JvmField
-  val NONE_KEYWORD = StarlarkTokenType("None")
+    public static final StarlarkTokenType NONE_KEYWORD = new StarlarkTokenType("None");
 
-  @JvmField
-  val TRUE_KEYWORD = StarlarkTokenType("True")
+    public static final StarlarkTokenType TRUE_KEYWORD = new StarlarkTokenType("True");
 
-  @JvmField
-  val FALSE_KEYWORD = StarlarkTokenType("False")
+    public static final StarlarkTokenType FALSE_KEYWORD = new StarlarkTokenType("False");
 
-  // Possible future keywords
-  @JvmField
-  val AS_KEYWORD = StarlarkTokenType("as")
+    // Possible future keywords
+    public static final StarlarkTokenType AS_KEYWORD = new StarlarkTokenType("as");
 
-  @JvmField
-  val ASSERT_KEYWORD = StarlarkTokenType("assert")
+    public static final StarlarkTokenType ASSERT_KEYWORD = new StarlarkTokenType("assert");
 
-  @JvmField
-  val ASYNC_KEYWORD = StarlarkTokenType("async")
+    public static final StarlarkTokenType ASYNC_KEYWORD = new StarlarkTokenType("async");
 
-  @JvmField
-  val AWAIT_KEYWORD = StarlarkTokenType("await")
+    public static final StarlarkTokenType AWAIT_KEYWORD = new StarlarkTokenType("await");
 
-  @JvmField
-  val CLASS_KEYWORD = StarlarkTokenType("class")
+    public static final StarlarkTokenType CLASS_KEYWORD = new StarlarkTokenType("class");
 
-  @JvmField
-  val DEL_KEYWORD = StarlarkTokenType("del")
+    public static final StarlarkTokenType DEL_KEYWORD = new StarlarkTokenType("del");
 
-  @JvmField
-  val EXCEPT_KEYWORD = StarlarkTokenType("except")
+    public static final StarlarkTokenType EXCEPT_KEYWORD = new StarlarkTokenType("except");
 
-  @JvmField
-  val FINALLY_KEYWORD = StarlarkTokenType("finally")
+    public static final StarlarkTokenType FINALLY_KEYWORD = new StarlarkTokenType("finally");
 
-  @JvmField
-  val FROM_KEYWORD = StarlarkTokenType("from")
+    public static final StarlarkTokenType FROM_KEYWORD = new StarlarkTokenType("from");
 
-  @JvmField
-  val GLOBAL_KEYWORD = StarlarkTokenType("global")
+    public static final StarlarkTokenType GLOBAL_KEYWORD = new StarlarkTokenType("global");
 
-  @JvmField
-  val IMPORT_KEYWORD = StarlarkTokenType("import")
+    public static final StarlarkTokenType IMPORT_KEYWORD = new StarlarkTokenType("import");
 
-  @JvmField
-  val IS_KEYWORD = StarlarkTokenType("is")
+    public static final StarlarkTokenType IS_KEYWORD = new StarlarkTokenType("is");
 
-  @JvmField
-  val NONLOCAL_KEYWORD = StarlarkTokenType("nonlocal")
+    public static final StarlarkTokenType NONLOCAL_KEYWORD = new StarlarkTokenType("nonlocal");
 
-  @JvmField
-  val RAISE_KEYWORD = StarlarkTokenType("raise")
+    public static final StarlarkTokenType RAISE_KEYWORD = new StarlarkTokenType("raise");
 
-  @JvmField
-  val TRY_KEYWORD = StarlarkTokenType("try")
+    public static final StarlarkTokenType TRY_KEYWORD = new StarlarkTokenType("try");
 
-  @JvmField
-  val WHILE_KEYWORD = StarlarkTokenType("while")
+    public static final StarlarkTokenType WHILE_KEYWORD = new StarlarkTokenType("while");
 
-  @JvmField
-  val WITH_KEYWORD = StarlarkTokenType("with")
+    public static final StarlarkTokenType WITH_KEYWORD = new StarlarkTokenType("with");
 
-  @JvmField
-  val YIELD_KEYWORD = StarlarkTokenType("yield")
+    public static final StarlarkTokenType YIELD_KEYWORD = new StarlarkTokenType("yield");
 
-  // Identifier
-  @JvmField
-  val IDENTIFIER = StarlarkTokenType("IDENTIFIER")
+    // Identifier
+    public static final StarlarkTokenType IDENTIFIER = new StarlarkTokenType("IDENTIFIER");
 
-  // Punctuation
-  @JvmField
-  val PLUS = StarlarkTokenType("+")
+    // Punctuation
+    public static final StarlarkTokenType PLUS = new StarlarkTokenType("+");
 
-  @JvmField
-  val MINUS = StarlarkTokenType("-")
+    public static final StarlarkTokenType MINUS = new StarlarkTokenType("-");
 
-  @JvmField
-  val MULT = StarlarkTokenType("*")
+    public static final StarlarkTokenType MULT = new StarlarkTokenType("*");
 
-  @JvmField
-  val DIV = StarlarkTokenType("/")
+    public static final StarlarkTokenType DIV = new StarlarkTokenType("/");
 
-  @JvmField
-  val FLOORDIV = StarlarkTokenType("//")
+    public static final StarlarkTokenType FLOORDIV = new StarlarkTokenType("//");
 
-  @JvmField
-  val PERC = StarlarkTokenType("%")
+    public static final StarlarkTokenType PERC = new StarlarkTokenType("%");
 
-  @JvmField
-  val EXP = StarlarkTokenType("**")
+    public static final StarlarkTokenType EXP = new StarlarkTokenType("**");
 
-  @JvmField
-  val TILDE = StarlarkTokenType("~")
+    public static final StarlarkTokenType TILDE = new StarlarkTokenType("~");
 
-  @JvmField
-  val AND = StarlarkTokenType("&")
+    public static final StarlarkTokenType AND = new StarlarkTokenType("&");
 
-  @JvmField
-  val OR = StarlarkTokenType("|")
+    public static final StarlarkTokenType OR = new StarlarkTokenType("|");
 
-  @JvmField
-  val XOR = StarlarkTokenType("^")
+    public static final StarlarkTokenType XOR = new StarlarkTokenType("^");
 
-  @JvmField
-  val LTLT = StarlarkTokenType("<<")
+    public static final StarlarkTokenType LTLT = new StarlarkTokenType("<<");
 
-  @JvmField
-  val GTGT = StarlarkTokenType(">>")
+    public static final StarlarkTokenType GTGT = new StarlarkTokenType(">>");
 
-  @JvmField
-  val DOT = StarlarkTokenType(".")
+    public static final StarlarkTokenType DOT = new StarlarkTokenType(".");
 
-  @JvmField
-  val COMMA = StarlarkTokenType(",")
+    public static final StarlarkTokenType COMMA = new StarlarkTokenType(",");
 
-  @JvmField
-  val EQ = StarlarkTokenType("=")
+    public static final StarlarkTokenType EQ = new StarlarkTokenType("=");
 
-  @JvmField
-  val SEMICOLON = StarlarkTokenType(";")
+    public static final StarlarkTokenType SEMICOLON = new StarlarkTokenType(";");
 
-  @JvmField
-  val COLON = StarlarkTokenType(":")
+    public static final StarlarkTokenType COLON = new StarlarkTokenType(":");
 
-  @JvmField
-  val LPAR = StarlarkTokenType("(")
+    public static final StarlarkTokenType LPAR = new StarlarkTokenType("(");
 
-  @JvmField
-  val RPAR = StarlarkTokenType(")")
+    public static final StarlarkTokenType RPAR = new StarlarkTokenType(")");
 
-  @JvmField
-  val LBRACKET = StarlarkTokenType("[")
+    public static final StarlarkTokenType LBRACKET = new StarlarkTokenType("[");
 
-  @JvmField
-  val RBRACKET = StarlarkTokenType("]")
+    public static final StarlarkTokenType RBRACKET = new StarlarkTokenType("]");
 
-  @JvmField
-  val LBRACE = StarlarkTokenType("{")
+    public static final StarlarkTokenType LBRACE = new StarlarkTokenType("{");
 
-  @JvmField
-  val RBRACE = StarlarkTokenType("}")
+    public static final StarlarkTokenType RBRACE = new StarlarkTokenType("}");
 
-  @JvmField
-  val LT = StarlarkTokenType("<")
+    public static final StarlarkTokenType LT = new StarlarkTokenType("<");
 
-  @JvmField
-  val GT = StarlarkTokenType(">")
+    public static final StarlarkTokenType GT = new StarlarkTokenType(">");
 
-  @JvmField
-  val LE = StarlarkTokenType("<=")
+    public static final StarlarkTokenType LE = new StarlarkTokenType("<=");
 
-  @JvmField
-  val GE = StarlarkTokenType(">=")
+    public static final StarlarkTokenType GE = new StarlarkTokenType(">=");
 
-  @JvmField
-  val EQEQ = StarlarkTokenType("==")
+    public static final StarlarkTokenType EQEQ = new StarlarkTokenType("==");
 
-  @JvmField
-  val NE = StarlarkTokenType("!=")
+    public static final StarlarkTokenType NE = new StarlarkTokenType("!=");
 
-  @JvmField
-  val PLUSEQ = StarlarkTokenType("+=")
+    public static final StarlarkTokenType PLUSEQ = new StarlarkTokenType("+=");
 
-  @JvmField
-  val MINUSEQ = StarlarkTokenType("-=")
+    public static final StarlarkTokenType MINUSEQ = new StarlarkTokenType("-=");
 
-  @JvmField
-  val MULTEQ = StarlarkTokenType("*=")
+    public static final StarlarkTokenType MULTEQ = new StarlarkTokenType("*=");
 
-  @JvmField
-  val DIVEQ = StarlarkTokenType("/=")
+    public static final StarlarkTokenType DIVEQ = new StarlarkTokenType("/=");
 
-  @JvmField
-  val FLOORDIVEQ = StarlarkTokenType("//=")
+    public static final StarlarkTokenType FLOORDIVEQ = new StarlarkTokenType("//=");
 
-  @JvmField
-  val PERCEQ = StarlarkTokenType("%=")
+    public static final StarlarkTokenType PERCEQ = new StarlarkTokenType("%=");
 
-  @JvmField
-  val ANDEQ = StarlarkTokenType("&=")
+    public static final StarlarkTokenType ANDEQ = new StarlarkTokenType("&=");
 
-  @JvmField
-  val OREQ = StarlarkTokenType("|=")
+    public static final StarlarkTokenType OREQ = new StarlarkTokenType("|=");
 
-  @JvmField
-  val XOREQ = StarlarkTokenType("^=")
+    public static final StarlarkTokenType XOREQ = new StarlarkTokenType("^=");
 
-  @JvmField
-  val LTLTEQ = StarlarkTokenType("<<=")
+    public static final StarlarkTokenType LTLTEQ = new StarlarkTokenType("<<=");
 
-  @JvmField
-  val GTGTEQ = StarlarkTokenType(">>=")
+    public static final StarlarkTokenType GTGTEQ = new StarlarkTokenType(">>=");
 }

@@ -1,162 +1,110 @@
-package org.jetbrains.bazel.languages.bazelquery.elements
+package org.jetbrains.bazel.languages.bazelquery.elements;
 
-import org.jetbrains.annotations.ApiStatus
+public final class BazelQueryTokenTypes {
+    private BazelQueryTokenTypes() {
+    }
 
-@ApiStatus.Internal
-object BazelQueryTokenTypes {
-  @JvmField
-  val COMMENT = BazelQueryTokenType("COMMENT")
+    public static final BazelQueryTokenType COMMENT = new BazelQueryTokenType("COMMENT");
 
-  @JvmField
-  val DOUBLE_QUOTE = BazelQueryTokenType("\"")
+    public static final BazelQueryTokenType DOUBLE_QUOTE = new BazelQueryTokenType("\"");
 
-  @JvmField
-  val SINGLE_QUOTE = BazelQueryTokenType("'")
+    public static final BazelQueryTokenType SINGLE_QUOTE = new BazelQueryTokenType("'");
 
-  @JvmField
-  val LEFT_PAREN = BazelQueryTokenType("(")
+    public static final BazelQueryTokenType LEFT_PAREN = new BazelQueryTokenType("(");
 
-  @JvmField
-  val RIGHT_PAREN = BazelQueryTokenType(")")
+    public static final BazelQueryTokenType RIGHT_PAREN = new BazelQueryTokenType(")");
 
-  @JvmField
-  val ALLPATHS = BazelQueryTokenType("ALLPATHS")
+    public static final BazelQueryTokenType ALLPATHS = new BazelQueryTokenType("ALLPATHS");
 
-  @JvmField
-  val ATTR = BazelQueryTokenType("ATTR")
+    public static final BazelQueryTokenType ATTR = new BazelQueryTokenType("ATTR");
 
-  @JvmField
-  val BUILDFILES = BazelQueryTokenType("BUILDFILES")
+    public static final BazelQueryTokenType BUILDFILES = new BazelQueryTokenType("BUILDFILES");
 
-  @JvmField
-  val RBUILDFILES = BazelQueryTokenType("RBUILDFILES")
+    public static final BazelQueryTokenType RBUILDFILES = new BazelQueryTokenType("RBUILDFILES");
 
-  @JvmField
-  val DEPS = BazelQueryTokenType("DEPS")
+    public static final BazelQueryTokenType DEPS = new BazelQueryTokenType("DEPS");
 
-  @JvmField
-  val FILTER = BazelQueryTokenType("FILTER")
+    public static final BazelQueryTokenType FILTER = new BazelQueryTokenType("FILTER");
 
-  @JvmField
-  val KIND = BazelQueryTokenType("KIND")
+    public static final BazelQueryTokenType KIND = new BazelQueryTokenType("KIND");
 
-  @JvmField
-  val LABELS = BazelQueryTokenType("LABELS")
+    public static final BazelQueryTokenType LABELS = new BazelQueryTokenType("LABELS");
 
-  @JvmField
-  val LOADFILES = BazelQueryTokenType("LOADFILES")
+    public static final BazelQueryTokenType LOADFILES = new BazelQueryTokenType("LOADFILES");
 
-  @JvmField
-  val RDEPS = BazelQueryTokenType("RDEPS")
+    public static final BazelQueryTokenType RDEPS = new BazelQueryTokenType("RDEPS");
 
-  @JvmField
-  val ALLRDEPS = BazelQueryTokenType("ALLRDEPS")
+    public static final BazelQueryTokenType ALLRDEPS = new BazelQueryTokenType("ALLRDEPS");
 
-  @JvmField
-  val SAME_PKG_DIRECT_RDEPS = BazelQueryTokenType("SAME_PKG_DIRECT_RDEPS")
+    public static final BazelQueryTokenType SAME_PKG_DIRECT_RDEPS = new BazelQueryTokenType("SAME_PKG_DIRECT_RDEPS");
 
-  @JvmField
-  val SIBLINGS = BazelQueryTokenType("SIBLINGS")
+    public static final BazelQueryTokenType SIBLINGS = new BazelQueryTokenType("SIBLINGS");
 
-  @JvmField
-  val SOME = BazelQueryTokenType("SOME")
+    public static final BazelQueryTokenType SOME = new BazelQueryTokenType("SOME");
 
-  @JvmField
-  val SOMEPATH = BazelQueryTokenType("SOMEPATH")
+    public static final BazelQueryTokenType SOMEPATH = new BazelQueryTokenType("SOMEPATH");
 
-  @JvmField
-  val TESTS = BazelQueryTokenType("TESTS")
+    public static final BazelQueryTokenType TESTS = new BazelQueryTokenType("TESTS");
 
-  @JvmField
-  val VISIBLE = BazelQueryTokenType("VISIBLE")
+    public static final BazelQueryTokenType VISIBLE = new BazelQueryTokenType("VISIBLE");
 
-  @JvmField
-  val UNQUOTED_WORD = BazelQueryTokenType("UNQUOTED_WORD")
+    public static final BazelQueryTokenType UNQUOTED_WORD = new BazelQueryTokenType("UNQUOTED_WORD");
 
-  @JvmField
-  val SQ_WORD = BazelQueryTokenType("SQ_WORD")
+    public static final BazelQueryTokenType SQ_WORD = new BazelQueryTokenType("SQ_WORD");
 
-  @JvmField
-  val DQ_WORD = BazelQueryTokenType("DQ_WORD")
+    public static final BazelQueryTokenType DQ_WORD = new BazelQueryTokenType("DQ_WORD");
 
-  @JvmField
-  val ERR_WORD = BazelQueryTokenType("ERR_WORD")
+    public static final BazelQueryTokenType ERR_WORD = new BazelQueryTokenType("ERR_WORD");
 
-  @JvmField
-  val SQ_PATTERN = BazelQueryTokenType("SQ_PATTERN")
+    public static final BazelQueryTokenType SQ_PATTERN = new BazelQueryTokenType("SQ_PATTERN");
 
-  @JvmField
-  val DQ_PATTERN = BazelQueryTokenType("DQ_PATTERN")
+    public static final BazelQueryTokenType DQ_PATTERN = new BazelQueryTokenType("DQ_PATTERN");
 
-  @JvmField
-  val COLON = BazelQueryTokenType(":")
+    public static final BazelQueryTokenType COLON = new BazelQueryTokenType(":");
 
-  @JvmField
-  val COMMA = BazelQueryTokenType(",")
+    public static final BazelQueryTokenType COMMA = new BazelQueryTokenType(",");
 
-  @JvmField
-  val FLAG = BazelQueryTokenType("FLAG")
+    public static final BazelQueryTokenType FLAG = new BazelQueryTokenType("FLAG");
 
-  @JvmField
-  val FLAG_NO_VAL = BazelQueryTokenType("FLAG_NO_VAL")
+    public static final BazelQueryTokenType FLAG_NO_VAL = new BazelQueryTokenType("FLAG_NO_VAL");
 
-  @JvmField
-  val UNFINISHED_FLAG = BazelQueryTokenType("UNFINISHED_FLAG")
+    public static final BazelQueryTokenType UNFINISHED_FLAG = new BazelQueryTokenType("UNFINISHED_FLAG");
 
-  @JvmField
-  val UNQUOTED_VAL = BazelQueryTokenType("UNQUOTED_VAL")
+    public static final BazelQueryTokenType UNQUOTED_VAL = new BazelQueryTokenType("UNQUOTED_VAL");
 
-  @JvmField
-  val SQ_VAL = BazelQueryTokenType("SQ_VAL")
+    public static final BazelQueryTokenType SQ_VAL = new BazelQueryTokenType("SQ_VAL");
 
-  @JvmField
-  val DQ_VAL = BazelQueryTokenType("DQ_VAL")
+    public static final BazelQueryTokenType DQ_VAL = new BazelQueryTokenType("DQ_VAL");
 
-  @JvmField
-  val UNION = BazelQueryTokenType("UNION")
+    public static final BazelQueryTokenType UNION = new BazelQueryTokenType("UNION");
 
-  @JvmField
-  val EXCEPT = BazelQueryTokenType("EXCEPT")
+    public static final BazelQueryTokenType EXCEPT = new BazelQueryTokenType("EXCEPT");
 
-  @JvmField
-  val INTERSECT = BazelQueryTokenType("INTERSECT")
+    public static final BazelQueryTokenType INTERSECT = new BazelQueryTokenType("INTERSECT");
 
-  @JvmField
-  val LET = BazelQueryTokenType("LET")
+    public static final BazelQueryTokenType LET = new BazelQueryTokenType("LET");
 
-  @JvmField
-  val IN = BazelQueryTokenType("IN")
+    public static final BazelQueryTokenType IN = new BazelQueryTokenType("IN");
 
-  @JvmField
-  val EQUALS = BazelQueryTokenType("EQUALS")
+    public static final BazelQueryTokenType EQUALS = new BazelQueryTokenType("EQUALS");
 
-  @JvmField
-  val SET = BazelQueryTokenType("SET")
+    public static final BazelQueryTokenType SET = new BazelQueryTokenType("SET");
 
-  @JvmField
-  val INTEGER = BazelQueryTokenType("INTEGER")
+    public static final BazelQueryTokenType INTEGER = new BazelQueryTokenType("INTEGER");
 
-  @JvmField
-  val WHITE_SPACE = BazelQueryTokenType("WHITE_SPACE")
+    public static final BazelQueryTokenType WHITE_SPACE = new BazelQueryTokenType("WHITE_SPACE");
 
-  @JvmField
-  val UNEXPECTED = BazelQueryTokenType("UNEXPECTED")
+    public static final BazelQueryTokenType UNEXPECTED = new BazelQueryTokenType("UNEXPECTED");
 
-  @JvmField
-  val UNFINISHED_VAL = BazelQueryTokenType("UNFINISHED_VAL")
+    public static final BazelQueryTokenType UNFINISHED_VAL = new BazelQueryTokenType("UNFINISHED_VAL");
 
-  @JvmField
-  val SQ_UNFINISHED = BazelQueryTokenType("SQ_UNFINISHED")
+    public static final BazelQueryTokenType SQ_UNFINISHED = new BazelQueryTokenType("SQ_UNFINISHED");
 
-  @JvmField
-  val DQ_UNFINISHED = BazelQueryTokenType("DQ_UNFINISHED")
+    public static final BazelQueryTokenType DQ_UNFINISHED = new BazelQueryTokenType("DQ_UNFINISHED");
 
-  @JvmField
-  val SQ_EMPTY = BazelQueryTokenType("SQ_EMPTY")
+    public static final BazelQueryTokenType SQ_EMPTY = new BazelQueryTokenType("SQ_EMPTY");
 
-  @JvmField
-  val DQ_EMPTY = BazelQueryTokenType("DQ_EMPTY")
+    public static final BazelQueryTokenType DQ_EMPTY = new BazelQueryTokenType("DQ_EMPTY");
 
-  @JvmField
-  val MISSING_SPACE = BazelQueryTokenType("MISSING_SPACE")
+    public static final BazelQueryTokenType MISSING_SPACE = new BazelQueryTokenType("MISSING_SPACE");
 }

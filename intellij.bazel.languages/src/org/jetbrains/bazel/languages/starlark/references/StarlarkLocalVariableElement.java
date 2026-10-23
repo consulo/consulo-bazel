@@ -1,10 +1,11 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
+import consulo.annotation.access.RequiredReadAction;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface StarlarkLocalVariableElement : StarlarkElement {
-  fun getNameIdentifier(): PsiElement?
+public interface StarlarkLocalVariableElement extends StarlarkElement {
+    @RequiredReadAction
+    @Nullable PsiElement getNameIdentifier();
 }

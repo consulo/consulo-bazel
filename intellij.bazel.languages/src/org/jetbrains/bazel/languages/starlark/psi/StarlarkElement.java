@@ -1,7 +1,6 @@
-package org.jetbrains.bazel.languages.starlark.psi
+package org.jetbrains.bazel.languages.starlark.psi;
 
-import com.intellij.psi.NavigatablePsiElement
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.psi.NavigatablePsiElement;
 
-@ApiStatus.Internal
-interface StarlarkElement : NavigatablePsiElement
+public interface StarlarkElement extends NavigatablePsiElement {
+}

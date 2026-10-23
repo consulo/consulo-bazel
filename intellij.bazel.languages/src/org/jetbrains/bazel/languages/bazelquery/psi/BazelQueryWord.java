@@ -1,13 +1,24 @@
-package org.jetbrains.bazel.languages.bazelquery.psi
+package org.jetbrains.bazel.languages.bazelquery.psi;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets;
 
-@ApiStatus.Internal
-class BazelQueryWord(node: ASTNode) : BazelQueryBaseElement(node) {
-  override fun acceptVisitor(visitor: BazelQueryElementVisitor) = visitor.visitWord(this)
+public class BazelQueryWord extends BazelQueryBaseElement {
+    public BazelQueryWord(ASTNode node) {
+        super(node);
+        PsiElement word = this.findChildByType(BazelQueryTokenSets.WORDS);
+        myWord = word != null ? word.getText() : "";
+    }
 
-  val word: String = this.findChildByType<PsiElement>(BazelQueryTokenSets.WORDS)?.text ?: ""
+    @Override
+    protected void acceptVisitor(BazelQueryElementVisitor visitor) {
+        visitor.visitWord(this);
+    }
+
+    private final String myWord;
+
+    public String getWord() {
+        return myWord;
+    }
 }

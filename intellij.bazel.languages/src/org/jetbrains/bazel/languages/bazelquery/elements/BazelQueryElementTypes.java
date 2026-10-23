@@ -1,30 +1,44 @@
-package org.jetbrains.bazel.languages.bazelquery.elements
+package org.jetbrains.bazel.languages.bazelquery.elements;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryCommand
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlag
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlagVal
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryInteger
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryWord
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementType.BazelQueryFlagsElementType;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryCommand;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlag;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlagVal;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryInteger;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryWord;
 
-@ApiStatus.Internal
-object BazelQueryElementTypes {
-  val COMMAND = BazelQueryElementType("COMMAND")
-  val WORD = BazelQueryElementType("WORD")
-  val INTEGER = BazelQueryElementType("INTEGER")
-  val FLAG = BazelQueryFlagsElementType("FLAG")
-  val FLAG_VAL = BazelQueryFlagsElementType("FLAG_VAL")
+public final class BazelQueryElementTypes {
+    private BazelQueryElementTypes() {
+    }
 
-  fun createElement(node: ASTNode): PsiElement =
-    when (val type = node.elementType) {
-      COMMAND -> BazelQueryCommand(node)
-      WORD -> BazelQueryWord(node)
-      FLAG -> BazelQueryFlag(node)
-      FLAG_VAL -> BazelQueryFlagVal(node)
-      INTEGER -> BazelQueryInteger(node)
+    public static final BazelQueryElementType COMMAND = new BazelQueryElementType("COMMAND");
+    public static final BazelQueryElementType WORD = new BazelQueryElementType("WORD");
+    public static final BazelQueryElementType INTEGER = new BazelQueryElementType("INTEGER");
+    public static final BazelQueryFlagsElementType FLAG = new BazelQueryFlagsElementType("FLAG");
+    public static final BazelQueryFlagsElementType FLAG_VAL = new BazelQueryFlagsElementType("FLAG_VAL");
 
-      else -> error("Unknown element type: $type")
+    public static PsiElement createElement(ASTNode node) {
+        IElementType type = node.getElementType();
+        if (type == COMMAND) {
+            return new BazelQueryCommand(node);
+        }
+        else if (type == WORD) {
+            return new BazelQueryWord(node);
+        }
+        else if (type == FLAG) {
+            return new BazelQueryFlag(node);
+        }
+        else if (type == FLAG_VAL) {
+            return new BazelQueryFlagVal(node);
+        }
+        else if (type == INTEGER) {
+            return new BazelQueryInteger(node);
+        }
+        else {
+            throw new IllegalStateException("Unknown element type: " + type);
+        }
     }
 }

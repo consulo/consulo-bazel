@@ -1,32 +1,59 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenType
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkParenthesizedExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTupleExpression
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenType;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkParenthesizedExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTupleExpression;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkForStatement(node: ASTNode) :
-  StarlarkBaseElement(node),
-  StarlarkStatementContainer,
-  StarlarkAssigningStatement {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitForStatement(this)
+import java.util.List;
 
-  override fun operator(): StarlarkTokenType = StarlarkTokenTypes.IN_KEYWORD
+public class StarlarkForStatement extends StarlarkBaseElement implements StarlarkStatementContainer, StarlarkAssigningStatement {
+    public StarlarkForStatement(ASTNode node) {
+        super(node);
+    }
 
-  fun getLoopVariables(): List<StarlarkTargetExpression> =
-    getLoopVariable()?.let(::listOf) ?: getLoopTuple()?.getTargetExpressions() ?: emptyList()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitForStatement(this);
+    }
 
-  private fun getLoopVariable(): StarlarkTargetExpression? = findChildByClass(StarlarkTargetExpression::class.java)
+    @Override
+    public StarlarkTokenType operator() {
+        return StarlarkTokenTypes.IN_KEYWORD;
+    }
 
-  private fun getLoopTuple(): StarlarkTupleExpression? =
-    findChildByClass(StarlarkTupleExpression::class.java)
-      ?: findChildByClass(StarlarkParenthesizedExpression::class.java)?.getTuple()
+    public List<StarlarkTargetExpression> getLoopVariables() {
+        StarlarkTargetExpression loopVariable = getLoopVariable();
+        if (loopVariable != null) {
+            return List.of(loopVariable);
+        }
+        StarlarkTupleExpression loopTuple = getLoopTuple();
+        if (loopTuple != null) {
+            return loopTuple.getTargetExpressions();
+        }
+        return List.of();
+    }
 
-  override fun getStatementLists(): List<StarlarkStatementList> = findChildrenByClass(StarlarkStatementList::class.java).toList()
+    private @Nullable StarlarkTargetExpression getLoopVariable() {
+        return findChildByClass(StarlarkTargetExpression.class);
+    }
+
+    private @Nullable StarlarkTupleExpression getLoopTuple() {
+        StarlarkTupleExpression tupleExpression = findChildByClass(StarlarkTupleExpression.class);
+        if (tupleExpression != null) {
+            return tupleExpression;
+        }
+        StarlarkParenthesizedExpression parenthesizedExpression = findChildByClass(StarlarkParenthesizedExpression.class);
+        return parenthesizedExpression != null ? parenthesizedExpression.getTuple() : null;
+    }
+
+    @Override
+    public List<StarlarkStatementList> getStatementLists() {
+        return List.of(findChildrenByClass(StarlarkStatementList.class));
+    }
 }

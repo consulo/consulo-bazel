@@ -1,42 +1,69 @@
-package org.jetbrains.bazel.languages.bazelquery.parser
+package org.jetbrains.bazel.languages.bazelquery.parser;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.ParserDefinition
-import com.intellij.lang.PsiParser
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.project.Project
-import com.intellij.psi.FileViewProvider
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.tree.IFileElementType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementTypes
-import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets
-import org.jetbrains.bazel.languages.bazelquery.lexer.BazelQueryLexer
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlagsFile
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IFileElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.file.FileViewProvider;
+import consulo.language.lexer.Lexer;
+import consulo.language.parser.ParserDefinition;
+import consulo.language.parser.PsiParser;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.version.LanguageVersion;
+import org.jetbrains.bazel.languages.bazelquery.BazelQueryFlagsLanguage;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryElementTypes;
+import org.jetbrains.bazel.languages.bazelquery.elements.BazelQueryTokenSets;
+import org.jetbrains.bazel.languages.bazelquery.lexer.BazelQueryLexer;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFile.BazelQueryFlagsFile;
 
-@ApiStatus.Internal
-class BazelQueryFlagsParserDefinition : ParserDefinition {
-  override fun createLexer(project: Project?): Lexer = BazelQueryLexer()
-
-  override fun createParser(project: Project?): PsiParser =
-    PsiParser { root, builder ->
-      ParsingFlags(root, builder).parseFile()
+@ExtensionImpl
+public class BazelQueryFlagsParserDefinition implements ParserDefinition {
+    @Override
+    public Language getLanguage() {
+        return BazelQueryFlagsLanguage.INSTANCE;
     }
 
-  override fun getFileNodeType(): IFileElementType = file
+    @Override
+    public Lexer createLexer(LanguageVersion languageVersion) {
+        return new BazelQueryLexer();
+    }
 
-  override fun getWhitespaceTokens(): TokenSet = BazelQueryTokenSets.WHITE_SPACES
+    @Override
+    public PsiParser createParser(LanguageVersion languageVersion) {
+        return (root, builder, version) -> new ParsingFlags(root, builder).parseFile();
+    }
 
-  override fun getCommentTokens(): TokenSet = BazelQueryTokenSets.COMMENTS
+    @Override
+    public IFileElementType getFileNodeType() {
+        return FILE;
+    }
 
-  override fun getStringLiteralElements(): TokenSet = TokenSet.EMPTY
+    @Override
+    public TokenSet getWhitespaceTokens(LanguageVersion languageVersion) {
+        return BazelQueryTokenSets.WHITE_SPACES;
+    }
 
-  override fun createElement(node: ASTNode): PsiElement = BazelQueryElementTypes.createElement(node)
+    @Override
+    public TokenSet getCommentTokens(LanguageVersion languageVersion) {
+        return BazelQueryTokenSets.COMMENTS;
+    }
 
-  override fun createFile(viewProvider: FileViewProvider): PsiFile = BazelQueryFlagsFile(viewProvider)
+    @Override
+    public TokenSet getStringLiteralElements(LanguageVersion languageVersion) {
+        return TokenSet.EMPTY;
+    }
+
+    @Override
+    public PsiElement createElement(ASTNode node) {
+        return BazelQueryElementTypes.createElement(node);
+    }
+
+    @Override
+    public PsiFile createFile(FileViewProvider viewProvider) {
+        return new BazelQueryFlagsFile(viewProvider);
+    }
+
+    private static final IFileElementType FILE = new IFileElementType(BazelQueryFlagsLanguage.INSTANCE);
 }
-
-private val file = IFileElementType(BazelQueryFlagsLanguage)

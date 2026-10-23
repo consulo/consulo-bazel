@@ -1,96 +1,115 @@
-package org.jetbrains.bazel.languages.starlark.parser
+package org.jetbrains.bazel.languages.starlark.parser;
 
-import com.intellij.lang.PsiBuilder
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.util.NlsContexts.ParsingError
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenType
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.ast.IElementType;
+import consulo.language.parser.PsiBuilder;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenType;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-internal open class Parsing(val context: ParsingContext) {
-  protected val builder = context.builder
+import java.util.List;
+import java.util.Objects;
 
-  protected fun checkMatches(token: IElementType, message: @ParsingError String): Boolean {
-    if (atToken(token)) {
-      builder.advanceLexer()
-      return true
-    }
-    builder.error(message)
-    return false
-  }
+class Parsing {
+    private final ParsingContext myContext;
+    protected final PsiBuilder myBuilder;
 
-  protected fun parseIdentifierOrSkip(): Boolean =
-    if (atToken(StarlarkTokenTypes.IDENTIFIER)) {
-      builder.advanceLexer()
-      true
-    } else {
-      val nameExpected = builder.mark()
-      if (!atToken(StarlarkTokenTypes.STATEMENT_BREAK) && !atToken(StarlarkTokenTypes.LPAR)) {
-        builder.advanceLexer()
-      }
-      nameExpected.error(StarlarkBundle.message("parser.expected.identifier"))
-      false
+    Parsing(ParsingContext context) {
+        myContext = context;
+        myBuilder = context.getBuilder();
     }
 
-  protected fun assertCurrentToken(tokenType: StarlarkTokenType) {
-    LOG.assertTrue(atToken(tokenType))
-  }
-
-  protected fun atToken(tokenType: IElementType?): Boolean = builder.tokenType === tokenType
-
-  protected fun atAnyOfTokens(tokenTypes: List<IElementType?>): Boolean {
-    val currentTokenType = builder.tokenType
-    for (tokenType in tokenTypes) {
-      if (currentTokenType === tokenType) return true
-    }
-    return false
-  }
-
-  protected fun matchToken(tokenType: IElementType): Boolean {
-    if (atToken(tokenType)) {
-      builder.advanceLexer()
-      return true
-    }
-    return false
-  }
-
-  protected fun nextToken() {
-    builder.advanceLexer()
-  }
-
-  companion object {
-    private val LOG = Logger.getInstance(Parsing::class.java)
-
-    @JvmStatic
-    protected fun advanceIdentifierLike(builder: PsiBuilder) {
-      if (isReservedKeyword(builder)) {
-        val tokenText = builder.tokenText ?: ""
-        advanceError(builder, StarlarkBundle.message("parser.reserved.keyword.cannot.be.used.as.identifier", tokenText))
-      } else {
-        builder.advanceLexer()
-      }
+    public ParsingContext getContext() {
+        return myContext;
     }
 
-    @JvmStatic
-    protected fun advanceError(builder: PsiBuilder, message: @ParsingError String) {
-      val err = builder.mark()
-      builder.advanceLexer()
-      err.error(message)
+    protected boolean checkMatches(IElementType token, LocalizeValue message) {
+        if (atToken(token)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        myBuilder.error(message);
+        return false;
     }
 
-    @JvmStatic
-    protected fun isIdentifierLike(builder: PsiBuilder): Boolean =
-      builder.tokenType === StarlarkTokenTypes.IDENTIFIER || isReservedKeyword(builder)
-
-    private fun isReservedKeyword(builder: PsiBuilder): Boolean = StarlarkTokenSets.RESERVED_KEYWORDS.contains(builder.tokenType)
-
-    @JvmStatic
-    protected fun buildTokenElement(type: IElementType?, builder: PsiBuilder) {
-      val marker = builder.mark()
-      advanceIdentifierLike(builder)
-      marker.done(type!!)
+    protected boolean parseIdentifierOrSkip() {
+        if (atToken(StarlarkTokenTypes.IDENTIFIER)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        else {
+            PsiBuilder.Marker nameExpected = myBuilder.mark();
+            if (!atToken(StarlarkTokenTypes.STATEMENT_BREAK) && !atToken(StarlarkTokenTypes.LPAR)) {
+                myBuilder.advanceLexer();
+            }
+            nameExpected.error(StarlarkLocalize.parserExpectedIdentifier());
+            return false;
+        }
     }
-  }
+
+    protected void assertCurrentToken(StarlarkTokenType tokenType) {
+        LOG.assertTrue(atToken(tokenType));
+    }
+
+    protected boolean atToken(@Nullable IElementType tokenType) {
+        return myBuilder.getTokenType() == tokenType;
+    }
+
+    protected boolean atAnyOfTokens(List<@Nullable IElementType> tokenTypes) {
+        IElementType currentTokenType = myBuilder.getTokenType();
+        for (IElementType tokenType : tokenTypes) {
+            if (currentTokenType == tokenType) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected boolean matchToken(IElementType tokenType) {
+        if (atToken(tokenType)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        return false;
+    }
+
+    protected void nextToken() {
+        myBuilder.advanceLexer();
+    }
+
+    private static final Logger LOG = Logger.getInstance(Parsing.class);
+
+    protected static void advanceIdentifierLike(PsiBuilder builder) {
+        if (isReservedKeyword(builder)) {
+            String text = builder.getTokenText();
+            String tokenText = text != null ? text : "";
+            advanceError(builder, StarlarkLocalize.parserReservedKeywordCannotBeUsedAsIdentifier(tokenText));
+        }
+        else {
+            builder.advanceLexer();
+        }
+    }
+
+    protected static void advanceError(PsiBuilder builder, LocalizeValue message) {
+        PsiBuilder.Marker err = builder.mark();
+        builder.advanceLexer();
+        err.error(message);
+    }
+
+    protected static boolean isIdentifierLike(PsiBuilder builder) {
+        return builder.getTokenType() == StarlarkTokenTypes.IDENTIFIER || isReservedKeyword(builder);
+    }
+
+    private static boolean isReservedKeyword(PsiBuilder builder) {
+        return StarlarkTokenSets.RESERVED_KEYWORDS.contains(builder.getTokenType());
+    }
+
+    protected static void buildTokenElement(@Nullable IElementType type, PsiBuilder builder) {
+        PsiBuilder.Marker marker = builder.mark();
+        advanceIdentifierLike(builder);
+        marker.done(Objects.requireNonNull(type));
+    }
 }

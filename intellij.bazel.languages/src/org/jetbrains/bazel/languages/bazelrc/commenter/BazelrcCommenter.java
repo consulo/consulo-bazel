@@ -1,15 +1,40 @@
-package org.jetbrains.bazel.languages.bazelrc.commenter
+package org.jetbrains.bazel.languages.bazelrc.commenter;
 
-import com.intellij.lang.Commenter
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Commenter;
+import consulo.language.Language;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelrcCommenter : Commenter {
-  override fun getLineCommentPrefix(): String = "# "
+@ExtensionImpl
+public class BazelrcCommenter implements Commenter {
+    @Override
+    public String getLineCommentPrefix() {
+        return "# ";
+    }
 
-  override fun getBlockCommentPrefix(): String? = null
+    @Override
+    public @Nullable String getBlockCommentPrefix() {
+        return null;
+    }
 
-  override fun getBlockCommentSuffix(): String? = null
+    @Override
+    public @Nullable String getBlockCommentSuffix() {
+        return null;
+    }
 
-  override fun getCommentedBlockCommentPrefix(): String? = null
+    @Override
+    public @Nullable String getCommentedBlockCommentPrefix() {
+        return null;
+    }
 
-  override fun getCommentedBlockCommentSuffix(): String? = null
+    @Override
+    public @Nullable String getCommentedBlockCommentSuffix() {
+        return null;
+    }
+
+    @Override
+    public Language getLanguage() {
+        return BazelrcLanguage.INSTANCE;
+    }
 }

@@ -1,24 +1,34 @@
-package org.jetbrains.bazel.languages.bazelrc.psi
+package org.jetbrains.bazel.languages.bazelrc.psi;
 
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFileFactory
-import com.intellij.psi.impl.PsiFileFactoryImpl
-import com.intellij.testFramework.LightVirtualFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.BazelrcFileType
-import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFileFactory;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
 
-private const val DUMMY_FILENAME = "dummy.bazelrc"
+import java.util.Objects;
 
-@ApiStatus.Internal
-class BazelrcElementGenerator(val project: Project) {
-  private fun createDummyFile(contents: String): BazelrcFile {
-    val factory = PsiFileFactory.getInstance(project)
-    val virtualFile = LightVirtualFile(DUMMY_FILENAME, BazelrcFileType, contents)
+public class BazelrcElementGenerator {
+    private static final String DUMMY_FILENAME = "dummy.bazelrc";
 
-    return (factory as PsiFileFactoryImpl).trySetupPsiForFile(virtualFile, BazelrcLanguage, false, true) as BazelrcFile
-  }
+    private final Project myProject;
 
-  fun createFlagName(flagName: String): PsiElement = createDummyFile("common --$flagName").lines[0].flags[0].name!!
+    public BazelrcElementGenerator(Project project) {
+        myProject = project;
+    }
+
+    public Project getProject() {
+        return myProject;
+    }
+
+    private BazelrcFile createDummyFile(String contents) {
+        PsiFileFactory factory = PsiFileFactory.getInstance(myProject);
+
+        // consulo: upstream creates a LightVirtualFile(DUMMY_FILENAME, BazelrcFileType, contents)
+        // and calls PsiFileFactoryImpl.trySetupPsiForFile(virtualFile, BazelrcLanguage, false, true)
+        return (BazelrcFile) factory.createFileFromText(DUMMY_FILENAME, BazelrcLanguage.INSTANCE, contents, false, true);
+    }
+
+    public PsiElement createFlagName(String flagName) {
+        return Objects.requireNonNull(createDummyFile("common --" + flagName).getLines()[0].getFlags()[0].getNameElement());
+    }
 }

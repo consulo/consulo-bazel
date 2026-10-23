@@ -1,10 +1,15 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
 
-@ApiStatus.Internal
-class StarlarkMandatoryParameter(node: ASTNode) : StarlarkParameter(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitMandatoryParameter(this)
+public class StarlarkMandatoryParameter extends StarlarkParameter {
+    public StarlarkMandatoryParameter(ASTNode node) {
+        super(node);
+    }
+
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitMandatoryParameter(this);
+    }
 }

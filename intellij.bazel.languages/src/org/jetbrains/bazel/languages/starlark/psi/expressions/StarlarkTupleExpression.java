@@ -1,19 +1,40 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
 
-@ApiStatus.Internal
-class StarlarkTupleExpression(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitTupleExpression(this)
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
-  fun getTargetExpressions(): List<StarlarkTargetExpression> =
-    findChildrenByClass(StarlarkTargetExpression::class.java).toList() +
-      getNestedTuples().flatMap { it.getTargetExpressions() }
+public class StarlarkTupleExpression extends StarlarkBaseElement {
+    public StarlarkTupleExpression(ASTNode node) {
+        super(node);
+    }
 
-  private fun getNestedTuples(): List<StarlarkTupleExpression> =
-    findChildrenByClass(StarlarkParenthesizedExpression::class.java).mapNotNull { it.getTuple() } +
-      findChildrenByClass(StarlarkTupleExpression::class.java).toList()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitTupleExpression(this);
+    }
+
+    public List<StarlarkTargetExpression> getTargetExpressions() {
+        List<StarlarkTargetExpression> result = new ArrayList<>(Arrays.asList(findChildrenByClass(StarlarkTargetExpression.class)));
+        for (StarlarkTupleExpression tuple : getNestedTuples()) {
+            result.addAll(tuple.getTargetExpressions());
+        }
+        return result;
+    }
+
+    private List<StarlarkTupleExpression> getNestedTuples() {
+        List<StarlarkTupleExpression> result = new ArrayList<>();
+        for (StarlarkParenthesizedExpression parenthesized : findChildrenByClass(StarlarkParenthesizedExpression.class)) {
+            StarlarkTupleExpression tuple = parenthesized.getTuple();
+            if (tuple != null) {
+                result.add(tuple);
+            }
+        }
+        result.addAll(Arrays.asList(findChildrenByClass(StarlarkTupleExpression.class)));
+        return result;
+    }
 }

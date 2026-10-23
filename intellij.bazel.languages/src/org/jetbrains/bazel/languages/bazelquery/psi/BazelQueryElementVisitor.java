@@ -1,27 +1,25 @@
-package org.jetbrains.bazel.languages.bazelquery.psi
+package org.jetbrains.bazel.languages.bazelquery.psi;
 
-import com.intellij.psi.PsiElementVisitor
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.psi.PsiElementVisitor;
 
-@ApiStatus.Internal
-open class BazelQueryElementVisitor : PsiElementVisitor() {
-  fun visitCommand(node: BazelQueryCommand) {
-    visitElement(node)
-  }
+public class BazelQueryElementVisitor extends PsiElementVisitor {
+    public void visitCommand(BazelQueryCommand node) {
+        visitElement(node);
+    }
 
-  fun visitWord(node: BazelQueryWord) {
-    visitElement(node)
-  }
+    public void visitWord(BazelQueryWord node) {
+        visitElement(node);
+    }
 
-  fun visitFlag(node: BazelQueryFlag) {
-    visitElement(node)
-  }
+    public void visitFlag(BazelQueryFlag node) {
+        visitElement(node);
+    }
 
-  fun visitFlagVal(node: BazelQueryFlagVal) {
-    visitElement(node)
-  }
+    public void visitFlagVal(BazelQueryFlagVal node) {
+        visitElement(node);
+    }
 
-  fun visitInteger(node: BazelQueryInteger) {
-    visitElement(node)
-  }
+    public void visitInteger(BazelQueryInteger node) {
+        visitElement(node);
+    }
 }

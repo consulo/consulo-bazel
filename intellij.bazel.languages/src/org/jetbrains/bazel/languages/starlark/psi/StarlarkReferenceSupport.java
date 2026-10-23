@@ -1,35 +1,45 @@
-package org.jetbrains.bazel.languages.starlark.psi
+package org.jetbrains.bazel.languages.starlark.psi;
 
-import com.intellij.model.psi.PsiSymbolReference
-import com.intellij.psi.PsiReference
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression;
+import org.jspecify.annotations.Nullable;
+
+import java.util.Collection;
 
 /**
  * Builds references for Starlark PSI elements.
  * The PSI has no references when no implementation is registered.
  */
-@ApiStatus.Internal
-interface StarlarkReferenceSupport {
-  fun getReference(element: StarlarkReferenceExpression): PsiReference?
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface StarlarkReferenceSupport {
+    static @Nullable StarlarkReferenceSupport getInstance() {
+        return Application.get().getExtensionPoint(StarlarkReferenceSupport.class).findFirstSafe(it -> true);
+    }
 
-  fun getReference(element: StarlarkTargetExpression): PsiReference
+    @Nullable PsiReference getReference(StarlarkReferenceExpression element);
 
-  fun getReference(element: StarlarkArgumentExpression): PsiReference
+    PsiReference getReference(StarlarkTargetExpression element);
 
-  fun getReference(element: StarlarkNamedArgumentExpression): PsiReference?
+    PsiReference getReference(StarlarkArgumentExpression element);
 
-  fun getOwnReferences(element: StarlarkNamedArgumentExpression): Collection<PsiSymbolReference>
+    @Nullable PsiReference getReference(StarlarkNamedArgumentExpression element);
 
-  fun getReference(element: StarlarkGlobExpression): PsiReference
+    // consulo: upstream PsiSymbolReference own references are merged into getReferences()
+    Collection<PsiReference> getOwnReferences(StarlarkNamedArgumentExpression element);
 
-  fun getReference(element: StarlarkStringLiteralExpression): PsiReference?
+    PsiReference getReference(StarlarkGlobExpression element);
 
-  fun getOwnReferences(element: StarlarkCallExpression): Collection<PsiSymbolReference>
+    @Nullable PsiReference getReference(StarlarkStringLiteralExpression element);
+
+    // consulo: upstream PsiSymbolReference own references are merged into getReferences()
+    Collection<PsiReference> getOwnReferences(StarlarkCallExpression element);
 }

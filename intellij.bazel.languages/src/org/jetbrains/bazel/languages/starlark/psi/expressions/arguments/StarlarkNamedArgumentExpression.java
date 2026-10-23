@@ -1,41 +1,90 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions.arguments
+package org.jetbrains.bazel.languages.starlark.psi.expressions.arguments;
 
-import com.intellij.lang.ASTNode
-import com.intellij.model.psi.PsiSymbolReference
-import com.intellij.openapi.components.serviceOrNull
-import com.intellij.psi.PsiReference
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("UnstableApiUsage")
-@ApiStatus.Internal
-class StarlarkNamedArgumentExpression(node: ASTNode) :
-  StarlarkBaseElement(node),
-  StarlarkArgumentElement {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitNamedArgumentExpression(this)
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
 
-  override fun getReference(): PsiReference? = serviceOrNull<StarlarkReferenceSupport>()?.getReference(this)
+public class StarlarkNamedArgumentExpression extends StarlarkBaseElement implements StarlarkArgumentElement {
+    public StarlarkNamedArgumentExpression(ASTNode node) {
+        super(node);
+    }
 
-  override fun getName(): String? = getNameNode()?.text
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitNamedArgumentExpression(this);
+    }
 
-  fun getNameNode(): ASTNode? = node.findChildByType(StarlarkTokenTypes.IDENTIFIER)
+    @Override
+    public @Nullable PsiReference getReference() {
+        StarlarkReferenceSupport support = StarlarkReferenceSupport.getInstance();
+        return support == null ? null : support.getReference(this);
+    }
 
-  fun isSrcsArgument(): Boolean = containsArgumentWithName("srcs")
-  fun isResourcesArgument(): Boolean = containsArgumentWithName("resources")
-  fun isNameArgument(): Boolean = containsArgumentWithName("name")
-  fun isDepsArgument(): Boolean = containsArgumentWithName("deps")
+    @Override
+    public @Nullable String getName() {
+        ASTNode nameNode = getNameNode();
+        return nameNode == null ? null : nameNode.getText();
+    }
 
-  // Some companies may have custom macros that use another name
-  fun isDependenciesArgument(): Boolean = containsArgumentWithName("dependencies")
+    public @Nullable ASTNode getNameNode() {
+        return getNode().findChildByType(StarlarkTokenTypes.IDENTIFIER);
+    }
 
-  fun containsArgumentWithName(name: String): Boolean = node.findChildByType(StarlarkTokenTypes.IDENTIFIER)?.text == name
+    public boolean isSrcsArgument() {
+        return containsArgumentWithName("srcs");
+    }
 
-  fun getArgumentStringValue(): String? = findChildByClass(StarlarkStringLiteralExpression::class.java)?.getStringContents()
+    public boolean isResourcesArgument() {
+        return containsArgumentWithName("resources");
+    }
 
-  override fun getOwnReferences(): Collection<PsiSymbolReference> =
-    serviceOrNull<StarlarkReferenceSupport>()?.getOwnReferences(this) ?: emptyList()
+    public boolean isNameArgument() {
+        return containsArgumentWithName("name");
+    }
+
+    public boolean isDepsArgument() {
+        return containsArgumentWithName("deps");
+    }
+
+    // Some companies may have custom macros that use another name
+    public boolean isDependenciesArgument() {
+        return containsArgumentWithName("dependencies");
+    }
+
+    public boolean containsArgumentWithName(String name) {
+        ASTNode identifier = getNode().findChildByType(StarlarkTokenTypes.IDENTIFIER);
+        return Objects.equals(identifier == null ? null : identifier.getText(), name);
+    }
+
+    public @Nullable String getArgumentStringValue() {
+        StarlarkStringLiteralExpression literal = findChildByClass(StarlarkStringLiteralExpression.class);
+        return literal == null ? null : literal.getStringContents();
+    }
+
+    // consulo: upstream PsiSymbolReference own references are merged into getReferences()
+    public Collection<PsiReference> getOwnReferences() {
+        StarlarkReferenceSupport support = StarlarkReferenceSupport.getInstance();
+        return support == null ? List.of() : support.getOwnReferences(this);
+    }
+
+    @Override
+    public PsiReference[] getReferences() {
+        List<PsiReference> references = new ArrayList<>();
+        PsiReference reference = getReference();
+        if (reference != null) {
+            references.add(reference);
+        }
+        references.addAll(getOwnReferences());
+        return references.toArray(PsiReference.EMPTY_ARRAY);
+    }
 }

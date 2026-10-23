@@ -1,33 +1,65 @@
-package org.jetbrains.bazel.languages.starlark.parser
+package org.jetbrains.bazel.languages.starlark.parser;
 
-import com.intellij.lang.PsiBuilder
-import java.util.ArrayDeque
+import consulo.language.parser.PsiBuilder;
 
-internal class ParsingContext(val builder: PsiBuilder) {
-  val expressionParser = ExpressionParsing(this)
-  val statementParser = StatementParsing(this)
-  val functionParser = FunctionParsing(this)
-  private val scopes = ArrayDeque(listOf(emptyParsingScope()))
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.List;
 
-  fun popScope(): ParsingScope {
-    val prevScope = scopes.pop()
-    resetBuilderCache(prevScope)
-    return prevScope
-  }
+class ParsingContext {
+    private final PsiBuilder myBuilder;
+    private final ExpressionParsing myExpressionParser;
+    private final StatementParsing myStatementParser;
+    private final FunctionParsing myFunctionParser;
+    private final Deque<ParsingScope> myScopes;
 
-  fun pushScope(scope: ParsingScope) {
-    val prevScope = getScope()
-    scopes.push(scope)
-    resetBuilderCache(prevScope)
-  }
-
-  fun getScope(): ParsingScope = scopes.peek()
-
-  fun emptyParsingScope(): ParsingScope = ParsingScope()
-
-  private fun resetBuilderCache(prevScope: ParsingScope) {
-    if (getScope() != prevScope) {
-      builder.mark().rollbackTo()
+    ParsingContext(PsiBuilder builder) {
+        myBuilder = builder;
+        myExpressionParser = new ExpressionParsing(this);
+        myStatementParser = new StatementParsing(this);
+        myFunctionParser = new FunctionParsing(this);
+        myScopes = new ArrayDeque<>(List.of(emptyParsingScope()));
     }
-  }
+
+    public PsiBuilder getBuilder() {
+        return myBuilder;
+    }
+
+    public ExpressionParsing getExpressionParser() {
+        return myExpressionParser;
+    }
+
+    public StatementParsing getStatementParser() {
+        return myStatementParser;
+    }
+
+    public FunctionParsing getFunctionParser() {
+        return myFunctionParser;
+    }
+
+    public ParsingScope popScope() {
+        ParsingScope prevScope = myScopes.pop();
+        resetBuilderCache(prevScope);
+        return prevScope;
+    }
+
+    public void pushScope(ParsingScope scope) {
+        ParsingScope prevScope = getScope();
+        myScopes.push(scope);
+        resetBuilderCache(prevScope);
+    }
+
+    public ParsingScope getScope() {
+        return myScopes.peek();
+    }
+
+    public ParsingScope emptyParsingScope() {
+        return new ParsingScope();
+    }
+
+    private void resetBuilderCache(ParsingScope prevScope) {
+        if (!getScope().equals(prevScope)) {
+            myBuilder.mark().rollbackTo();
+        }
+    }
 }

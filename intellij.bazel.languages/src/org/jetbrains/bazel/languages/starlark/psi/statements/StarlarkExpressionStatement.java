@@ -1,14 +1,22 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkExpressionStatement(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitExpressionStatement(this)
+public class StarlarkExpressionStatement extends StarlarkBaseElement {
+    public StarlarkExpressionStatement(ASTNode node) {
+        super(node);
+    }
 
-  fun callExpressionOrNull(): StarlarkCallExpression? = findChildByClass(StarlarkCallExpression::class.java)
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitExpressionStatement(this);
+    }
+
+    public @Nullable StarlarkCallExpression callExpressionOrNull() {
+        return findChildByClass(StarlarkCallExpression.class);
+    }
 }

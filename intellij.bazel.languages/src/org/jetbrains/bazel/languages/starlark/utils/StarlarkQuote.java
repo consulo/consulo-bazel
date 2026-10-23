@@ -1,40 +1,73 @@
-package org.jetbrains.bazel.languages.starlark.utils
+package org.jetbrains.bazel.languages.starlark.utils;
 
-import com.intellij.openapi.util.TextRange
-import org.jetbrains.annotations.ApiStatus
+import consulo.document.util.TextRange;
 
-@ApiStatus.Internal
-enum class StarlarkQuote(val quote: String) {
-  SINGLE("'"),
-  DOUBLE("\""),
-  TRIPLE_SINGLE("'''"),
-  TRIPLE_DOUBLE("\"\"\""),
-  UNQUOTED(""),
-  ;
+public enum StarlarkQuote {
+    SINGLE("'"),
+    DOUBLE("\""),
+    TRIPLE_SINGLE("'''"),
+    TRIPLE_DOUBLE("\"\"\""),
+    UNQUOTED(""),
+    ;
 
-  val isTriple: Boolean
-    get() = this == TRIPLE_SINGLE || this == TRIPLE_DOUBLE
+    private final String myQuote;
 
-  fun rangeWithinQuotes(string: String): TextRange {
-    val hasClosingQuote = string.length >= quote.length * 2 &&
-      string.endsWith(quote) &&
-      string.dropLast(quote.length).takeLastWhile { it == '\\' }.length % 2 == 0
-    val endOffset = if (hasClosingQuote) string.length - quote.length else string.length
-    return TextRange(quote.length, endOffset)
-  }
+    StarlarkQuote(String quote) {
+        myQuote = quote;
+    }
 
-  fun wrap(toWrap: String): String = quote + toWrap + quote
+    public String getQuote() {
+        return myQuote;
+    }
 
-  fun unwrap(toUnwrap: String): String = toUnwrap.removeSurrounding(quote)
+    public boolean isTriple() {
+        return this == TRIPLE_SINGLE || this == TRIPLE_DOUBLE;
+    }
 
-  companion object {
-    fun ofString(string: String): StarlarkQuote =
-      when {
-        string.startsWith(TRIPLE_SINGLE.quote) -> TRIPLE_SINGLE
-        string.startsWith(TRIPLE_DOUBLE.quote) -> TRIPLE_DOUBLE
-        string.startsWith(SINGLE.quote) -> SINGLE
-        string.startsWith(DOUBLE.quote) -> DOUBLE
-        else -> UNQUOTED
-      }
-  }
+    public TextRange rangeWithinQuotes(String string) {
+        boolean hasClosingQuote = string.length() >= myQuote.length() * 2 &&
+            string.endsWith(myQuote) &&
+            countTrailingBackslashes(string.substring(0, string.length() - myQuote.length())) % 2 == 0;
+        int endOffset = hasClosingQuote ? string.length() - myQuote.length() : string.length();
+        return new TextRange(myQuote.length(), endOffset);
+    }
+
+    public String wrap(String toWrap) {
+        return myQuote + toWrap + myQuote;
+    }
+
+    public String unwrap(String toUnwrap) {
+        // Kotlin removeSurrounding(quote)
+        if (toUnwrap.length() >= myQuote.length() * 2 && toUnwrap.startsWith(myQuote) && toUnwrap.endsWith(myQuote)) {
+            return toUnwrap.substring(myQuote.length(), toUnwrap.length() - myQuote.length());
+        }
+        return toUnwrap;
+    }
+
+    public static StarlarkQuote ofString(String string) {
+        if (string.startsWith(TRIPLE_SINGLE.myQuote)) {
+            return TRIPLE_SINGLE;
+        }
+        else if (string.startsWith(TRIPLE_DOUBLE.myQuote)) {
+            return TRIPLE_DOUBLE;
+        }
+        else if (string.startsWith(SINGLE.myQuote)) {
+            return SINGLE;
+        }
+        else if (string.startsWith(DOUBLE.myQuote)) {
+            return DOUBLE;
+        }
+        else {
+            return UNQUOTED;
+        }
+    }
+
+    // Kotlin takeLastWhile { it == '\\' }.length
+    private static int countTrailingBackslashes(String string) {
+        int count = 0;
+        for (int i = string.length() - 1; i >= 0 && string.charAt(i) == '\\'; i--) {
+            count++;
+        }
+        return count;
+    }
 }

@@ -46,3 +46,15 @@ bazelrc.language.parser.missing.import.path:
     text: "Import path expected"
 starlark.language.description:
     text: "Starlark language"
+bazelrc.language.parser.expected.import.or.command:
+    text: "<import>, <try-import> or command expected)"
+bazelrc.language.parser.expected.import:
+    text: "<import> or <try-import> expected"
+bazelrc.language.parser.unexpected.import.path:
+    text: "Unexpected import path"
+bazelrc.language.parser.expected.new.command.line:
+    text: "New command line expected"
+bazelrc.language.parser.expected.command:
+    text: "Command expected"
+bazelquery.error.missing.token:
+    text: "<{0}> expected"

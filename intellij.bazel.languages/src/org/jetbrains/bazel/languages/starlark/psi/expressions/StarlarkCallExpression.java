@@ -1,127 +1,243 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import com.intellij.model.psi.PsiSymbolReference
-import com.intellij.navigation.ItemPresentation
-import com.intellij.openapi.components.serviceOrNull
-import com.intellij.psi.ElementManipulators
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiNameIdentifierOwner
-import com.intellij.psi.search.SearchScope
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.BazelLanguagesIcons
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList
-import org.jetbrains.bazel.languages.starlark.starlarkProjectScope
-import javax.swing.Icon
-import kotlin.contracts.ExperimentalContracts
-import kotlin.contracts.contract
+import java.util.Objects;
+import consulo.content.scope.SearchScope;
+import consulo.document.util.TextRange;
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.ElementManipulators;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiNameIdentifierOwner;
+import consulo.language.psi.PsiReference;
+import consulo.localize.LocalizeValue;
+import consulo.navigation.ItemPresentation;
+import consulo.ui.image.Image;
+import consulo.util.lang.StringUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.BazelLanguagesIcons;
+import org.jetbrains.bazel.languages.starlark.StarlarkSearchScope;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkReferenceSupport;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Detects whether this [PsiElement] is a [StarlarkCallExpression] that is a target rule declaration in a BUILD file.
- * @see [StarlarkCallExpression.isRuleTarget]
- */
-@OptIn(ExperimentalContracts::class)
-@ApiStatus.Internal
-fun PsiElement.isRuleTarget(): Boolean {
-  contract { returns(true) implies (this@isRuleTarget is StarlarkCallExpression) }
-  return this is StarlarkCallExpression && isRuleTarget()
-}
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 
 /**
- * Whether this call expression is a top-level function call in a BUILD or MODULE.bazel file.
- */
-@OptIn(ExperimentalContracts::class)
-@ApiStatus.Internal
-fun PsiElement.isBazelFileTopLevelCall(): Boolean {
-  contract { returns(true) implies (this@isBazelFileTopLevelCall is StarlarkCallExpression) }
-  if (this !is StarlarkCallExpression) return false
-  // when StarlarkCallExpression is a top-level call, it is a child of StarlarkExpressionStatement, which is a child of the StarlarkFile
-  val file = parent?.parent as? StarlarkFile ?: return false
-  val fileType = file.getBazelFileType()
-  return fileType == BazelFileType.BUILD || fileType == BazelFileType.MODULE
-}
-
-/**
- * It implements [PsiNameIdentifierOwner] for target rule declarations in BUILD files.
+ * It implements {@link PsiNameIdentifierOwner} for target rule declarations in BUILD files.
  * A call expression is a target rule declaration when it has a `name` argument whose value is a simple string literal
  * and the containing file is a BUILD file.
- * It's communicated to the IntelliJ platform by [org.jetbrains.bazel.languages.starlark.findusages.BazelRuleTargetCallElementEvaluator].
+ * It's communicated to the IntelliJ platform by
+ * {@code org.jetbrains.bazel.languages.starlark.findusages.BazelRuleTargetCallElementEvaluator}.
  */
-@ApiStatus.Internal
-class StarlarkCallExpression(node: ASTNode) :
-  StarlarkBaseElement(node),
-  PsiNameIdentifierOwner {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitCallExpression(this)
+public class StarlarkCallExpression extends StarlarkBaseElement implements PsiNameIdentifierOwner {
+    /**
+     * Detects whether this {@link PsiElement} is a {@link StarlarkCallExpression} that is a target rule declaration in a BUILD file.
+     *
+     * @see StarlarkCallExpression#isRuleTarget()
+     */
+    public static boolean isRuleTarget(PsiElement receiver) {
+        return receiver instanceof StarlarkCallExpression callExpression && callExpression.isRuleTarget();
+    }
 
-  override fun getUseScope(): SearchScope = if (isRuleTarget()) project.starlarkProjectScope() else super.getUseScope()
+    /**
+     * Whether this call expression is a top-level function call in a BUILD or MODULE.bazel file.
+     */
+    public static boolean isBazelFileTopLevelCall(PsiElement receiver) {
+        if (!(receiver instanceof StarlarkCallExpression)) {
+            return false;
+        }
+        // when StarlarkCallExpression is a top-level call, it is a child of StarlarkExpressionStatement,
+        // which is a child of the StarlarkFile
+        PsiElement parent = receiver.getParent();
+        if (parent == null || !(parent.getParent() instanceof StarlarkFile file)) {
+            return false;
+        }
+        BazelFileType fileType = file.getBazelFileType();
+        return fileType == BazelFileType.BUILD || fileType == BazelFileType.MODULE;
+    }
 
-  override fun getName(): String? = if (isRuleTarget()) getNameAttributeValue() else null
+    public StarlarkCallExpression(ASTNode node) {
+        super(node);
+    }
 
-  override fun setName(name: String): PsiElement {
-    if (!isRuleTarget()) return this
-    val literal = nameArgumentStringLiteral() ?: return this
-    val range = ElementManipulators.getValueTextRange(literal)
-    return ElementManipulators
-      .getManipulator(literal)
-      .handleContentChange(literal, range, name)
-      ?: this
-  }
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitCallExpression(this);
+    }
 
-  override fun getNameIdentifier(): PsiElement? = when {
-      isRuleTarget() -> nameArgumentStringLiteral()
-      else -> null
-  }
+    @Override
+    public SearchScope getUseScope() {
+        return isRuleTarget() ? StarlarkSearchScope.starlarkProjectScope(getProject()) : super.getUseScope();
+    }
 
-  override fun getTextOffset(): Int = nameIdentifier?.textOffset ?: super.getTextOffset()
+    @Override
+    public @Nullable String getName() {
+        return isRuleTarget() ? getNameAttributeValue() : null;
+    }
 
-  override fun getPresentation(): ItemPresentation? = when {
-      isRuleTarget() ->  BazelTargetPresentation(this)
-      else -> null
-  }
+    @Override
+    public PsiElement setName(String name) {
+        if (!isRuleTarget()) {
+            return this;
+        }
+        StarlarkStringLiteralExpression literal = nameArgumentStringLiteral();
+        if (literal == null) {
+            return this;
+        }
+        TextRange range = ElementManipulators.getValueTextRange(literal);
+        PsiElement result = Objects.requireNonNull(ElementManipulators
+            .getManipulator(literal))
+            .handleContentChange(literal, range, name);
+        return result == null ? this : result;
+    }
 
-  fun isRuleTarget(): Boolean {
-    if (getNameAttributeValue() == null) return false
-    val file = containingFile as? StarlarkFile ?: return false
-    return file.isBuildFile()
-  }
+    @Override
+    public @Nullable PsiElement getNameIdentifier() {
+        if (isRuleTarget()) {
+            return nameArgumentStringLiteral();
+        }
+        else {
+            return null;
+        }
+    }
 
-  fun getNameAttributeValue(): String? = nameArgumentStringLiteral()?.getStringContents()
-  fun getCalledFunctionName(): String? = (getCalledExpression() as? StarlarkReferenceExpression)?.text
-  fun getCalledExpression(): PsiElement? = findChildByType(StarlarkElementTypes.EXPRESSIONS)
+    @Override
+    public int getTextOffset() {
+        PsiElement nameIdentifier = getNameIdentifier();
+        return nameIdentifier != null ? nameIdentifier.getTextOffset() : super.getTextOffset();
+    }
 
-  fun getTags(): List<String>? = getArgumentList()
-    ?.getKeywordArgument("tags")
-    ?.children
-    ?.filterIsInstance<StarlarkListLiteralExpression>()
-    ?.firstOrNull()
-    ?.getElements()
-    ?.filterIsInstance<StarlarkStringLiteralExpression>()
-    ?.map { it.getStringContents() }
+    @Override
+    public @Nullable ItemPresentation getPresentation() {
+        if (isRuleTarget()) {
+            return new BazelTargetPresentation(this);
+        }
+        else {
+            return null;
+        }
+    }
 
-  fun getArgumentList(): StarlarkArgumentList? = findChildrenByClass(StarlarkArgumentList::class.java).firstOrNull()
+    public boolean isRuleTarget() {
+        if (getNameAttributeValue() == null) {
+            return false;
+        }
+        if (!(getContainingFile() instanceof StarlarkFile file)) {
+            return false;
+        }
+        return file.isBuildFile();
+    }
 
-  override fun getOwnReferences(): Collection<PsiSymbolReference> =
-    serviceOrNull<StarlarkReferenceSupport>()?.getOwnReferences(this) ?: emptyList()
+    public @Nullable String getNameAttributeValue() {
+        StarlarkStringLiteralExpression literal = nameArgumentStringLiteral();
+        return literal == null ? null : literal.getStringContents();
+    }
 
-  private fun nameArgumentStringLiteral(): StarlarkStringLiteralExpression? = getArgumentList()
-    ?.getNameArgument()
-    ?.getValue() as? StarlarkStringLiteralExpression
+    public @Nullable String getCalledFunctionName() {
+        return getCalledExpression() instanceof StarlarkReferenceExpression referenceExpression ? referenceExpression.getText() : null;
+    }
+
+    public @Nullable PsiElement getCalledExpression() {
+        return findChildByType(StarlarkElementTypes.EXPRESSIONS);
+    }
+
+    public @Nullable List<String> getTags() {
+        StarlarkArgumentList argumentList = getArgumentList();
+        if (argumentList == null) {
+            return null;
+        }
+        StarlarkNamedArgumentExpression tags = argumentList.getKeywordArgument("tags");
+        if (tags == null) {
+            return null;
+        }
+        StarlarkListLiteralExpression listLiteral = Arrays.stream(tags.getChildren())
+            .filter(StarlarkListLiteralExpression.class::isInstance)
+            .map(StarlarkListLiteralExpression.class::cast)
+            .findFirst()
+            .orElse(null);
+        if (listLiteral == null) {
+            return null;
+        }
+        return listLiteral.getElements()
+            .stream()
+            .filter(StarlarkStringLiteralExpression.class::isInstance)
+            .map(StarlarkStringLiteralExpression.class::cast)
+            .map(StarlarkStringLiteralExpression::getStringContents)
+            .toList();
+    }
+
+    public @Nullable StarlarkArgumentList getArgumentList() {
+        StarlarkArgumentList[] argumentLists = findChildrenByClass(StarlarkArgumentList.class);
+        return argumentLists.length == 0 ? null : argumentLists[0];
+    }
+
+    // consulo: upstream PsiSymbolReference own references are merged into getReferences()
+    public Collection<PsiReference> getOwnReferences() {
+        StarlarkReferenceSupport support = StarlarkReferenceSupport.getInstance();
+        return support == null ? List.of() : support.getOwnReferences(this);
+    }
+
+    @Override
+    public PsiReference[] getReferences() {
+        List<PsiReference> references = new ArrayList<>();
+        PsiReference reference = getReference();
+        if (reference != null) {
+            references.add(reference);
+        }
+        references.addAll(getOwnReferences());
+        return references.toArray(PsiReference.EMPTY_ARRAY);
+    }
+
+    private @Nullable StarlarkStringLiteralExpression nameArgumentStringLiteral() {
+        StarlarkArgumentList argumentList = getArgumentList();
+        if (argumentList == null) {
+            return null;
+        }
+        StarlarkNamedArgumentExpression nameArgument = argumentList.getNameArgument();
+        if (nameArgument == null) {
+            return null;
+        }
+        return nameArgument.getValue() instanceof StarlarkStringLiteralExpression literal ? literal : null;
+    }
 }
 
-private class BazelTargetPresentation(private val target: StarlarkCallExpression) : ItemPresentation {
-  override fun getPresentableText(): String? = target.getNameAttributeValue()
+class BazelTargetPresentation implements ItemPresentation {
+    private final StarlarkCallExpression myTarget;
 
-  override fun getIcon(unused: Boolean): Icon = BazelLanguagesIcons.bazel
+    BazelTargetPresentation(StarlarkCallExpression target) {
+        myTarget = target;
+    }
 
-  override fun getLocationString(): String? {
-    val virtualFile = target.containingFile?.virtualFile ?: return null
-    val basePath = target.project.basePath ?: return virtualFile.presentableUrl
-    return virtualFile.path.removePrefix("$basePath/")
-  }
+    @Override
+    public LocalizeValue getPresentableText() {
+        return LocalizeValue.ofNullable(myTarget.getNameAttributeValue());
+    }
+
+    // upstream overrides getIcon(boolean unused), which is deprecated in Consulo
+    @Override
+    public Image getIcon() {
+        return BazelLanguagesIcons.bazel();
+    }
+
+    @Override
+    public @Nullable String getLocationString() {
+        PsiFile containingFile = myTarget.getContainingFile();
+        VirtualFile virtualFile = containingFile == null ? null : containingFile.getVirtualFile();
+        if (virtualFile == null) {
+            return null;
+        }
+        String basePath = myTarget.getProject().getBasePath();
+        if (basePath == null) {
+            return virtualFile.getPresentableUrl();
+        }
+        return StringUtil.trimStart(virtualFile.getPath(), basePath + "/");
+    }
 }

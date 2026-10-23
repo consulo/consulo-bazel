@@ -1,152 +1,173 @@
-package org.jetbrains.bazel.languages.bazelrc.parser
+package org.jetbrains.bazel.languages.bazelrc.parser;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.PsiBuilder
-import com.intellij.psi.TokenType
-import com.intellij.psi.tree.IElementType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.bazel.languages.BazelLanguagesBundle
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcElementTypes
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenSets
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.ast.TokenType;
+import consulo.language.parser.PsiBuilder;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcElementTypes;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenSets;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-internal open class Parsing(private val root: IElementType, val builder: PsiBuilder) : PsiBuilder by builder {
-  companion object {
-    private val commandPrefixes = TokenSet.create(BazelrcTokenTypes.COMMAND, *BazelrcTokenSets.QUOTES.types)
-    private val flagPrefixes = TokenSet.create(BazelrcTokenTypes.FLAG, BazelrcTokenTypes.EQ, BazelrcTokenTypes.VALUE)
-    private val valueTokens = TokenSet.create(BazelrcTokenTypes.VALUE, BazelrcTokenTypes.SINGLE_QUOTE, BazelrcTokenTypes.DOUBLE_QUOTE)
-    private val backTokens = TokenSet.create(TokenType.WHITE_SPACE, BazelrcTokenTypes.COMMENT)
-  }
+// consulo: Kotlin `PsiBuilder by builder` delegation is replaced by explicit calls on myBuilder
+class Parsing {
+    private final IElementType myRoot;
+    private final PsiBuilder myBuilder;
 
-  fun parseFile(): ASTNode {
-    val file = builder.mark()
-    while (!eof()) {
-      when {
-        atToken(BazelrcTokenTypes.IMPORT) -> parseImport()
-
-        atAnyToken(commandPrefixes) -> parseLine()
-
-        else -> advanceError("<import>, <try-import> or command expected)")
-      }
+    Parsing(IElementType root, PsiBuilder builder) {
+        myRoot = root;
+        myBuilder = builder;
     }
 
-    file.done(root)
-    return treeBuilt
-  }
-
-  private fun parseImport() {
-    val import = mark()
-
-    expectToken(BazelrcTokenTypes.IMPORT, "<import> or <try-import> expected")
-
-    if (!matchToken(BazelrcTokenTypes.VALUE)) {
-      error(BazelLanguagesBundle.message("bazelrc.language.parser.missing.import.path"))
+    public PsiBuilder getBuilder() {
+        return myBuilder;
     }
 
-    while (atToken(BazelrcTokenTypes.VALUE)) {
-      advanceError("Unexpected import path")
+    private static final TokenSet COMMAND_PREFIXES = TokenSet.orSet(TokenSet.create(BazelrcTokenTypes.COMMAND), BazelrcTokenSets.QUOTES);
+    private static final TokenSet FLAG_PREFIXES = TokenSet.create(BazelrcTokenTypes.FLAG, BazelrcTokenTypes.EQ, BazelrcTokenTypes.VALUE);
+    private static final TokenSet VALUE_TOKENS =
+        TokenSet.create(BazelrcTokenTypes.VALUE, BazelrcTokenTypes.SINGLE_QUOTE, BazelrcTokenTypes.DOUBLE_QUOTE);
+    private static final TokenSet BACK_TOKENS = TokenSet.create(TokenType.WHITE_SPACE, BazelrcTokenTypes.COMMENT);
+
+    public ASTNode parseFile() {
+        PsiBuilder.Marker file = myBuilder.mark();
+        while (!myBuilder.eof()) {
+            if (atToken(BazelrcTokenTypes.IMPORT)) {
+                parseImport();
+            }
+            else if (atAnyToken(COMMAND_PREFIXES)) {
+                parseLine();
+            }
+            else {
+                advanceError(BazelLanguagesLocalize.bazelrcLanguageParserExpectedImportOrCommand());
+            }
+        }
+
+        file.done(myRoot);
+        return myBuilder.getTreeBuilt();
     }
 
-    import.done(BazelrcElementTypes.IMPORT)
-  }
+    private void parseImport() {
+        PsiBuilder.Marker importMarker = myBuilder.mark();
 
-  private fun parseLine() {
-    if (!atAnyToken(commandPrefixes)) {
-      advanceError("New command line expected")
+        expectToken(BazelrcTokenTypes.IMPORT, BazelLanguagesLocalize.bazelrcLanguageParserExpectedImport());
+
+        if (!matchToken(BazelrcTokenTypes.VALUE)) {
+            myBuilder.error(BazelLanguagesLocalize.bazelrcLanguageParserMissingImportPath());
+        }
+
+        while (atToken(BazelrcTokenTypes.VALUE)) {
+            advanceError(BazelLanguagesLocalize.bazelrcLanguageParserUnexpectedImportPath());
+        }
+
+        importMarker.done(BazelrcElementTypes.IMPORT);
     }
 
-    val lineMarker = mark()
-    parseCommand()
+    private void parseLine() {
+        if (!atAnyToken(COMMAND_PREFIXES)) {
+            advanceError(BazelLanguagesLocalize.bazelrcLanguageParserExpectedNewCommandLine());
+        }
 
-    while (atAnyToken(flagPrefixes)) {
-      parseFlag()
+        PsiBuilder.Marker lineMarker = myBuilder.mark();
+        parseCommand();
+
+        while (atAnyToken(FLAG_PREFIXES)) {
+            parseFlag();
+        }
+
+        lineMarker.done(BazelrcElementTypes.LINE);
     }
 
-    lineMarker.done(BazelrcElementTypes.LINE)
-  }
+    private void parseCommand() {
+        @Nullable IElementType quote = null;
+        if (atAnyToken(BazelrcTokenSets.QUOTES)) {
+            quote = myBuilder.getTokenType();
+            myBuilder.advanceLexer();
+        }
 
-  private fun parseCommand() {
-    var quote: IElementType? = null
-    if (atAnyToken(BazelrcTokenSets.QUOTES)) {
-      quote = tokenType
-      advanceLexer()
+        expectToken(BazelrcTokenTypes.COMMAND, BazelLanguagesLocalize.bazelrcLanguageParserExpectedCommand());
+
+        if (matchToken(BazelrcTokenTypes.COLON)) {
+            matchToken(BazelrcTokenTypes.CONFIG);
+        }
+
+        // check to see if we crossed a nl
+        if (quote != null && !pastNewLine()) {
+            matchToken(quote);
+        }
     }
 
-    expectToken(BazelrcTokenTypes.COMMAND, "Command expected")
+    private void parseFlag() {
+        PsiBuilder.Marker flag = myBuilder.mark();
 
-    if (matchToken(BazelrcTokenTypes.COLON)) {
-      matchToken(BazelrcTokenTypes.CONFIG)
+        matchToken(BazelrcTokenTypes.FLAG);
+        matchToken(BazelrcTokenTypes.EQ);
+        matchToken(BazelrcTokenTypes.VALUE);
+        while (atAnyToken(VALUE_TOKENS) && !pastNewLine()) {
+            myBuilder.advanceLexer();
+        }
+
+        flag.done(BazelrcElementTypes.FLAG);
     }
 
-    // check to see if we crossed a nl
-    if (quote != null && !pastNewLine()) {
-      matchToken(quote)
-    }
-  }
+    private boolean pastNewLine() {
+        int tokenPos = -1;
+        int endOffset = myBuilder.getCurrentOffset();
 
-  private fun parseFlag() {
-    val flag = mark()
+        @Nullable IElementType backToken = myBuilder.rawLookup(tokenPos);
+        while (BACK_TOKENS.contains(backToken)) {
+            int startOffset = myBuilder.rawTokenTypeStart(tokenPos);
+            if (myBuilder.getOriginalText().subSequence(startOffset, endOffset).toString().contains("\n")) {
+                return true;
+            }
+            endOffset = startOffset;
+            backToken = myBuilder.rawLookup(--tokenPos);
+        }
 
-    matchToken(BazelrcTokenTypes.FLAG)
-    matchToken(BazelrcTokenTypes.EQ)
-    matchToken(BazelrcTokenTypes.VALUE)
-    while (atAnyToken(valueTokens) && !pastNewLine()) {
-      advanceLexer()
-    }
-
-    flag.done(BazelrcElementTypes.FLAG)
-  }
-
-  private fun pastNewLine(): Boolean {
-    var tokenPos = -1
-    var endOffset = currentOffset
-
-    var backToken = rawLookup(tokenPos)
-    while (backTokens.contains(backToken)) {
-      val startOffset = rawTokenTypeStart(tokenPos)
-      if (originalText.substring(startOffset, endOffset).contains('\n')) {
-        return true
-      }
-      endOffset = startOffset
-      backToken = rawLookup(--tokenPos)
+        return false;
     }
 
-    return false
-  }
-
-  private fun atToken(tokenType: IElementType?): Boolean = builder.tokenType === tokenType
-
-  private fun atAnyToken(tokenTypes: TokenSet): Boolean = tokenTypes.contains(tokenType)
-
-  private fun matchToken(tokenType: IElementType): Boolean {
-    if (atToken(tokenType)) {
-      advanceLexer()
-      return true
+    private boolean atToken(@Nullable IElementType tokenType) {
+        return myBuilder.getTokenType() == tokenType;
     }
-    return false
-  }
 
-  private fun expectToken(tokenType: IElementType, error: String): Boolean {
-    if (atToken(tokenType)) {
-      advanceLexer()
-      return true
-    } else {
-      advanceError(error)
-      return false
+    private boolean atAnyToken(TokenSet tokenTypes) {
+        return tokenTypes.contains(myBuilder.getTokenType());
     }
-  }
 
-  private fun matchAnyToken(tokens: TokenSet): Boolean {
-    if (atAnyToken(tokens)) {
-      advanceLexer()
-      return true
+    private boolean matchToken(IElementType tokenType) {
+        if (atToken(tokenType)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        return false;
     }
-    return false
-  }
 
-  private fun advanceError(message: String) {
-    val err = mark()
-    advanceLexer()
-    err.error(message)
-  }
+    private boolean expectToken(IElementType tokenType, LocalizeValue error) {
+        if (atToken(tokenType)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        else {
+            advanceError(error);
+            return false;
+        }
+    }
+
+    private boolean matchAnyToken(TokenSet tokens) {
+        if (atAnyToken(tokens)) {
+            myBuilder.advanceLexer();
+            return true;
+        }
+        return false;
+    }
+
+    private void advanceError(LocalizeValue message) {
+        PsiBuilder.Marker err = myBuilder.mark();
+        myBuilder.advanceLexer();
+        err.error(message);
+    }
 }

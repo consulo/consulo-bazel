@@ -1,21 +1,44 @@
-package org.jetbrains.bazel.languages.bazelquery
+package org.jetbrains.bazel.languages.bazelquery;
 
-import com.intellij.lang.Language
-import com.intellij.openapi.fileTypes.LanguageFileType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.BazelLanguagesBundle
-import org.jetbrains.bazel.languages.BazelLanguagesIcons
-import javax.swing.Icon
+import consulo.bazel.languages.localize.BazelLanguagesLocalize;
+import consulo.language.Language;
+import consulo.language.file.LanguageFileType;
+import consulo.localize.LocalizeValue;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.BazelLanguagesIcons;
 
-@ApiStatus.Internal
-object BazelQueryLanguage : Language("BazelQuery")
+public class BazelQueryLanguage extends Language {
+    public static final BazelQueryLanguage INSTANCE = new BazelQueryLanguage();
 
-internal object BazelQueryFileType : LanguageFileType(BazelQueryLanguage) {
-  override fun getName(): String = "BazelQuery"
+    private BazelQueryLanguage() {
+        super("BazelQuery");
+    }
 
-  override fun getDescription(): String = BazelLanguagesBundle.message("bazelquery.language.description")
+    public static class BazelQueryFileType extends LanguageFileType {
+        public static final BazelQueryFileType INSTANCE = new BazelQueryFileType();
 
-  override fun getDefaultExtension(): String = ".bazelquery"
+        private BazelQueryFileType() {
+            super(BazelQueryLanguage.INSTANCE);
+        }
 
-  override fun getIcon(): Icon = BazelLanguagesIcons.bazel
+        @Override
+        public String getId() {
+            return "BazelQuery";
+        }
+
+        @Override
+        public LocalizeValue getDescription() {
+            return BazelLanguagesLocalize.bazelqueryLanguageDescription();
+        }
+
+        @Override
+        public String getDefaultExtension() {
+            return ".bazelquery";
+        }
+
+        @Override
+        public Image getIcon() {
+            return BazelLanguagesIcons.bazel();
+        }
+    }
 }

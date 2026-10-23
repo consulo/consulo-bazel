@@ -1,9 +1,14 @@
-package org.jetbrains.bazel.languages.bazelquery.psi
+package org.jetbrains.bazel.languages.bazelquery.psi;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.ast.ASTNode;
 
-@ApiStatus.Internal
-class BazelQueryFlagVal(node: ASTNode) : BazelQueryBaseElement(node) {
-  override fun acceptVisitor(visitor: BazelQueryElementVisitor) = visitor.visitFlagVal(this)
+public class BazelQueryFlagVal extends BazelQueryBaseElement {
+    public BazelQueryFlagVal(ASTNode node) {
+        super(node);
+    }
+
+    @Override
+    protected void acceptVisitor(BazelQueryElementVisitor visitor) {
+        visitor.visitFlagVal(this);
+    }
 }

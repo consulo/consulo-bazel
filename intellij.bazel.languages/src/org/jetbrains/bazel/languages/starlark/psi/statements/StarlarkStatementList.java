@@ -1,16 +1,27 @@
-package org.jetbrains.bazel.languages.starlark.psi.statements
+package org.jetbrains.bazel.languages.starlark.psi.statements;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration;
 
-@ApiStatus.Internal
-class StarlarkStatementList(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitStatementListImpl(this)
+import java.util.List;
 
-  fun getAssignments(): List<StarlarkAssignmentStatement> = findChildrenByClass(StarlarkAssignmentStatement::class.java).toList()
+public class StarlarkStatementList extends StarlarkBaseElement {
+    public StarlarkStatementList(ASTNode node) {
+        super(node);
+    }
 
-  fun getFunctionDeclarations(): List<StarlarkFunctionDeclaration> = findChildrenByClass(StarlarkFunctionDeclaration::class.java).toList()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitStatementListImpl(this);
+    }
+
+    public List<StarlarkAssignmentStatement> getAssignments() {
+        return List.of(findChildrenByClass(StarlarkAssignmentStatement.class));
+    }
+
+    public List<StarlarkFunctionDeclaration> getFunctionDeclarations() {
+        return List.of(findChildrenByClass(StarlarkFunctionDeclaration.class));
+    }
 }

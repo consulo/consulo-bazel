@@ -1,12 +1,16 @@
-package org.jetbrains.bazel.languages
+package org.jetbrains.bazel.languages;
 
-import com.intellij.openapi.util.IconLoader
-import org.jetbrains.annotations.ApiStatus
-import javax.swing.Icon
+import consulo.bazel.languages.icon.BazelLanguagesIconGroup;
+import consulo.ui.image.Image;
 
-/** Icons of the Bazel languages. The icon files live in `intellij.bazel.resource`. */
-@ApiStatus.Internal
-object BazelLanguagesIcons {
-  @JvmField
-  val bazel: Icon = IconLoader.getIcon("icons/bazel.svg", BazelLanguagesIcons::class.java.classLoader)
+/**
+ * Icons of the Bazel languages. The icon files live in `intellij.bazel.resource`.
+ */
+public final class BazelLanguagesIcons {
+    private BazelLanguagesIcons() {
+    }
+
+    public static Image bazel() {
+        return BazelLanguagesIconGroup.bazel();
+    }
 }

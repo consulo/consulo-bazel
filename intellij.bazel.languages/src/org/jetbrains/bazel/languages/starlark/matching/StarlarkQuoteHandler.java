@@ -1,6 +1,20 @@
-package org.jetbrains.bazel.languages.starlark.matching
+package org.jetbrains.bazel.languages.starlark.matching;
 
-import com.intellij.codeInsight.editorActions.SimpleTokenSetQuoteHandler
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.editor.action.LanguageQuoteHandler;
+import consulo.language.editor.action.SimpleTokenSetQuoteHandler;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
 
-internal class StarlarkQuoteHandler : SimpleTokenSetQuoteHandler(StarlarkTokenSets.STRINGS)
+@ExtensionImpl
+public class StarlarkQuoteHandler extends SimpleTokenSetQuoteHandler implements LanguageQuoteHandler {
+    public StarlarkQuoteHandler() {
+        super(StarlarkTokenSets.STRINGS);
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+}

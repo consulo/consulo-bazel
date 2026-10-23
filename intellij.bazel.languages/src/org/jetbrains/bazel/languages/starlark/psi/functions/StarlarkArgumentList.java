@@ -1,36 +1,83 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkArgumentList(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitArgumentList(this)
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
-  fun getArgumentNames(): Set<String> = findChildrenByClass(StarlarkNamedArgumentExpression::class.java).mapNotNull { it.name }.toSet()
+public class StarlarkArgumentList extends StarlarkBaseElement {
+    public StarlarkArgumentList(ASTNode node) {
+        super(node);
+    }
 
-  fun getNameArgumentValue(): String? = getNameArgument()?.getArgumentStringValue()
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitArgumentList(this);
+    }
 
-  fun getSrcsArgument(): StarlarkNamedArgumentExpression? =
-    findChildrenByClass(StarlarkNamedArgumentExpression::class.java).find { it.isSrcsArgument() }
+    public Set<String> getArgumentNames() {
+        return Arrays.stream(findChildrenByClass(StarlarkNamedArgumentExpression.class))
+            .map(StarlarkNamedArgumentExpression::getName)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    }
 
-  fun getResourcesArgument(): StarlarkNamedArgumentExpression? =
-    findChildrenByClass(StarlarkNamedArgumentExpression::class.java).find { it.isResourcesArgument() }
+    public @Nullable String getNameArgumentValue() {
+        StarlarkNamedArgumentExpression nameArgument = getNameArgument();
+        return nameArgument != null ? nameArgument.getArgumentStringValue() : null;
+    }
 
-  fun getNameArgument(): StarlarkNamedArgumentExpression? =
-    findChildrenByClass(StarlarkNamedArgumentExpression::class.java).find { it.isNameArgument() }
+    public @Nullable StarlarkNamedArgumentExpression getSrcsArgument() {
+        return Arrays.stream(findChildrenByClass(StarlarkNamedArgumentExpression.class))
+            .filter(StarlarkNamedArgumentExpression::isSrcsArgument)
+            .findFirst()
+            .orElse(null);
+    }
 
-  fun getKeywordArgument(name: String): StarlarkNamedArgumentExpression? =
-    findChildrenByClass(StarlarkNamedArgumentExpression::class.java).find { it.name == name }
+    public @Nullable StarlarkNamedArgumentExpression getResourcesArgument() {
+        return Arrays.stream(findChildrenByClass(StarlarkNamedArgumentExpression.class))
+            .filter(StarlarkNamedArgumentExpression::isResourcesArgument)
+            .findFirst()
+            .orElse(null);
+    }
 
-  fun getArguments(): Array<StarlarkArgumentElement> = findChildrenByClass(StarlarkArgumentElement::class.java)
+    public @Nullable StarlarkNamedArgumentExpression getNameArgument() {
+        return Arrays.stream(findChildrenByClass(StarlarkNamedArgumentExpression.class))
+            .filter(StarlarkNamedArgumentExpression::isNameArgument)
+            .findFirst()
+            .orElse(null);
+    }
 
-  fun getDepsArgument(): StarlarkNamedArgumentExpression? =
-    findChildrenByClass(StarlarkNamedArgumentExpression::class.java).let { arguments ->
-      arguments.find { it.isDepsArgument() } ?: arguments.find { it.isDependenciesArgument() }
+    public @Nullable StarlarkNamedArgumentExpression getKeywordArgument(String name) {
+        return Arrays.stream(findChildrenByClass(StarlarkNamedArgumentExpression.class))
+            .filter(it -> Objects.equals(it.getName(), name))
+            .findFirst()
+            .orElse(null);
+    }
+
+    public StarlarkArgumentElement[] getArguments() {
+        return findChildrenByClass(StarlarkArgumentElement.class);
+    }
+
+    public @Nullable StarlarkNamedArgumentExpression getDepsArgument() {
+        StarlarkNamedArgumentExpression[] arguments = findChildrenByClass(StarlarkNamedArgumentExpression.class);
+        StarlarkNamedArgumentExpression depsArgument = Arrays.stream(arguments)
+            .filter(StarlarkNamedArgumentExpression::isDepsArgument)
+            .findFirst()
+            .orElse(null);
+        if (depsArgument != null) {
+            return depsArgument;
+        }
+        return Arrays.stream(arguments)
+            .filter(StarlarkNamedArgumentExpression::isDependenciesArgument)
+            .findFirst()
+            .orElse(null);
     }
 }

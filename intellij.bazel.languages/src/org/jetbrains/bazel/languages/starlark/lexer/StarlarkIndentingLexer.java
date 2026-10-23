@@ -1,284 +1,366 @@
-package org.jetbrains.bazel.languages.starlark.lexer
+package org.jetbrains.bazel.languages.starlark.lexer;
 
-import com.intellij.lexer.FlexAdapter
-import com.intellij.psi.tree.IElementType
-import it.unimi.dsi.fastutil.ints.IntArrayList
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
+import consulo.language.ast.IElementType;
+import consulo.language.lexer.FlexAdapter;
+import consulo.util.collection.primitive.ints.IntList;
+import consulo.util.collection.primitive.ints.IntLists;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jspecify.annotations.Nullable;
 
-private open class PendingToken(
-  var type: IElementType?,
-  val start: Int,
-  val end: Int,
-) {
-  override fun toString(): String = "$type:$start-$end"
+import java.util.ArrayList;
+import java.util.List;
+
+class PendingToken {
+    private @Nullable IElementType myType;
+    private final int myStart;
+    private final int myEnd;
+
+    PendingToken(@Nullable IElementType type, int start, int end) {
+        myType = type;
+        myStart = start;
+        myEnd = end;
+    }
+
+    public @Nullable IElementType getType() {
+        return myType;
+    }
+
+    public void setType(@Nullable IElementType type) {
+        myType = type;
+    }
+
+    public int getStart() {
+        return myStart;
+    }
+
+    public int getEnd() {
+        return myEnd;
+    }
+
+    @Override
+    public String toString() {
+        return myType + ":" + myStart + "-" + myEnd;
+    }
 }
 
-private class PendingCommentToken(
-  type: IElementType?,
-  start: Int,
-  end: Int,
-  val indent: Int,
-) : PendingToken(type, start, end)
+class PendingCommentToken extends PendingToken {
+    private final int myIndent;
 
-@ApiStatus.Internal
-class StarlarkIndentingLexer : FlexAdapter(_StarlarkLexer(null)) {
-  private val indentStack = IntArrayList()
-  private var braceLevel = 0
-  private var lineHasSignificantTokens = false
-  private var lastNewLineIndent = -1
-  private var tokenQueue: MutableList<PendingToken> = ArrayList()
-  private var lineBreakBeforeFirstCommentIndex = -1
-  private var processSpecialTokensPending = false
-
-  override fun getTokenType(): IElementType? = tokenQueue.getOrNull(0)?.type ?: super.getTokenType()
-
-  override fun getTokenStart(): Int = tokenQueue.getOrNull(0)?.start ?: super.getTokenStart()
-
-  override fun getTokenEnd(): Int = tokenQueue.getOrNull(0)?.end ?: super.getTokenEnd()
-
-  override fun start(
-    buffer: CharSequence,
-    startOffset: Int,
-    endOffset: Int,
-    initialState: Int,
-  ) {
-    super.start(buffer, startOffset, endOffset, initialState)
-    setStartState()
-  }
-
-  override fun advance() {
-    if (tokenQueue.isNotEmpty()) {
-      tokenQueue.removeAt(0)
-      if (processSpecialTokensPending) {
-        processSpecialTokensPending = false
-        processSpecialTokens()
-      }
-    } else {
-      advanceBase()
-      processSpecialTokens()
-    }
-    adjustBraceLevel()
-  }
-
-  private fun advanceBase() {
-    super.advance()
-    checkSignificantTokens()
-  }
-
-  private fun setStartState() {
-    indentStack.clear()
-    indentStack.push(0)
-    braceLevel = 0
-    adjustBraceLevel()
-    lineHasSignificantTokens = false
-    checkSignificantTokens()
-    if (isBaseAt(StarlarkTokenTypes.SPACE)) {
-      processIndent(0, StarlarkTokenTypes.SPACE)
-    }
-  }
-
-  private fun adjustBraceLevel() {
-    val tokenType = tokenType
-    if (StarlarkTokenSets.OPEN_BRACKETS.contains(tokenType)) {
-      braceLevel++
-    } else if (StarlarkTokenSets.CLOSE_BRACKETS.contains(tokenType)) {
-      braceLevel--
-    }
-  }
-
-  private fun checkSignificantTokens() {
-    val tokenType = super.getTokenType()
-    if (!StarlarkTokenSets.WHITESPACE.contains(tokenType) && tokenType !== StarlarkTokenTypes.COMMENT) {
-      lineHasSignificantTokens = true
-    }
-  }
-
-  private fun processSpecialTokens() {
-    if (isBaseAt(StarlarkTokenTypes.LINE_BREAK)) {
-      processLineBreak(super.getTokenStart())
-      if (isBaseAt(StarlarkTokenTypes.COMMENT)) {
-        processComment()
-      }
-    } else if (isBaseAt(StarlarkTokenTypes.SPACE)) {
-      processSpace()
+    PendingCommentToken(@Nullable IElementType type, int start, int end, int indent) {
+        super(type, start, end);
+        myIndent = indent;
     }
 
-    val tokenStart = super.getTokenStart()
-    if (super.getTokenType() == null) {
-      pushToken(StarlarkTokenTypes.STATEMENT_BREAK, tokenStart, tokenStart)
+    public int getIndent() {
+        return myIndent;
     }
-  }
+}
 
-  private fun processSpace() {
-    val start = super.getTokenStart()
-    var end = super.getTokenEnd()
-    while (super.getTokenType() === StarlarkTokenTypes.SPACE) {
-      end = super.getTokenEnd()
-      advanceBase()
-    }
-    if (super.getTokenType() === StarlarkTokenTypes.LINE_BREAK) {
-      processLineBreak(start)
-    } else {
-      pushToken(StarlarkTokenTypes.SPACE, start, end)
-    }
-  }
+public class StarlarkIndentingLexer extends FlexAdapter {
+    private final IntList myIndentStack = IntLists.newArrayList();
+    private int myBraceLevel = 0;
+    private boolean myLineHasSignificantTokens = false;
+    private int myLastNewLineIndent = -1;
+    private List<PendingToken> myTokenQueue = new ArrayList<>();
+    private int myLineBreakBeforeFirstCommentIndex = -1;
+    private boolean myProcessSpecialTokensPending = false;
 
-  private fun processLineBreak(startPos: Int) {
-    if (braceLevel == 0) {
-      if (lineHasSignificantTokens) {
-        pushToken(StarlarkTokenTypes.STATEMENT_BREAK, startPos, startPos)
-      }
-      lineHasSignificantTokens = false
-      advanceBase()
-      processIndent(startPos, StarlarkTokenTypes.LINE_BREAK)
-    } else {
-      processInsignificantLineBreak(startPos)
+    public StarlarkIndentingLexer() {
+        super(new _StarlarkLexer(null));
     }
-  }
 
-  private fun processInsignificantLineBreak(startPos: Int) {
-    // merge whitespace following the line break character into the line break token
-    var end = super.getTokenEnd()
-    advanceBase()
-    while (StarlarkTokenSets.WHITESPACE.contains(super.getTokenType())) {
-      end = super.getTokenEnd()
-      advanceBase()
+    @Override
+    public @Nullable IElementType getTokenType() {
+        PendingToken token = myTokenQueue.isEmpty() ? null : myTokenQueue.get(0);
+        IElementType type = token == null ? null : token.getType();
+        return type != null ? type : super.getTokenType();
     }
-    pushToken(StarlarkTokenTypes.LINE_BREAK, startPos, end)
-    processSpecialTokensPending = true
-  }
 
-  private fun processComment() {
-    lineBreakBeforeFirstCommentIndex = tokenQueue.size - 1
-    while (isBaseAt(StarlarkTokenTypes.COMMENT)) {
-      val commentEnd = super.getTokenEnd()
-      tokenQueue.add(
-        PendingCommentToken(
-          super.getTokenType(),
-          super.getTokenStart(),
-          commentEnd,
-          lastNewLineIndent,
-        ),
-      )
-      advanceBase()
-      if (isBaseAt(StarlarkTokenTypes.LINE_BREAK)) {
-        processLineBreak(super.getTokenStart())
-      } else if (super.getTokenType() == null) {
-        closeDanglingSuitesWithComments(0, commentEnd)
-      } else {
-        break
-      }
+    @Override
+    public int getTokenStart() {
+        PendingToken token = myTokenQueue.isEmpty() ? null : myTokenQueue.get(0);
+        return token != null ? token.getStart() : super.getTokenStart();
     }
-    lineBreakBeforeFirstCommentIndex = -1
-  }
 
-  private fun processIndent(whiteSpaceStart: Int, whitespaceTokenType: IElementType?) {
-    val lastIndent = indentStack.topInt()
-    var indent = getNextLineIndent()
-    lastNewLineIndent = indent
-    // don't generate indent/dedent tokens if a line contains only end-of-line comment and whitespace
-    if (super.getTokenType() === StarlarkTokenTypes.COMMENT) {
-      indent = lastIndent
+    @Override
+    public int getTokenEnd() {
+        PendingToken token = myTokenQueue.isEmpty() ? null : myTokenQueue.get(0);
+        return token != null ? token.getEnd() : super.getTokenEnd();
     }
-    val whiteSpaceEnd = if (super.getTokenType() == null) super.getBufferEnd() else super.getTokenStart()
-    if (indent > lastIndent) {
-      indentStack.push(indent)
-      pushToken(whitespaceTokenType, whiteSpaceStart, whiteSpaceEnd)
-      val insertIndex = skipPrecedingCommentsWithIndent(indent, tokenQueue.size - 1)
-      val indentOffset = if (insertIndex == tokenQueue.size) whiteSpaceEnd else tokenQueue[insertIndex].start
-      tokenQueue.add(insertIndex, PendingToken(StarlarkTokenTypes.INDENT, indentOffset, indentOffset))
-    } else if (indent < lastIndent) {
-      closeDanglingSuitesWithComments(indent, whiteSpaceStart)
-      pushToken(whitespaceTokenType, whiteSpaceStart, whiteSpaceEnd)
-    } else {
-      pushToken(whitespaceTokenType, whiteSpaceStart, whiteSpaceEnd)
-    }
-  }
 
-  private fun closeDanglingSuitesWithComments(indent: Int, whiteSpaceStart: Int) {
-    var lastIndent = indentStack.topInt()
-    var insertIndex = if (lineBreakBeforeFirstCommentIndex == -1) tokenQueue.size else lineBreakBeforeFirstCommentIndex
-    var lastSuiteIndent: Int
-    while (indent < lastIndent) {
-      lastSuiteIndent = indentStack.popInt()
-      lastIndent = indentStack.topInt()
-      var dedentOffset = whiteSpaceStart
-      insertIndex =
+    @Override
+    public void start(
+        CharSequence buffer,
+        int startOffset,
+        int endOffset,
+        int initialState
+    ) {
+        super.start(buffer, startOffset, endOffset, initialState);
+        setStartState();
+    }
+
+    @Override
+    public void advance() {
+        if (!myTokenQueue.isEmpty()) {
+            myTokenQueue.remove(0);
+            if (myProcessSpecialTokensPending) {
+                myProcessSpecialTokensPending = false;
+                processSpecialTokens();
+            }
+        }
+        else {
+            advanceBase();
+            processSpecialTokens();
+        }
+        adjustBraceLevel();
+    }
+
+    private void advanceBase() {
+        super.advance();
+        checkSignificantTokens();
+    }
+
+    private void setStartState() {
+        myIndentStack.clear();
+        myIndentStack.add(0);
+        myBraceLevel = 0;
+        adjustBraceLevel();
+        myLineHasSignificantTokens = false;
+        checkSignificantTokens();
+        if (isBaseAt(StarlarkTokenTypes.SPACE)) {
+            processIndent(0, StarlarkTokenTypes.SPACE);
+        }
+    }
+
+    private void adjustBraceLevel() {
+        IElementType tokenType = getTokenType();
+        if (StarlarkTokenSets.OPEN_BRACKETS.contains(tokenType)) {
+            myBraceLevel++;
+        }
+        else if (StarlarkTokenSets.CLOSE_BRACKETS.contains(tokenType)) {
+            myBraceLevel--;
+        }
+    }
+
+    private void checkSignificantTokens() {
+        IElementType tokenType = super.getTokenType();
+        if (!StarlarkTokenSets.WHITESPACE.contains(tokenType) && tokenType != StarlarkTokenTypes.COMMENT) {
+            myLineHasSignificantTokens = true;
+        }
+    }
+
+    private void processSpecialTokens() {
+        if (isBaseAt(StarlarkTokenTypes.LINE_BREAK)) {
+            processLineBreak(super.getTokenStart());
+            if (isBaseAt(StarlarkTokenTypes.COMMENT)) {
+                processComment();
+            }
+        }
+        else if (isBaseAt(StarlarkTokenTypes.SPACE)) {
+            processSpace();
+        }
+
+        int tokenStart = super.getTokenStart();
+        if (super.getTokenType() == null) {
+            pushToken(StarlarkTokenTypes.STATEMENT_BREAK, tokenStart, tokenStart);
+        }
+    }
+
+    private void processSpace() {
+        int start = super.getTokenStart();
+        int end = super.getTokenEnd();
+        while (super.getTokenType() == StarlarkTokenTypes.SPACE) {
+            end = super.getTokenEnd();
+            advanceBase();
+        }
+        if (super.getTokenType() == StarlarkTokenTypes.LINE_BREAK) {
+            processLineBreak(start);
+        }
+        else {
+            pushToken(StarlarkTokenTypes.SPACE, start, end);
+        }
+    }
+
+    private void processLineBreak(int startPos) {
+        if (myBraceLevel == 0) {
+            if (myLineHasSignificantTokens) {
+                pushToken(StarlarkTokenTypes.STATEMENT_BREAK, startPos, startPos);
+            }
+            myLineHasSignificantTokens = false;
+            advanceBase();
+            processIndent(startPos, StarlarkTokenTypes.LINE_BREAK);
+        }
+        else {
+            processInsignificantLineBreak(startPos);
+        }
+    }
+
+    private void processInsignificantLineBreak(int startPos) {
+        // merge whitespace following the line break character into the line break token
+        int end = super.getTokenEnd();
+        advanceBase();
+        while (StarlarkTokenSets.WHITESPACE.contains(super.getTokenType())) {
+            end = super.getTokenEnd();
+            advanceBase();
+        }
+        pushToken(StarlarkTokenTypes.LINE_BREAK, startPos, end);
+        myProcessSpecialTokensPending = true;
+    }
+
+    private void processComment() {
+        myLineBreakBeforeFirstCommentIndex = myTokenQueue.size() - 1;
+        while (isBaseAt(StarlarkTokenTypes.COMMENT)) {
+            int commentEnd = super.getTokenEnd();
+            myTokenQueue.add(
+                new PendingCommentToken(
+                    super.getTokenType(),
+                    super.getTokenStart(),
+                    commentEnd,
+                    myLastNewLineIndent
+                )
+            );
+            advanceBase();
+            if (isBaseAt(StarlarkTokenTypes.LINE_BREAK)) {
+                processLineBreak(super.getTokenStart());
+            }
+            else if (super.getTokenType() == null) {
+                closeDanglingSuitesWithComments(0, commentEnd);
+            }
+            else {
+                break;
+            }
+        }
+        myLineBreakBeforeFirstCommentIndex = -1;
+    }
+
+    private void processIndent(int whiteSpaceStart, @Nullable IElementType whitespaceTokenType) {
+        int lastIndent = topInt(myIndentStack);
+        int indent = getNextLineIndent();
+        myLastNewLineIndent = indent;
+        // don't generate indent/dedent tokens if a line contains only end-of-line comment and whitespace
+        if (super.getTokenType() == StarlarkTokenTypes.COMMENT) {
+            indent = lastIndent;
+        }
+        int whiteSpaceEnd = super.getTokenType() == null ? super.getBufferEnd() : super.getTokenStart();
         if (indent > lastIndent) {
-          pushToken(StarlarkTokenTypes.INCONSISTENT_DEDENT, whiteSpaceStart, whiteSpaceStart)
-          tokenQueue.size
-        } else {
-          skipPrecedingCommentsWithSameIndentOnSuiteClose(lastSuiteIndent, insertIndex)
+            myIndentStack.add(indent);
+            pushToken(whitespaceTokenType, whiteSpaceStart, whiteSpaceEnd);
+            int insertIndex = skipPrecedingCommentsWithIndent(indent, myTokenQueue.size() - 1);
+            int indentOffset = insertIndex == myTokenQueue.size() ? whiteSpaceEnd : myTokenQueue.get(insertIndex).getStart();
+            myTokenQueue.add(insertIndex, new PendingToken(StarlarkTokenTypes.INDENT, indentOffset, indentOffset));
         }
-      if (insertIndex != tokenQueue.size) {
-        dedentOffset = tokenQueue[insertIndex].start
-      }
-      tokenQueue.add(insertIndex, PendingToken(StarlarkTokenTypes.DEDENT, dedentOffset, dedentOffset))
-      insertIndex++
-    }
-  }
-
-  private fun skipPrecedingCommentsWithIndent(indent: Int, index: Int): Int {
-    // insert the DEDENT before previous comments that have the same indent as the current token indent
-    var idx = index
-    var foundComment = false
-    while (idx > 0 && tokenQueue[idx - 1] is PendingCommentToken) {
-      val commentToken = tokenQueue[idx - 1] as PendingCommentToken
-      if (commentToken.indent != indent) {
-        break
-      }
-      foundComment = true
-      idx--
-      if (isPrecededByCommentWithLineBreak(idx)) {
-        idx--
-      }
-    }
-    return if (foundComment) idx else tokenQueue.size
-  }
-
-  private fun skipPrecedingCommentsWithSameIndentOnSuiteClose(indent: Int, anchorIndex: Int): Int {
-    var result = anchorIndex
-    for (i in anchorIndex until tokenQueue.size) {
-      val token = tokenQueue[i]
-      if (token is PendingCommentToken) {
-        if (token.indent < indent) {
-          break
+        else if (indent < lastIndent) {
+            closeDanglingSuitesWithComments(indent, whiteSpaceStart);
+            pushToken(whitespaceTokenType, whiteSpaceStart, whiteSpaceEnd);
         }
-        result = i + 1
-      }
+        else {
+            pushToken(whitespaceTokenType, whiteSpaceStart, whiteSpaceEnd);
+        }
     }
-    return result
-  }
 
-  private fun getNextLineIndent(): Int {
-    var indent = 0
-    while (super.getTokenType() != null && StarlarkTokenSets.WHITESPACE.contains(super.getTokenType())) {
-      if (super.getTokenType() === StarlarkTokenTypes.TAB) {
-        indent = (indent / 8 + 1) * 8
-      } else if (super.getTokenType() === StarlarkTokenTypes.SPACE) {
-        indent++
-      } else if (super.getTokenType() === StarlarkTokenTypes.LINE_BREAK) {
-        indent = 0
-      }
-      advanceBase()
+    private void closeDanglingSuitesWithComments(int indent, int whiteSpaceStart) {
+        int lastIndent = topInt(myIndentStack);
+        int insertIndex = myLineBreakBeforeFirstCommentIndex == -1 ? myTokenQueue.size() : myLineBreakBeforeFirstCommentIndex;
+        int lastSuiteIndent;
+        while (indent < lastIndent) {
+            lastSuiteIndent = popInt(myIndentStack);
+            lastIndent = topInt(myIndentStack);
+            int dedentOffset = whiteSpaceStart;
+            if (indent > lastIndent) {
+                pushToken(StarlarkTokenTypes.INCONSISTENT_DEDENT, whiteSpaceStart, whiteSpaceStart);
+                insertIndex = myTokenQueue.size();
+            }
+            else {
+                insertIndex = skipPrecedingCommentsWithSameIndentOnSuiteClose(lastSuiteIndent, insertIndex);
+            }
+            if (insertIndex != myTokenQueue.size()) {
+                dedentOffset = myTokenQueue.get(insertIndex).getStart();
+            }
+            myTokenQueue.add(insertIndex, new PendingToken(StarlarkTokenTypes.DEDENT, dedentOffset, dedentOffset));
+            insertIndex++;
+        }
     }
-    return if (super.getTokenType() == null) {
-      0
-    } else {
-      indent
+
+    private int skipPrecedingCommentsWithIndent(int indent, int index) {
+        // insert the DEDENT before previous comments that have the same indent as the current token indent
+        int idx = index;
+        boolean foundComment = false;
+        while (idx > 0 && myTokenQueue.get(idx - 1) instanceof PendingCommentToken) {
+            PendingCommentToken commentToken = (PendingCommentToken) myTokenQueue.get(idx - 1);
+            if (commentToken.getIndent() != indent) {
+                break;
+            }
+            foundComment = true;
+            idx--;
+            if (isPrecededByCommentWithLineBreak(idx)) {
+                idx--;
+            }
+        }
+        return foundComment ? idx : myTokenQueue.size();
     }
-  }
 
-  private fun isBaseAt(tokenType: IElementType): Boolean = super.getTokenType() === tokenType
+    private int skipPrecedingCommentsWithSameIndentOnSuiteClose(int indent, int anchorIndex) {
+        int result = anchorIndex;
+        for (int i = anchorIndex; i < myTokenQueue.size(); i++) {
+            PendingToken token = myTokenQueue.get(i);
+            if (token instanceof PendingCommentToken commentToken) {
+                if (commentToken.getIndent() < indent) {
+                    break;
+                }
+                result = i + 1;
+            }
+        }
+        return result;
+    }
 
-  private fun pushToken(
-    type: IElementType?,
-    start: Int,
-    end: Int,
-  ): Boolean = tokenQueue.add(PendingToken(type, start, end))
+    private int getNextLineIndent() {
+        int indent = 0;
+        while (super.getTokenType() != null && StarlarkTokenSets.WHITESPACE.contains(super.getTokenType())) {
+            if (super.getTokenType() == StarlarkTokenTypes.TAB) {
+                indent = (indent / 8 + 1) * 8;
+            }
+            else if (super.getTokenType() == StarlarkTokenTypes.SPACE) {
+                indent++;
+            }
+            else if (super.getTokenType() == StarlarkTokenTypes.LINE_BREAK) {
+                indent = 0;
+            }
+            advanceBase();
+        }
+        if (super.getTokenType() == null) {
+            return 0;
+        }
+        else {
+            return indent;
+        }
+    }
 
-  private fun isPrecededByCommentWithLineBreak(i: Int): Boolean =
-    i > 1 && tokenQueue[i - 1].type === StarlarkTokenTypes.LINE_BREAK && tokenQueue[i - 2] is PendingCommentToken
+    private boolean isBaseAt(IElementType tokenType) {
+        return super.getTokenType() == tokenType;
+    }
+
+    private boolean pushToken(
+        @Nullable IElementType type,
+        int start,
+        int end
+    ) {
+        return myTokenQueue.add(new PendingToken(type, start, end));
+    }
+
+    private boolean isPrecededByCommentWithLineBreak(int i) {
+        return i > 1
+            && myTokenQueue.get(i - 1).getType() == StarlarkTokenTypes.LINE_BREAK
+            && myTokenQueue.get(i - 2) instanceof PendingCommentToken;
+    }
+
+    // fastutil IntArrayList.topInt() replacement
+    private static int topInt(IntList stack) {
+        return stack.get(stack.size() - 1);
+    }
+
+    // fastutil IntArrayList.popInt() replacement
+    private static int popInt(IntList stack) {
+        return stack.removeByIndex(stack.size() - 1);
+    }
 }

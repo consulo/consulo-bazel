@@ -1,13 +1,16 @@
-package org.jetbrains.bazel.languages.starlark.psi.functions
+package org.jetbrains.bazel.languages.starlark.psi.functions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkBaseElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
 
-@ApiStatus.Internal
-class StarlarkKeywordOnlyBoundary(node: ASTNode) : StarlarkBaseElement(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) {
-    // Pure marker which doesn't need to be visited.
-  }
+public class StarlarkKeywordOnlyBoundary extends StarlarkBaseElement {
+    public StarlarkKeywordOnlyBoundary(ASTNode node) {
+        super(node);
+    }
+
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        // Pure marker which doesn't need to be visited.
+    }
 }

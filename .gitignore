@@ -40,3 +40,6 @@ node_modules
 
 .junie
 .claude
+
+# consulo: Maven build output
+target/

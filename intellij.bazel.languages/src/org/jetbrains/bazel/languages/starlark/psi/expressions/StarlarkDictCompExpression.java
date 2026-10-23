@@ -1,10 +1,15 @@
-package org.jetbrains.bazel.languages.starlark.psi.expressions
+package org.jetbrains.bazel.languages.starlark.psi.expressions;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
 
-@ApiStatus.Internal
-class StarlarkDictCompExpression(node: ASTNode) : StarlarkCompExpression(node) {
-  override fun acceptVisitor(visitor: StarlarkElementVisitor) = visitor.visitDictCompExpression(this)
+public class StarlarkDictCompExpression extends StarlarkCompExpression {
+    public StarlarkDictCompExpression(ASTNode node) {
+        super(node);
+    }
+
+    @Override
+    protected void acceptVisitor(StarlarkElementVisitor visitor) {
+        visitor.visitDictCompExpression(this);
+    }
 }

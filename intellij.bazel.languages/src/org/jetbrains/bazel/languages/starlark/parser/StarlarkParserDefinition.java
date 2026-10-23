@@ -1,39 +1,69 @@
-package org.jetbrains.bazel.languages.starlark.parser
+package org.jetbrains.bazel.languages.starlark.parser;
 
-import com.intellij.lang.ASTNode
-import com.intellij.lang.ParserDefinition
-import com.intellij.lang.PsiParser
-import com.intellij.lexer.Lexer
-import com.intellij.openapi.project.Project
-import com.intellij.psi.FileViewProvider
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.tree.IFileElementType
-import com.intellij.psi.tree.TokenSet
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkLanguage
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
-import org.jetbrains.bazel.languages.starlark.lexer.StarlarkIndentingLexer
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IFileElementType;
+import consulo.language.ast.TokenSet;
+import consulo.language.file.FileViewProvider;
+import consulo.language.lexer.Lexer;
+import consulo.language.parser.ParserDefinition;
+import consulo.language.parser.PsiParser;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.version.LanguageVersion;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkElementTypes;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
+import org.jetbrains.bazel.languages.starlark.lexer.StarlarkIndentingLexer;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
 
-@ApiStatus.Internal
-class StarlarkParserDefinition : ParserDefinition {
-  override fun createLexer(project: Project?): Lexer = StarlarkIndentingLexer()
+@ExtensionImpl
+public class StarlarkParserDefinition implements ParserDefinition {
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 
-  override fun createParser(project: Project?): PsiParser = StarlarkParser()
+    @Override
+    public Lexer createLexer(LanguageVersion languageVersion) {
+        return new StarlarkIndentingLexer();
+    }
 
-  override fun getFileNodeType(): IFileElementType = file
+    @Override
+    public PsiParser createParser(LanguageVersion languageVersion) {
+        return new StarlarkParser();
+    }
 
-  override fun getWhitespaceTokens(): TokenSet = StarlarkTokenSets.WHITESPACE
+    @Override
+    public IFileElementType getFileNodeType() {
+        return FILE;
+    }
 
-  override fun getCommentTokens(): TokenSet = StarlarkTokenSets.COMMENT
+    @Override
+    public TokenSet getWhitespaceTokens(LanguageVersion languageVersion) {
+        return StarlarkTokenSets.WHITESPACE;
+    }
 
-  override fun getStringLiteralElements(): TokenSet = StarlarkTokenSets.STRINGS
+    @Override
+    public TokenSet getCommentTokens(LanguageVersion languageVersion) {
+        return StarlarkTokenSets.COMMENT;
+    }
 
-  override fun createElement(node: ASTNode): PsiElement = StarlarkElementTypes.createElement(node)
+    @Override
+    public TokenSet getStringLiteralElements(LanguageVersion languageVersion) {
+        return StarlarkTokenSets.STRINGS;
+    }
 
-  override fun createFile(viewProvider: FileViewProvider): PsiFile = StarlarkFile(viewProvider)
+    @Override
+    public PsiElement createElement(ASTNode node) {
+        return StarlarkElementTypes.createElement(node);
+    }
+
+    @Override
+    public PsiFile createFile(FileViewProvider viewProvider) {
+        return new StarlarkFile(viewProvider);
+    }
+
+    private static final IFileElementType FILE = new IFileElementType(StarlarkLanguage.INSTANCE);
 }
-
-private val file = IFileElementType(StarlarkLanguage)
