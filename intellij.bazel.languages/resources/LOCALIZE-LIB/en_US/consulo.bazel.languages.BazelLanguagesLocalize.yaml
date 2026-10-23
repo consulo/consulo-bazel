@@ -1,0 +1,48 @@
+bazel.language.description:
+    text: "BazelVersion language"
+bazelquery.error.empty.quotation:
+    text: "Empty quotation"
+bazelquery.error.incorrect.word:
+    text: "Incorrect word"
+bazelquery.error.missing.comma:
+    text: "<comma> expected"
+bazelquery.error.missing.expression.got.integer:
+    text: "<expression> expected, got <integer>"
+bazelquery.error.missing.expression:
+    text: "<expression> expected"
+bazelquery.error.missing.flag:
+    text: "expected flag value"
+bazelquery.error.missing.integer:
+    text: "<integer> expected"
+bazelquery.error.missing.quote:
+    text: "<quote> expected"
+bazelquery.error.missing.right.parenthesis:
+    text: "<right parenthesis> expected"
+bazelquery.error.missing.space:
+    text: "<space> expected"
+bazelquery.error.missing.target:
+    text: "expected target pattern as an argument of set expression"
+bazelquery.error.missing.variable.value:
+    text: "expected value of variable in let expression"
+bazelquery.error.missing.word:
+    text: "<word> expected"
+bazelquery.error.unexpected.token.infix.operator:
+    text: "Unexpected token: infix operator at the beginning of expression"
+bazelquery.error.unexpected.token.integer:
+    text: "Unexpected token: <integer>"
+bazelquery.error.unexpected.token.paren:
+    text: "Unexpected token: parenthesis mismatch"
+bazelquery.error.unexpected.token:
+    text: "Unexpected token"
+bazelquery.error.unfinished.flag:
+    text: "Unfinished flag"
+bazelquery.flags.language.description:
+    text: "BazelQuery Flags language"
+bazelquery.language.description:
+    text: "BazelQuery language"
+bazelrc.language.description:
+    text: "Bazelrc language"
+bazelrc.language.parser.missing.import.path:
+    text: "Import path expected"
+starlark.language.description:
+    text: "Starlark language"

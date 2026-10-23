@@ -1,0 +1,246 @@
+highlighter.descriptor.text.keyword:
+    text: "Keyword"
+highlighter.descriptor.text.string:
+    text: "String"
+highlighter.descriptor.text.number:
+    text: "Number"
+highlighter.descriptor.text.lineComment:
+    text: "Line comment"
+highlighter.descriptor.text.semicolon:
+    text: "Semicolon"
+highlighter.descriptor.text.comma:
+    text: "Comma"
+highlighter.descriptor.text.dot:
+    text: "Dot"
+highlighter.descriptor.text.parentheses:
+    text: "Parentheses"
+highlighter.descriptor.text.brackets:
+    text: "Brackets"
+highlighter.descriptor.text.identifier:
+    text: "Identifier"
+highlighter.descriptor.text.functionDeclaration:
+    text: "Function declaration"
+highlighter.descriptor.text.namedArgument:
+    text: "Named argument"
+parser.expected.expression:
+    text: "Expression expected"
+parser.expected.string:
+    text: "String expected"
+parser.expected.rbracket:
+    text: "']' expected"
+parser.expected.expr.or.comma.or.bracket:
+    text: "Expected expression, ',' or ']'"
+parser.expected.in:
+    text: "'in' expected"
+parser.expected.for.or.bracket:
+    text: "']' or 'for' expected"
+parser.expected.comma:
+    text: "',' expected"
+parser.expected.colon:
+    text: "':' expected"
+parser.expected.rpar:
+    text: "')' expected"
+parser.expected.lpar:
+    text: "'(' expected"
+parser.expected.rbrace:
+    text: "'}' expected"
+parser.expected.name:
+    text: "Name expected"
+parser.expected.colon.or.rbracket:
+    text: "':' or ']' expected"
+parser.expected.comma.or.rpar:
+    text: "',' or ')' expected"
+parser.expected.else:
+    text: "'else' expected"
+parser.expected.identifier:
+    text: "Identifier expected"
+parser.expected.comma.lpar.rpar:
+    text: "',' or '(' or ')' expected"
+parser.expected.formal.param.name:
+    text: "Formal parameter name expected"
+parser.reserved.keyword.cannot.be.used.as.identifier:
+    text: "''{0}'' reserved keyword can''t be used as an identifier"
+parser.statement.expected.found.0:
+    text: "Statement expected, found {0}"
+parser.unexpected.indent:
+    text: "Unexpected indent"
+parser.unindent.does.not.match.any.outer.indent:
+    text: "Unindent does not match any outer indentation level"
+parser.expected.statement:
+    text: "Statement expected"
+parser.indent.expected:
+    text: "Indent expected"
+parser.end.of.statement.expected:
+    text: "End of statement expected"
+parser.rbracket.or.comma.expected:
+    text: "']' or ',' expected"
+parser.unexpected.expression.syntax:
+    text: "Unexpected expression syntax"
+parser.tuple.expression.expected:
+    text: "Tuple expression expected"
+parser.value.expression.expected:
+    text: "Value expression expected"
+annotator.glob.empty.pattern:
+    text: "Pattern matches no file. If 'allow_empty' is 'False' (default), each pattern should match at least one file"
+annotator.glob.empty:
+    text: "Glob expression resolves to an empty set of files"
+annotator.unresolved.reference:
+    text: "Unresolved reference: {0}"
+annotator.unused.declaration:
+    text: "{0} \"{1}\" is never used"
+annotator.missing.closing.quote:
+    text: "Missing closing quote [{0}]"
+annotator.missing.closing.triple.quote:
+    text: "Missing closing triple quote"
+annotator.too.large.file:
+    text: "Loaded symbols are not resolved because this file is too large for code insight."
+quickfix.glob.allow.empty:
+    text: "Set allow_empty = True"
+progress.globbing:
+    text: "Processing Glob…"
+bzlmod.action.refresh.modules:
+    text: "Bazel Plugin: Refresh Modules from BCR"
+bzlmod.exception.http.request:
+    text: "Failed to perform HTTP request to {0}, {1}"
+bzlmod.exception.http.status:
+    text: "Unexpected HTTP status {0} from {1}"
+bzlmod.notification.bcr.title:
+    text: "Bazel Central Registry"
+bzlmod.notification.bcr.refresh.success:
+    text: "Module list has been refreshed from Bazel Central Registry."
+bzlmod.notification.bcr.refresh.failure:
+    text: "Failed to refresh modules from Bazel Central Registry: {0}"
+bzlmod.warning.encoding:
+    text: "Failed to decode metadata for module {0} - expected base64 encoded data"
+bzlmod.warning.fetching.module.names:
+    text: "Failed to fetch module names from Bazel Central Registry: {0}"
+bzlmod.warning.fetching.module.versions:
+    text: "Failed to fetch module versions for {0} from Bazel Central Registry: {1}"
+inspection.description.assignment.arity.mismatch:
+    text: "Cannot unpack {1} values into {0} targets."
+inspection.description.assignment.target.invalid:
+    text: "Cannot assign to ''{0}''."
+inspection.description.assignment.target.augmented.sequence:
+    text: "Cannot perform an augmented assignment on a list or tuple expression."
+inspection.description.binding.conflict.cross.kind:
+    text: "Conflicting {1} declaration of ''{0}''."
+inspection.description.binding.conflict.original:
+    text: "Conflicting declaration."
+inspection.description.binding.conflict.same.kind:
+    text: "''{0}'' redeclared at top level."
+inspection.description.break.outside.for.loop:
+    text: "Break statement must be inside a for loop."
+inspection.description.call.argument.after.kwargs:
+    text: "No arguments are allowed after **kwargs."
+inspection.description.call.duplicate.named.argument:
+    text: "Duplicate named argument: ''{0}''."
+inspection.description.call.missing.required.argument:
+    text: "Missing required argument: ''{0}''."
+inspection.description.call.multiple.kwargs.unpacking:
+    text: "Only one **kwargs unpacking is allowed."
+inspection.description.call.multiple.values.for.parameter:
+    text: "Multiple values for parameter: ''{0}''."
+inspection.description.call.named.parameter.not.found:
+    text: "Cannot find a parameter with name: ''{0}''."
+inspection.description.call.not.available.in.environment:
+    text: "Function ''{0}'' is not available in {1}. Available in: {2}."
+inspection.description.call.override.missing.dep:
+    text: "Missing bazel_dep to be overridden."
+inspection.description.call.positional.after.keyword.or.star:
+    text: "Positional argument cannot appear after named argument, *args, or **kwargs."
+inspection.description.call.star.after.kwargs:
+    text: "*args unpacking must appear before **kwargs."
+inspection.description.call.too.many.positional:
+    text: "Too many positional arguments."
+inspection.description.call.unnamed.arg.with.name:
+    text: "This parameter is positional only: ''{0}''."
+inspection.description.collection.mutation.during.iteration:
+    text: "Collection is temporarily immutable due to active for-loop iteration."
+inspection.description.continue.outside.for.loop:
+    text: "Continue statement must be inside a for loop."
+inspection.description.dict.key.duplicate:
+    text: "Duplicate dictionary key."
+inspection.description.dict.key.not.hashable:
+    text: "Dictionary key must be hashable."
+inspection.description.for.placement.build:
+    text: "'for' statement is not allowed in BUILD files. You may inline the loop, move it to a function definition (in a .bzl file), or use a list comprehension."
+inspection.description.for.placement.workspace:
+    text: "'for' statement is not allowed in WORKSPACE files. You may inline the loop, move it to a function definition (in a .bzl file), or use a list comprehension."
+inspection.description.for.placement:
+    text: "'for' statement is not allowed at the top-level. You may move it inside a function or use a comprehension."
+inspection.description.function.declaration.in.build.file:
+    text: "Function declaration is not allowed in BUILD files. It can be defined in a .bzl file and then loaded."
+inspection.description.function.declaration.in.workspace.file:
+    text: "Function declaration is not allowed in WORKSPACE files. It can be defined in a .bzl file and then loaded."
+inspection.description.function.declaration.in.module.file:
+    text: "Function declaration is not allowed in module files."
+inspection.description.if.placement.build:
+    text: "`if` statements are not allowed in BUILD files. You may move conditional logic to a function definition (in a .bzl file) or use an `if` expression."
+inspection.description.if.placement.workspace:
+    text: "`if` statements are not allowed in WORKSPACE files. You may move conditional logic to a function definition (in a .bzl file) or use an `if` expression."
+inspection.description.if.placement:
+    text: "'if' statement is not allowed at the top-level. You may move it inside a function or use an `if` expression."
+inspection.description.load.after.statement:
+    text: "Load statements are not allowed after any other statement."
+inspection.description.load.cycle:
+    text: "Cyclic loads are not allowed."
+inspection.description.load.missing.filename:
+    text: "Load statement should specify a filename and at least one symbol to load."
+inspection.description.load.missing.symbol:
+    text: "Load statement should specify at least one symbol to load."
+inspection.description.load.name.defined.more.than.once:
+    text: "Load statement should not define the same name more than once."
+inspection.description.load.not.allowed.in.module.bazel:
+    text: "Load statements are not allowed in MODULE.bazel files."
+inspection.description.load.not.at.top.level:
+    text: "Load statements are allowed only at the top level."
+inspection.description.load.private.symbol:
+    text: "Private symbols cannot be loaded."
+inspection.description.loaded.value.mutation:
+    text: "Loaded value ''{0}'' may be frozen and cannot be mutated."
+inspection.description.parameters.after.keyword.variadic:
+    text: "Function can have at most one **kwargs parameter, and no other parameters are allowed after **kwargs."
+inspection.description.parameters.bare.asterisk:
+    text: "Bare * must be followed by keyword-only parameters."
+inspection.description.parameters.duplicate.name:
+    text: "Duplicate parameter name ''{0}''."
+inspection.description.parameters.mandatory.after.optional:
+    text: "Mandatory parameter cannot follow an optional parameter."
+inspection.description.parameters.multiple.variadic:
+    text: "Function can have at most one *args parameter."
+inspection.description.return.outside.function:
+    text: "Return statements must be inside a function."
+inspection.description.recursion.detected:
+    text: "Recursive calls are not allowed."
+inspection.description.unsupported.binary.operator:
+    text: "Operator ''{0}'' is not supported in Starlark."
+inspection.description.unsupported.chained.comparison:
+    text: "Chained comparisons are not supported in Starlark."
+inspection.description.unsupported.generator.expression:
+    text: "Generator expressions are not supported in Starlark."
+inspection.description.unsupported.unpacking.expression:
+    text: "Unpacking expressions are not supported in Starlark."
+inspection.description.unsupported.keyword:
+    text: "Unsupported keyword: ''{0}''."
+inspection.description.variable.referenced.before.assignment:
+    text: "{0} variable ''{1}'' is referenced before the assignment."
+inspection.description.variable.undefined:
+    text: "Variable ''{0}'' is not defined."
+inspection.quickfix.show.conflicting.declarations.current.marker.text:
+    text: " (current)"
+inspection.quickfix.show.conflicting.declarations.family:
+    text: "Show conflicting declarations"
+inspection.quickfix.show.conflicting.declarations.navigate.family:
+    text: "Navigate to conflicting declaration"
+inspection.quickfix.show.conflicting.declarations.navigate.text:
+    text: "{0}{1, choice, 0#|1# (current)}"
+inspection.quickfix.show.conflicting.declarations.text:
+    text: "Show conflicting ''{0}'' declarations"
+inspection.quickfix.show.conflicting.declarations.popup.title:
+    text: "Choose Conflicting Declaration to Navigate To"
+quickfix.open.code.insight.file.size.help:
+    text: "Learn more about code insight file size limits"
+rename.target.conflict.already.exists:
+    text: "Target ''{0}'' already exists in file ''{1}''"
+rename.name.conflict.already.exists:
+    text: "''{0}'' already exists in ''{1}''"
