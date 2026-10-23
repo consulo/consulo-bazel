@@ -1,5 +1,8 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.bazel.label.Label
+import org.jetbrains.bazel.label.Label;
 
-internal data class DependencySourcesParams(val targets: List<Label>)
+import java.util.List;
+
+record DependencySourcesParams(List<Label> targets) {
+}

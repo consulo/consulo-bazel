@@ -101,11 +101,25 @@ The build may be broken between the two commits; that is fine.
 - Kotlin platform types (`node.firstChildNode.firstChildNode` without `?.`) become
   `Objects.requireNonNull(...)`: same runtime behavior, and the build enforces null safety (NullAway).
 - Package-private `@ExtensionImpl` classes need an explicit `public` no-arg constructor.
+- Consulo's annotation processor cannot handle **nested** `@ServiceImpl`/`@ExtensionImpl` classes. A public one gets its
+  own file with the upstream fully qualified name (e.g. `org.jetbrains.bazel.commons.LanguageClassService`), a
+  package-private one becomes a package-private top-level class in the same file.
+- Kotlin `suspend` functions return `CompletableFuture`; async code uses Consulo's coroutine library
+  (`consulo.util.concurrent.coroutine`). `BazelCoroutineService.start/startAsync` take
+  `Supplier<CompletableFuture<...>>`; `startAsync` returns `BazelCoroutineService.Deferred` (lazy start supported).
+- `<registryKey>` entries become defaults in the Consulo-only `consulo.bazel.commons.BazelRegistryKeys`.
 - `com.intellij.model.psi.PsiSymbolReference` (IntelliJ's symbol API) does not exist in Consulo. Upstream uses it
   only for references to non-PSI targets (Bazel flags, built-in rules). `getOwnReferences()` returns
   `Collection<PsiReference>` and the PSI element merges them into `getReferences()`. The targets become light PSI
   elements with a documentation provider (when `intellij.bazel.core` is ported).
 - Optional services (`serviceOrNull<X>()`) become `@ExtensionAPI` interfaces with a static nullable `getInstance()`.
+- **Telemetry is not ported.** `BspTracer.measure(description, body)` only runs the body; `bspTracer`, `bspMeter`
+  and `bspScope` do not exist, and code using them drops those lines.
+- **EEL is not ported.** Environment and process access go through Consulo APIs instead of
+  `com.intellij.platform.eel`.
+- **OS, environment and system info always go through `consulo.platform.Platform`**
+  (`Platform.current().os().isWindows()`, `.environmentVariables()`, `Platform.current().user()`, ...), never
+  `SystemInfo`, `SystemInfoRt`, `OS.CURRENT` or `System.getenv()`.
 - Hard-coded user-visible strings that upstream never put in a bundle are still moved to the YAML file
   (no `LocalizeValue.localizeTODO` in committed code).
 
@@ -183,7 +197,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `protobuf` (generated) | `consulo.bazel.protobuf` | builds (BES v1 gRPC package excluded) |
 | aspect SDK protos (JetBrains/intellij-aspect) | `consulo.bazel.aspect.sdk` (`consulo-aspect-sdk/`) | builds |
 | `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.base` | converted, builds |
-| `intellij.bazel.commons` | `consulo.bazel.base` | not started |
+| `intellij.bazel.commons` | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | not started |
 | `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | not started |
 | `intellij.bazel.core` | `consulo.bazel.base` | not started |

@@ -1,45 +1,60 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import kotlin.random.Random
+import org.jspecify.annotations.Nullable;
 
-data class TaskGroupId(val id: String) {
-  fun task(taskId: String): TaskId = TaskId(this, taskId)
-
-  companion object {
-    /**
-     * Empty group, which explicitly does not reflect in UI
-     */
-    val EMPTY: TaskGroupId = TaskGroupId("")
-  }
-}
+import java.util.HexFormat;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Represents hierarchical tasks.
  * Note: the task tree presentation in UI does not match the TaskId hierarchy 1:1,
  * however, respects the parent-child relationship.
  */
-data class TaskId(val taskGroupId: TaskGroupId, val id: String, val parent: TaskId? = null) {
-  init {
-    if (parent != null && parent.taskGroupId != taskGroupId)
-      throw IllegalArgumentException("TaskId parent originId must be equal to originId")
-  }
+public record TaskId(TaskGroupId taskGroupId, String id, @Nullable TaskId parent) {
+    public record TaskGroupId(String id) {
+        public TaskId task(String taskId) {
+            return new TaskId(this, taskId);
+        }
 
-  override fun toString(): String {
-    val sb = StringBuilder()
-
-    var id: TaskId? = this
-    while (id != null) {
-      if (sb.isNotEmpty())
-        sb.insert(0, '/')
-      sb.insert(0, id.id)
-      id = id.parent
+        /**
+         * Empty group, which explicitly does not reflect in UI
+         */
+        public static final TaskGroupId EMPTY = new TaskGroupId("");
     }
 
-    return taskGroupId.id + ":" + sb.toString()
-  }
+    public TaskId {
+        if (parent != null && !parent.taskGroupId().equals(taskGroupId)) {
+            throw new IllegalArgumentException("TaskId parent originId must be equal to originId");
+        }
+    }
 
-  fun subTask(id: String): TaskId = TaskId(taskGroupId, id, this)
+    public TaskId(TaskGroupId taskGroupId, String id) {
+        this(taskGroupId, id, null);
+    }
 
-  fun uniqueSubTask(prefix: String): TaskId = subTask("$prefix-${Random.nextBytes(8).toHexString()}")
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+
+        TaskId id = this;
+        while (id != null) {
+            if (!sb.isEmpty()) {
+                sb.insert(0, '/');
+            }
+            sb.insert(0, id.id());
+            id = id.parent();
+        }
+
+        return taskGroupId.id() + ":" + sb.toString();
+    }
+
+    public TaskId subTask(String id) {
+        return new TaskId(taskGroupId, id, this);
+    }
+
+    public TaskId uniqueSubTask(String prefix) {
+        byte[] bytes = new byte[8];
+        ThreadLocalRandom.current().nextBytes(bytes);
+        return subTask(prefix + "-" + HexFormat.of().formatHex(bytes));
+    }
 }

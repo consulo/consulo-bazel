@@ -1,100 +1,157 @@
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import com.intellij.util.text.SemVer
-import org.jetbrains.annotations.ApiStatus
-import java.nio.file.Path
-import kotlin.io.path.Path
-import kotlin.io.path.isReadable
-import kotlin.io.path.readText
+import consulo.util.lang.SemVer;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class BazelInfo(
-  val execRoot: Path,
-  val outputBase: Path,
-  val workspaceRoot: Path,
-  val bazelBin: Path,
-  val release: BazelRelease,
-  val isBzlModEnabled: Boolean,
-  val isWorkspaceEnabled: Boolean,
-  /**
-   * https://bazel.build/reference/command-line-reference#flag--incompatible_autoload_externally
-   * May include rule names and/or provider names.
-   */
-  val externalAutoloads: List<String>,
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-  /** `true` when plugin should support configurations  */
-  val isConfigurationSupportEnabled: Boolean = false,
+public record BazelInfo(
+    Path execRoot,
+    Path outputBase,
+    Path workspaceRoot,
+    Path bazelBin,
+    BazelRelease release,
+    boolean isBzlModEnabled,
+    boolean isWorkspaceEnabled,
+    /*
+     * https://bazel.build/reference/command-line-reference#flag--incompatible_autoload_externally
+     * May include rule names and/or provider names.
+     */
+    List<String> externalAutoloads,
+
+    /* `true` when plugin should support configurations  */
+    boolean isConfigurationSupportEnabled
 ) {
-  companion object {
-    val DEFAULT: BazelInfo = BazelInfo(
-      execRoot = Path("execRoot"),
-      outputBase = Path("outputBase"),
-      workspaceRoot = Path("workspace"),
-      bazelBin = Path("bazel-bin"),
-      release = BazelRelease(7),
-      isBzlModEnabled = true,
-      isWorkspaceEnabled = true,
-      externalAutoloads = emptyList(),
-    )
-  }
-}
-
-@ApiStatus.Internal
-data class BazelRelease(val major: Int, val minor: Int = 0, val patch: Int = 0) {
-  companion object {
-    fun fromReleaseString(versionString: String): BazelRelease? = VERSION_REGEX.find(versionString)?.toBazelRelease()
-
-    fun fromVersionString(versionString: String): BazelRelease? {
-      val parts = versionString.split(".")
-      val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
-      return BazelRelease(major, parts.getOrNull(1)?.toIntOrNull() ?: 0, parts.getOrNull(2)?.toIntOrNull() ?: 0)
+    public BazelInfo(
+        Path execRoot,
+        Path outputBase,
+        Path workspaceRoot,
+        Path bazelBin,
+        BazelRelease release,
+        boolean isBzlModEnabled,
+        boolean isWorkspaceEnabled,
+        List<String> externalAutoloads
+    ) {
+        this(execRoot, outputBase, workspaceRoot, bazelBin, release, isBzlModEnabled, isWorkspaceEnabled, externalAutoloads, false);
     }
 
-    fun fromBazelVersionFile(workspacePath: Path): BazelRelease? {
-      val versionString =
-        workspacePath
-          .resolve(".bazelversion")
-          .takeIf { it.isReadable() }
-          ?.readText()
-          .orEmpty()
-      return BAZEL_VERSION_REGEX.find(versionString)?.toBazelRelease()
+    public static final BazelInfo DEFAULT = new BazelInfo(
+        Path.of("execRoot"),
+        Path.of("outputBase"),
+        Path.of("workspace"),
+        Path.of("bazel-bin"),
+        new BazelRelease(7),
+        true,
+        true,
+        List.of()
+    );
+
+    public record BazelRelease(int major, int minor, int patch) {
+        public BazelRelease(int major) {
+            this(major, 0);
+        }
+
+        public BazelRelease(int major, int minor) {
+            this(major, minor, 0);
+        }
+
+        public static @Nullable BazelRelease fromReleaseString(String versionString) {
+            Matcher matcher = VERSION_REGEX.matcher(versionString);
+            return matcher.find() ? toBazelRelease(matcher) : null;
+        }
+
+        public static @Nullable BazelRelease fromVersionString(String versionString) {
+            String[] parts = versionString.split("\\.", -1);
+            Integer major = parts.length > 0 ? toIntOrNull(parts[0]) : null;
+            if (major == null) {
+                return null;
+            }
+            Integer minor = parts.length > 1 ? toIntOrNull(parts[1]) : null;
+            Integer patch = parts.length > 2 ? toIntOrNull(parts[2]) : null;
+            return new BazelRelease(major, minor != null ? minor : 0, patch != null ? patch : 0);
+        }
+
+        public static @Nullable BazelRelease fromBazelVersionFile(Path workspacePath) {
+            Path versionFile = workspacePath.resolve(".bazelversion");
+            String versionString;
+            try {
+                versionString = Files.isReadable(versionFile) ? Files.readString(versionFile) : "";
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            Matcher matcher = BAZEL_VERSION_REGEX.matcher(versionString);
+            return matcher.find() ? toBazelRelease(matcher) : null;
+        }
+
+        private static BazelRelease toBazelRelease(Matcher receiver) {
+            Integer patch = receiver.group(3) != null ? toIntOrNull(receiver.group(3)) : null;
+            return new BazelRelease(Integer.parseInt(receiver.group(1)), Integer.parseInt(receiver.group(2)), patch != null ? patch : 0);
+        }
+
+        // consulo: Kotlin String.toIntOrNull()
+        private static @Nullable Integer toIntOrNull(String value) {
+            try {
+                return Integer.parseInt(value);
+            }
+            catch (NumberFormatException e) {
+                return null;
+            }
+        }
+
+        private static final Pattern BAZEL_VERSION_REGEX = Pattern.compile("^(\\d+)\\.(\\d+)(?:\\.(\\d+))?");
+
+        private static final Pattern VERSION_REGEX = Pattern.compile("(?:release )?(\\d+)\\.(\\d+)(?:\\.(\\d+))?(?=[0-9.]*)");
+
+        public static final BazelRelease FALLBACK_VERSION = new BazelRelease(7, 5);
+
+        static final int OLDEST_SUPPORTED_MAJOR = 7;
+
+        static final Map<Integer, Integer> MINIMAL_MINOR_VERSION = Map.of(7, 5, 8, 2);
+
+        /**
+         * Return a string hinting at the appropriate minimal version to update to, if a deprecated bazel version is used. Returns null if the version is not deprecated.
+         */
+        public @Nullable String deprecated() {
+            if (major < OLDEST_SUPPORTED_MAJOR) {
+                return "Bazel major version " + major + " is deprecated; the oldest supported version is " + OLDEST_SUPPORTED_MAJOR + "."
+                    + MINIMAL_MINOR_VERSION.getOrDefault(OLDEST_SUPPORTED_MAJOR, 0) + ".";
+            }
+
+            if (minor < MINIMAL_MINOR_VERSION.getOrDefault(major, 0)) {
+                return "Bazel-" + major + " versions older than " + major + "." + MINIMAL_MINOR_VERSION.getOrDefault(major, 0)
+                    + " are unsupported.";
+            }
+
+            return null;
+        }
     }
 
-    private fun MatchResult.toBazelRelease() =
-      BazelRelease(groupValues[1].toInt(), groupValues[2].toInt(), groupValues[3].toIntOrNull() ?: 0)
+    public static String toVersionString(BazelRelease receiver) {
+        return receiver.major() + "." + receiver.minor() + "." + receiver.patch();
+    }
 
-    private val BAZEL_VERSION_REGEX = """^(\d+)\.(\d+)(?:\.(\d+))?""".toRegex()
+    public static @Nullable BazelRelease orFromBazelVersionFile(@Nullable BazelRelease receiver, Path workspace) {
+        return receiver != null ? receiver : BazelRelease.fromBazelVersionFile(workspace);
+    }
 
-    private val VERSION_REGEX = """(?:release )?(\d+)\.(\d+)(?:\.(\d+))?(?=[0-9.]*)""".toRegex()
+    public static BazelRelease orFallbackVersion(@Nullable BazelRelease receiver) {
+        return receiver != null ? receiver : BazelRelease.FALLBACK_VERSION;
+    }
 
-    val FALLBACK_VERSION: BazelRelease = BazelRelease(7, 5)
-
-    internal val OLDEST_SUPPORTED_MAJOR = 7
-
-    internal val MINIMAL_MINOR_VERSION = mapOf(7 to 5, 8 to 2)
-  }
-
-  /**
-   * Return a string hinting at the appropriate minimal version to update to, if a deprecated bazel version is used. Returns null if the version is not deprecated.
-   */
-  fun deprecated(): String? {
-    if (major < OLDEST_SUPPORTED_MAJOR) return "Bazel major version $major is deprecated; the oldest supported version is $OLDEST_SUPPORTED_MAJOR.${MINIMAL_MINOR_VERSION[OLDEST_SUPPORTED_MAJOR] ?: 0}."
-
-    if (minor < (MINIMAL_MINOR_VERSION[major]
-                 ?: 0)) return "Bazel-$major versions older than $major.${MINIMAL_MINOR_VERSION[major] ?: 0} are unsupported."
-
-    return null
-  }
+    public static SemVer toSemVer(BazelRelease receiver) {
+        return new SemVer(
+            receiver.major() + "." + receiver.minor() + "." + receiver.patch(),
+            receiver.major(),
+            receiver.minor(),
+            receiver.patch()
+        );
+    }
 }
-
-@ApiStatus.Internal
-fun BazelRelease.toVersionString(): String = "$major.$minor.$patch"
-
-@ApiStatus.Internal
-fun BazelRelease?.orFromBazelVersionFile(workspace: Path) = this ?: BazelRelease.fromBazelVersionFile(workspace)
-
-@ApiStatus.Internal
-fun BazelRelease?.orFallbackVersion() = this ?: BazelRelease.FALLBACK_VERSION
-
-@ApiStatus.Internal
-fun BazelRelease.toSemVer(): SemVer = SemVer("$major.$minor.$patch", major, minor, patch)

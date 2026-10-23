@@ -1,15 +1,23 @@
-package org.jetbrains.bazel.sync.environment
+package org.jetbrains.bazel.sync.environment;
 
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
 
-@ApiStatus.Internal
-interface BazelApplicationContextService {
-  val disableFileWatcherSymlinkExclusion: Boolean
-    get() = false
-  val disableHardLinksOutputFiles: Boolean
-    get() = false
-  val forceBazeliskDownload: Boolean
-    get() = false
-  val enablePty: Boolean
-    get() = true
+@ServiceAPI(ComponentScope.APPLICATION)
+public interface BazelApplicationContextService {
+    default boolean getDisableFileWatcherSymlinkExclusion() {
+        return false;
+    }
+
+    default boolean getDisableHardLinksOutputFiles() {
+        return false;
+    }
+
+    default boolean getForceBazeliskDownload() {
+        return false;
+    }
+
+    default boolean getEnablePty() {
+        return true;
+    }
 }

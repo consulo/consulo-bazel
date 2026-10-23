@@ -13,105 +13,130 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import com.intellij.openapi.util.SystemInfo
-import org.jetbrains.annotations.ApiStatus
-import java.nio.file.Path
-import java.nio.file.Paths
-import kotlin.io.path.Path
+import consulo.platform.Platform;
+import org.jspecify.annotations.Nullable;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * Represents a path relative to the workspace root. The path component separator is Bazel specific.
- *
- *
- * A [WorkspacePath] is *not* necessarily a valid package name/path. The primary reason is
+ * <p>
+ * <p>
+ * A {@link WorkspacePath} is *not* necessarily a valid package name/path. The primary reason is
  * because it could represent a file and files don't have to follow the same conventions as package
  * names.
  */
-@ConsistentCopyVisibility
-@ApiStatus.Internal
-data class WorkspacePath private constructor(private val path: Path) {
-  /**
-   * @param relativePath relative path that must use the Bazel specific separator char to separate
-   * path components
-   * @throws IllegalArgumentException if the path is invalid
-   */
-  constructor(relativePath: String) : this(validateAndCreatePath(relativePath))
+// consulo: data class with a private constructor, so not a record
+public final class WorkspacePath {
+    private final Path myPath;
 
-  constructor(parentPath: WorkspacePath, childPath: String) : this(
-    if (parentPath.isWorkspaceRoot) {
-      validateAndCreatePath(childPath)
-    } else {
-      validateAndCreatePath(parentPath.relativePath() + BAZEL_COMPONENT_SEPARATOR + childPath)
-    },
-  )
+    private WorkspacePath(Path path) {
+        myPath = path;
+    }
 
-  val parent: WorkspacePath?
+    /**
+     * @param relativePath relative path that must use the Bazel specific separator char to separate
+     *                     path components
+     * @throws IllegalArgumentException if the path is invalid
+     */
+    public WorkspacePath(String relativePath) {
+        this(validateAndCreatePath(relativePath));
+    }
+
+    public WorkspacePath(WorkspacePath parentPath, String childPath) {
+        this(
+            parentPath.isWorkspaceRoot()
+                ? validateAndCreatePath(childPath)
+                : validateAndCreatePath(parentPath.relativePath() + BAZEL_COMPONENT_SEPARATOR + childPath)
+        );
+    }
+
     /**
      * Returns the workspace path of this path's parent directory. Returns null if this is the
      * workspace root.
      */
-    get() {
-      if (this.isWorkspaceRoot) {
-        return null
-      }
-      val parentPath = path.parent
-      return parentPath?.let { WorkspacePath(it) }
+    public @Nullable WorkspacePath getParent() {
+        if (this.isWorkspaceRoot()) {
+            return null;
+        }
+        Path parentPath = myPath.getParent();
+        return parentPath != null ? new WorkspacePath(parentPath) : null;
     }
 
-  /** Returns this workspace path, relative to the workspace root.  */
-  fun asPath(): Path = path
+    /** Returns this workspace path, relative to the workspace root.  */
+    public Path asPath() {
+        return myPath;
+    }
 
-  val isWorkspaceRoot: Boolean
-    get() = path.toString().isEmpty() || path.toString() == "."
+    public boolean isWorkspaceRoot() {
+        return myPath.toString().isEmpty() || myPath.toString().equals(".");
+    }
 
-  override fun toString(): String = path.toString()
+    @Override
+    public String toString() {
+        return myPath.toString();
+    }
 
-  fun relativePath(): String = path.toString()
+    public String relativePath() {
+        return myPath.toString();
+    }
 
-  companion object {
+    @Override
+    public boolean equals(@Nullable Object o) {
+        return o instanceof WorkspacePath that && myPath.equals(that.myPath);
+    }
+
+    @Override
+    public int hashCode() {
+        return myPath.hashCode();
+    }
+
     /** Silently returns null if this is not a valid workspace path.  */
-    @JvmStatic
-    fun createIfValid(relativePath: String): WorkspacePath? = if (isValid(relativePath)) WorkspacePath(Path(relativePath)) else null
-
-    private const val BAZEL_COMPONENT_SEPARATOR = '/'
-
-    private fun normalizePathSeparator(relativePath: String): String {
-      return if (SystemInfo.isWindows) relativePath.replace('\\', BAZEL_COMPONENT_SEPARATOR) else relativePath
+    public static @Nullable WorkspacePath createIfValid(String relativePath) {
+        return isValid(relativePath) ? new WorkspacePath(Path.of(relativePath)) : null;
     }
 
-    private fun validateAndCreatePath(relativePath: String): Path {
-      val normalizedPath = normalizePathSeparator(relativePath)
-      val error = validate(normalizedPath)
-      require(error == null) { "Invalid workspace path '$relativePath': $error" }
-      return Paths.get(normalizedPath)
+    private static final char BAZEL_COMPONENT_SEPARATOR = '/';
+
+    private static String normalizePathSeparator(String relativePath) {
+        return Platform.current().os().isWindows() ? relativePath.replace('\\', BAZEL_COMPONENT_SEPARATOR) : relativePath;
     }
 
-    @JvmStatic
-    fun isValid(relativePath: String): Boolean = validate(relativePath) == null
+    private static Path validateAndCreatePath(String relativePath) {
+        String normalizedPath = normalizePathSeparator(relativePath);
+        String error = validate(normalizedPath);
+        if (error != null) {
+            throw new IllegalArgumentException("Invalid workspace path '" + relativePath + "': " + error);
+        }
+        return Paths.get(normalizedPath);
+    }
+
+    public static boolean isValid(String relativePath) {
+        return validate(relativePath) == null;
+    }
 
     /** Validates a workspace path. Returns null on success or an error message otherwise.  */
-    @JvmStatic
-    fun validate(relativePath: String): String? {
-      if (relativePath.startsWith("/")) {
-        return "Workspace path must be relative; cannot start with '/': $relativePath"
-      }
-      if (relativePath.startsWith("../")) {
-        return (
-          "Workspace path must be inside the workspace; cannot start with '../': " +
-            relativePath
-        )
-      }
-      if (relativePath.endsWith("/")) {
-        return "Workspace path may not end with '/': $relativePath"
-      }
+    public static @Nullable String validate(String relativePath) {
+        if (relativePath.startsWith("/")) {
+            return "Workspace path must be relative; cannot start with '/': " + relativePath;
+        }
+        if (relativePath.startsWith("../")) {
+            return (
+                "Workspace path must be inside the workspace; cannot start with '../': " +
+                    relativePath
+            );
+        }
+        if (relativePath.endsWith("/")) {
+            return "Workspace path may not end with '/': " + relativePath;
+        }
 
-      if (relativePath.indexOf(':') >= 0) {
-        return "Workspace path may not contain ':': $relativePath"
-      }
+        if (relativePath.indexOf(':') >= 0) {
+            return "Workspace path may not contain ':': " + relativePath;
+        }
 
-      return null
+        return null;
     }
-  }
 }

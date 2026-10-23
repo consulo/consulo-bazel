@@ -1,102 +1,140 @@
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import com.intellij.openapi.diagnostic.logger
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.ignore.BazelIgnoreService
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.label.toPath
-import java.io.IOException
-import java.nio.file.Files
-import java.nio.file.LinkOption
-import java.nio.file.Path
-import java.nio.file.attribute.BasicFileAttributes
-import kotlin.coroutines.CoroutineContext
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isSymbolicLink
+import consulo.application.Application;
+import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.application.progress.ProgressManager;
+import consulo.logging.Logger;
+import consulo.util.lang.Pair;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.ignore.BazelIgnoreService;
+import org.jetbrains.bazel.label.Label;
 
-private val log = logger<TargetCollection>()
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 /**
  * Utility class for working with collections of includable and excludable targets.
  * This replaces the old TargetsSpec class.
  */
-@ApiStatus.Internal
-data class TargetCollection(val values: List<Label>, val excludedValues: List<Label> = emptyList()) {
-  companion object {
-    fun fromExcludableList(targets: List<ExcludableValue<Label>>): TargetCollection {
-      val included = mutableListOf<Label>()
-      val excluded = mutableListOf<Label>()
+public record TargetCollection(List<Label> values, List<Label> excludedValues) {
+    private static final Logger LOG = Logger.getInstance(TargetCollection.class);
 
-      targets.forEach { excludableTarget ->
-        if (excludableTarget.isIncluded()) {
-          included.add(excludableTarget.value)
-        } else {
-          excluded.add(excludableTarget.value)
+    public TargetCollection(List<Label> values) {
+        this(values, List.of());
+    }
+
+    public static TargetCollection fromExcludableList(List<ExcludableValue<Label>> targets) {
+        List<Label> included = new ArrayList<>();
+        List<Label> excluded = new ArrayList<>();
+
+        targets.forEach(excludableTarget -> {
+            if (excludableTarget.isIncluded()) {
+                included.add(excludableTarget.value());
+            }
+            else {
+                excluded.add(excludableTarget.value());
+            }
+        });
+
+        return new TargetCollection(included, excluded);
+    }
+
+    /**
+     * Removes each excluded recursive pattern of the main workspace that has no `BUILD` file beneath its directory.
+     * <p>
+     * Bazel rejects such a negative pattern with "no targets found beneath", and the pattern excludes nothing.
+     * The walk skips the directories that {@code ignoreService} ignores and stops at the first `BUILD` file.
+     * A nested module counts like any other directory, because Bazel includes its packages in the recursive pattern.
+     * The walk does not follow symlinks, but Bazel does.
+     * Thus a symlink to a directory, or a symlink with a `BUILD` file name, counts as a possible `BUILD` file.
+     * A directory that the walk cannot read also keeps its pattern. See BAZEL-3586.
+     */
+    public static CompletableFuture<TargetCollection> dropExcludedPatternsWithoutPackages(
+        TargetCollection receiver,
+        Path workspaceRoot,
+        BazelIgnoreService ignoreService
+    ) {
+        // consulo: upstream withContext(Dispatchers.IO)
+        return CompletableFuture.supplyAsync(() -> {
+            Set<Label> patternsWithoutPackages = receiver.excludedValues()
+                .stream()
+                .filter(it -> it.isRecursive() && it.isMainWorkspace())
+                .filter(it -> !hasBuildFileBeneath(workspaceRoot.resolve(Label.toPath(it.packagePath())), ignoreService))
+                .collect(Collectors.toCollection(HashSet::new));
+            if (patternsWithoutPackages.isEmpty()) {
+                return receiver;
+            }
+
+            LOG.info("Dropping the excluded patterns without packages: " + patternsWithoutPackages);
+            return new TargetCollection(
+                receiver.values(),
+                receiver.excludedValues().stream().filter(it -> !patternsWithoutPackages.contains(it)).toList()
+            );
+        }, Application.get().getInstance(ApplicationConcurrency.class).getExecutorService());
+    }
+
+    // consulo: upstream passes the CoroutineContext for ensureActive(), ProgressManager.checkCanceled() is used instead
+    private static boolean hasBuildFileBeneath(Path root, BazelIgnoreService ignoreService) {
+        if (!Files.isDirectory(root)) {
+            return false;
         }
-      }
+        if (Files.isSymbolicLink(root)) {
+            return true;
+        }
 
-      return TargetCollection(included, excluded)
+        Deque<Path> queue = new ArrayDeque<>();
+        queue.add(root);
+        while (!queue.isEmpty()) {
+            ProgressManager.checkCanceled();
+            Path directory = queue.removeFirst();
+            if (ignoreService.isIgnored(directory)) {
+                continue;
+            }
+
+            List<Pair<Path, BasicFileAttributes>> entries = new ArrayList<>();
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
+                for (Path it : stream) {
+                    entries.add(Pair.create(it, Files.readAttributes(it, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)));
+                }
+            }
+            catch (IOException e) {
+                LOG.info("Keeping the excluded pattern for " + root + ", because " + directory + " cannot be read", e);
+                return true;
+            }
+
+            for (Pair<Path, BasicFileAttributes> entry : entries) {
+                Path path = entry.getFirst();
+                BasicFileAttributes attributes = entry.getSecond();
+                boolean isBuildFileName =
+                    Arrays.asList(Constants.BUILD_FILE_NAMES).contains(Objects.requireNonNull(path.getFileName()).toString());
+                // With NOFOLLOW_LINKS, a symlink to a directory is not a directory, so check the symlink first.
+                if (attributes.isSymbolicLink()) {
+                    if (isBuildFileName || Files.isDirectory(path)) {
+                        return true;
+                    }
+                }
+                else if (attributes.isDirectory()) {
+                    queue.add(path);
+                }
+                else if (isBuildFileName) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
-  }
-}
-
-/**
- * Removes each excluded recursive pattern of the main workspace that has no `BUILD` file beneath its directory.
- *
- * Bazel rejects such a negative pattern with "no targets found beneath", and the pattern excludes nothing.
- * The walk skips the directories that [ignoreService] ignores and stops at the first `BUILD` file.
- * A nested module counts like any other directory, because Bazel includes its packages in the recursive pattern.
- * The walk does not follow symlinks, but Bazel does.
- * Thus a symlink to a directory, or a symlink with a `BUILD` file name, counts as a possible `BUILD` file.
- * A directory that the walk cannot read also keeps its pattern. See BAZEL-3586.
- */
-@ApiStatus.Internal
-suspend fun TargetCollection.dropExcludedPatternsWithoutPackages(
-  workspaceRoot: Path,
-  ignoreService: BazelIgnoreService,
-): TargetCollection = withContext(Dispatchers.IO) {
-  val patternsWithoutPackages = excludedValues
-    .filter { it.isRecursive && it.isMainWorkspace }
-    .filterTo(HashSet()) { !hasBuildFileBeneath(workspaceRoot.resolve(it.packagePath.toPath()), ignoreService, coroutineContext) }
-  if (patternsWithoutPackages.isEmpty()) return@withContext this@dropExcludedPatternsWithoutPackages
-
-  log.info("Dropping the excluded patterns without packages: $patternsWithoutPackages")
-  copy(excludedValues = excludedValues.filterNot { it in patternsWithoutPackages })
-}
-
-private fun hasBuildFileBeneath(root: Path, ignoreService: BazelIgnoreService, context: CoroutineContext): Boolean {
-  if (!root.isDirectory()) return false
-  if (root.isSymbolicLink()) return true
-
-  val queue = ArrayDeque<Path>().apply { add(root) }
-  while (queue.isNotEmpty()) {
-    context.ensureActive()
-    val directory = queue.removeFirst()
-    if (ignoreService.isIgnored(directory)) continue
-
-    val entries: List<Pair<Path, BasicFileAttributes>> = try {
-      Files.newDirectoryStream(directory).use { stream ->
-        stream.map { it to Files.readAttributes(it, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS) }
-      }
-    }
-    catch (e: IOException) {
-      log.info("Keeping the excluded pattern for $root, because $directory cannot be read", e)
-      return true
-    }
-
-    for ((path, attributes) in entries) {
-      val isBuildFileName = path.fileName.toString() in Constants.BUILD_FILE_NAMES
-      when {
-        // With NOFOLLOW_LINKS, a symlink to a directory is not a directory, so check the symlink first.
-        attributes.isSymbolicLink -> if (isBuildFileName || path.isDirectory()) return true
-        attributes.isDirectory -> queue.add(path)
-        isBuildFileName -> return true
-      }
-    }
-  }
-  return false
 }

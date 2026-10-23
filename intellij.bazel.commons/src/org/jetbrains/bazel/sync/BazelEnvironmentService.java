@@ -1,84 +1,105 @@
-package org.jetbrains.bazel.sync
+package org.jetbrains.bazel.sync;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.startup.ProjectActivity
-import com.intellij.platform.eel.channels.EelDelicateApi
-import com.intellij.platform.eel.environmentVariables
-import com.intellij.platform.eel.provider.getEelDescriptor
-import com.intellij.platform.eel.provider.toEelApi
-import com.intellij.util.ShellEnvironmentReader
-import com.intellij.util.system.OS
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.withTimeout
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import java.io.File
-import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.isExecutable
-import kotlin.time.Duration.Companion.seconds
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.logging.Logger;
+import consulo.platform.Platform;
+import consulo.project.Project;
+import consulo.project.startup.PostStartupActivity;
+import consulo.ui.UIAccess;
+import consulo.util.concurrent.coroutine.Coroutine;
+import consulo.util.concurrent.coroutine.CoroutineScope;
+import consulo.util.concurrent.coroutine.step.CodeExecution;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jspecify.annotations.Nullable;
 
-private val LOG = logger<BazelEnvironmentService>()
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+
+import static org.jetbrains.bazel.config.project.isBazelProject;
 
 /**
  * Fetches the environment of a login shell to avoid cases where `PATH` is different in IDEA and in terminal (BAZEL-883).
- * [com.intellij.util.EnvironmentUtil.getEnvironmentMap] already does this,
+ * {@code com.intellij.util.EnvironmentUtil.getEnvironmentMap} already does this,
  * but only on macOS and only if IDEA wasn't launched from terminal or as a dev build (see com.intellij.platform.ide.bootstrap.StartupUtil#shouldLoadShellEnv).
  * For Bazel plugin we want to skip these conditions and always run Bazel as if it ran in the terminal.
- * @see ShellEnvironmentReader
+ *
+ * @see "com.intellij.util.ShellEnvironmentReader"
  */
-@ApiStatus.Internal
-@Service(Service.Level.PROJECT)
-class BazelEnvironmentService(project: Project, scope: CoroutineScope) {
-  @OptIn(EelDelicateApi::class)
-  private val environmentDeferred: Deferred<Map<String, String>> = scope.async(Dispatchers.IO) {
-    try {
-      withTimeout(5.seconds) {
-        // Using interactive login shell here to make sure the environment variables match the user's terminal exactly.
-        // Non-interactive shells miss environment variables defined in files like ~/.bashrc or ~/.zshrc
-        project.getEelDescriptor().toEelApi().exec.environmentVariables().loginInteractive().eelIt().await()
-      }
-    }
-    catch (e: Throwable) {
-      LOG.warn(e)
-      System.getenv()
-    }
-  }
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class BazelEnvironmentService {
+    private static final Logger LOG = Logger.getInstance(BazelEnvironmentService.class);
 
-  suspend fun getEnvironment(): Map<String, String> =
-    environmentDeferred.await()
+    private final CompletableFuture<Map<String, String>> myEnvironmentDeferred;
 
-  suspend fun findInPath(vararg executableNames: String): Path? {
-    return getEnvironment()["PATH"]
-      ?.split(File.pathSeparator)
-      .orEmpty()
-      .asSequence()
-      .flatMap { pathStr ->
-        executableNames.mapNotNull { executableName ->
-          val actualExecutableName = if (OS.CURRENT == OS.Windows) "$executableName.exe" else executableName
-          val path = Path.of(pathStr, actualExecutableName)
-          path.takeIf { it.exists() && path.isExecutable() }
+    @Inject
+    // consulo: the coroutine has no input, Consulo coroutines are started with a null input
+    @SuppressWarnings("NullAway")
+    public BazelEnvironmentService(Project project) {
+        CoroutineScope scope = CoroutineScope.of(project.coroutineContext());
+        myEnvironmentDeferred = Coroutine.first(CodeExecution.<Object, Map<String, String>>supply(() -> {
+                // Using interactive login shell here to make sure the environment variables match the user's terminal exactly.
+                // Non-interactive shells miss environment variables defined in files like ~/.bashrc or ~/.zshrc
+                return Platform.current().os().environmentVariables();
+            }))
+            .runAsync(scope, null)
+            .toFuture()
+            .orTimeout(5, TimeUnit.SECONDS)
+            .exceptionally(e -> {
+                LOG.warn(e);
+                return System.getenv();
+            });
+    }
+
+    public CompletableFuture<Map<String, String>> getEnvironment() {
+        return myEnvironmentDeferred;
+    }
+
+    public CompletableFuture<@Nullable Path> findInPath(String... executableNames) {
+        return getEnvironment().thenApply(environment -> {
+            String pathValue = environment.get("PATH");
+            // consulo: Kotlin String.split(delimiter) keeps empty entries and does not use regular expressions
+            List<String> paths = pathValue != null ? List.of(pathValue.split(Pattern.quote(File.pathSeparator), -1)) : List.of();
+            for (String pathStr : paths) {
+                for (String executableName : executableNames) {
+                    String actualExecutableName = Platform.current().os().isWindows() ? executableName + ".exe" : executableName;
+                    Path path = Path.of(pathStr, actualExecutableName);
+                    if (Files.exists(path) && Files.isExecutable(path)) {
+                        return path;
+                    }
+                }
+            }
+            return null;
+        });
+    }
+
+    public static BazelEnvironmentService getInstance(Project project) {
+        return project.getInstance(BazelEnvironmentService.class);
+    }
+}
+
+// consulo: upstream nests this class in BazelEnvironmentService; Consulo extensions must be top-level
+@ExtensionImpl
+class StartupActivity implements PostStartupActivity, DumbAware {
+    public StartupActivity() {
+    }
+
+    @Override
+    public void runActivity(Project project, UIAccess uiAccess) {
+        if (isBazelProject(project)) {
+            BazelEnvironmentService.getInstance(project);  // Make sure environmentDeferred starts its calculation ASAP
         }
-      }
-      .firstOrNull()
-  }
-
-  internal class StartupActivity : ProjectActivity {
-    override suspend fun execute(project: Project) {
-      if (project.isBazelProject) {
-        getInstance(project)  // Make sure environmentDeferred starts its calculation ASAP
-      }
     }
-  }
-
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): BazelEnvironmentService = project.service()
-  }
 }

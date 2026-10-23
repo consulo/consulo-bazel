@@ -1,12 +1,16 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.server.diagnostics.Diagnostic
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.server.diagnostics.Diagnostic;
+import org.jspecify.annotations.Nullable;
 
-data class PublishDiagnosticsParams(
-  val taskId: TaskId,
-  val textDocument: TextDocumentIdentifier?,
-  val buildTarget: Label,
-  val diagnostics: List<Diagnostic>,
-  val reset: Boolean,
-)
+import java.util.List;
+
+public record PublishDiagnosticsParams(
+    TaskId taskId,
+    @Nullable TextDocumentIdentifier textDocument,
+    Label buildTarget,
+    List<Diagnostic> diagnostics,
+    boolean reset
+) {
+}

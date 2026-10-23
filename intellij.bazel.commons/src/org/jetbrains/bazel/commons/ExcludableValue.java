@@ -1,23 +1,35 @@
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-sealed class ExcludableValue<T> {
-  abstract val value: T
+public sealed interface ExcludableValue<T> permits ExcludableValue.Included, ExcludableValue.Excluded {
+    T value();
 
-  data class Included<T>(override val value: T) : ExcludableValue<T>() {
-    override fun toString(): String = value.toString()
-  }
+    record Included<T>(T value) implements ExcludableValue<T> {
+        @Override
+        public String toString() {
+            return value.toString();
+        }
+    }
 
-  data class Excluded<T>(override val value: T) : ExcludableValue<T>() {
-    override fun toString(): String = "-$value"
-  }
+    record Excluded<T>(T value) implements ExcludableValue<T> {
+        @Override
+        public String toString() {
+            return "-" + value;
+        }
+    }
 
-  fun isIncluded(): Boolean = this is Included
+    default boolean isIncluded() {
+        return this instanceof Included;
+    }
 
-  fun isExcluded(): Boolean = this is Excluded
+    default boolean isExcluded() {
+        return this instanceof Excluded;
+    }
 
-  companion object {
-    fun <T> included(value: T): ExcludableValue<T> = Included(value)
+    static <T> ExcludableValue<T> included(T value) {
+        return new Included<>(value);
+    }
 
-    fun <T> excluded(value: T): ExcludableValue<T> = Excluded(value)
-  }
+    static <T> ExcludableValue<T> excluded(T value) {
+        return new Excluded<>(value);
+    }
 }

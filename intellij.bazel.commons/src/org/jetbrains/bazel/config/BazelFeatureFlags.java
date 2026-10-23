@@ -1,111 +1,134 @@
-package org.jetbrains.bazel.config
+package org.jetbrains.bazel.config;
 
-import com.intellij.openapi.util.registry.Registry
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.VisibleForTesting
+import consulo.bazel.commons.BazelRegistryKeys;
 
-@ApiStatus.Internal
-object BazelFeatureFlags {
-  @VisibleForTesting
-  const val BUILD_PROJECT_ON_SYNC = "bazel.build.project.on.sync"
-  private const val SYNC_REQUEST_SOURCES = "bazel.sync.request.sources"
-  private const val SHORTEN_MODULE_LIBRARY_NAMES = "bsp.shorten.module.library.names"
-  private const val EXCLUDE_COMPILED_SOURCE_CODE_INSIDE_JARS = "bsp.exclude.compiled.source.code.inside.jars"
-  private const val SYMLINK_SCAN_MAX_DEPTH = "bazel.symlink.scan.max.depth"
-  private const val SHUTDOWN_BEFORE_SHARD_BUILD = "bazel.shutdown.before.shard.build"
-  @VisibleForTesting
-  const val MERGE_SOURCE_ROOTS = "bazel.merge.source.roots"
-
-  @VisibleForTesting
-  const val FAST_BUILD_ENABLED = "bazel.enable.jvm.fastbuild"
-  const val AUTO_OPEN_PROJECT_IF_PRESENT = "bazel.project.auto.open.if.present"
-
-  @VisibleForTesting
-  const val SYNTHETIC_RUN_ENABLE = "bazel.run.synthetic.enable"
-  private const val SYNTHETIC_RUN_DISABLE_VISIBILITY_CHECK = "bazel.run.synthetic.disable.visibility.check"
-
-  @VisibleForTesting
-  const val RUN_CONFIG_RUN_WITH_BAZEL = "bazel.run.config.run.with.bazel"
-  @VisibleForTesting
-  const val USE_PTY = "bazel.use.pty"
-  private const val SHOW_BAZEL_STDOUT = "bazel.show.stdout"
-  private const val HARD_LINK_OUTPUT_FILES = "bazel.hard.link.output.files"
-
-  private const val QUERY_ON_FILE_EVENTS = "bazel.query.on.file.events"
-  private const val HIGHLIGHT_UNSYNCED_SOURCE_FILES = "bazel.highlight.unsynced.source.files"
-  private const val HIGHLIGHT_IGNORED_SOURCE_FILES = "bazel.highlight.ignored.source.files"
-
-  const val ENABLE_LOG: String = "bazel.enable.log"
-  private const val KILL_TREE_ON_CANCEL = "bazel.kill.tree.on.cancel"
-  private const val KILL_SERVER_ON_CANCEL = "bazel.kill.server.on.cancel"
-
-  val isBuildProjectOnSyncEnabled: Boolean
-    get() = isEnabled(BUILD_PROJECT_ON_SYNC)
-
-  val isSyncRequestSourcesEnabled: Boolean
-    get() = isEnabled(SYNC_REQUEST_SOURCES)
-
-  val isShortenModuleLibraryNamesEnabled: Boolean
-    get() = isEnabled(SHORTEN_MODULE_LIBRARY_NAMES)
-
-  val excludeCompiledSourceCodeInsideJars: Boolean
-    get() = isEnabled(EXCLUDE_COMPILED_SOURCE_CODE_INSIDE_JARS)
-
-  val symlinkScanMaxDepth: Int
-    get() = Registry.intValue(SYMLINK_SCAN_MAX_DEPTH)
-
-  val shutDownBeforeShardBuild: Boolean
-    get() = isEnabled(SHUTDOWN_BEFORE_SHARD_BUILD)
-
-  val mergeSourceRoots: Boolean
-    get() = isEnabled(MERGE_SOURCE_ROOTS)
-
-  val fastBuildEnabled: Boolean
-    get() = isEnabled(FAST_BUILD_ENABLED)
-
-  val autoOpenProjectIfPresent: Boolean
-    get() = isEnabled(AUTO_OPEN_PROJECT_IF_PRESENT)
-
-  val runConfigRunWithBazel: Boolean
-    get() = isEnabled(RUN_CONFIG_RUN_WITH_BAZEL)
-
-  val syntheticRunEnable: Boolean
-    get() = isEnabled(SYNTHETIC_RUN_ENABLE)
-
-  val syntheticRunDisableVisibilityCheck: Boolean
-    get() = isEnabled(SYNTHETIC_RUN_DISABLE_VISIBILITY_CHECK)
-
-  val usePty: Boolean
-    get() = isEnabled(USE_PTY)
-
-  val showBazelStdout: Boolean
-    get() = isEnabled(SHOW_BAZEL_STDOUT)
-
-  val hardLinkOutputFiles: Boolean
-    get() = isEnabled(HARD_LINK_OUTPUT_FILES)
-
-  val queryBazelOnFileEvents: Boolean
-    get() = isEnabled(QUERY_ON_FILE_EVENTS)
-
-  val highlightUnsyncedSourceFiles: Boolean
-    get() = isEnabled(HIGHLIGHT_UNSYNCED_SOURCE_FILES)
-
-  val highlightIgnoredSourceFiles: Boolean
-    get() = isEnabled(HIGHLIGHT_IGNORED_SOURCE_FILES)
-
-  val killServerOnCancel: Boolean
-    get() = Registry.`is`(KILL_SERVER_ON_CANCEL)
-
-  val killClientTreeOnCancel: Boolean
-    get() = Registry.`is`(KILL_TREE_ON_CANCEL)
-
-  val isLogEnabled: Boolean
-    get() = Registry.`is`(ENABLE_LOG)
-
-  private fun isEnabled(key: String): Boolean {
-    System.getProperty(key)?.let { value ->
-      return value.toBooleanStrict()
+public final class BazelFeatureFlags {
+    private BazelFeatureFlags() {
     }
-    return Registry.`is`(key)
-  }
+
+    public static final String BUILD_PROJECT_ON_SYNC = "bazel.build.project.on.sync";
+    private static final String SYNC_REQUEST_SOURCES = "bazel.sync.request.sources";
+    private static final String SHORTEN_MODULE_LIBRARY_NAMES = "bsp.shorten.module.library.names";
+    private static final String EXCLUDE_COMPILED_SOURCE_CODE_INSIDE_JARS = "bsp.exclude.compiled.source.code.inside.jars";
+    private static final String SYMLINK_SCAN_MAX_DEPTH = "bazel.symlink.scan.max.depth";
+    private static final String SHUTDOWN_BEFORE_SHARD_BUILD = "bazel.shutdown.before.shard.build";
+    public static final String MERGE_SOURCE_ROOTS = "bazel.merge.source.roots";
+
+    public static final String FAST_BUILD_ENABLED = "bazel.enable.jvm.fastbuild";
+    public static final String AUTO_OPEN_PROJECT_IF_PRESENT = "bazel.project.auto.open.if.present";
+
+    public static final String SYNTHETIC_RUN_ENABLE = "bazel.run.synthetic.enable";
+    private static final String SYNTHETIC_RUN_DISABLE_VISIBILITY_CHECK = "bazel.run.synthetic.disable.visibility.check";
+
+    public static final String RUN_CONFIG_RUN_WITH_BAZEL = "bazel.run.config.run.with.bazel";
+    public static final String USE_PTY = "bazel.use.pty";
+    private static final String SHOW_BAZEL_STDOUT = "bazel.show.stdout";
+    private static final String HARD_LINK_OUTPUT_FILES = "bazel.hard.link.output.files";
+
+    private static final String QUERY_ON_FILE_EVENTS = "bazel.query.on.file.events";
+    private static final String HIGHLIGHT_UNSYNCED_SOURCE_FILES = "bazel.highlight.unsynced.source.files";
+    private static final String HIGHLIGHT_IGNORED_SOURCE_FILES = "bazel.highlight.ignored.source.files";
+
+    public static final String ENABLE_LOG = "bazel.enable.log";
+    private static final String KILL_TREE_ON_CANCEL = "bazel.kill.tree.on.cancel";
+    private static final String KILL_SERVER_ON_CANCEL = "bazel.kill.server.on.cancel";
+
+    public static boolean isBuildProjectOnSyncEnabled() {
+        return isEnabled(BUILD_PROJECT_ON_SYNC);
+    }
+
+    public static boolean isSyncRequestSourcesEnabled() {
+        return isEnabled(SYNC_REQUEST_SOURCES);
+    }
+
+    public static boolean isShortenModuleLibraryNamesEnabled() {
+        return isEnabled(SHORTEN_MODULE_LIBRARY_NAMES);
+    }
+
+    public static boolean getExcludeCompiledSourceCodeInsideJars() {
+        return isEnabled(EXCLUDE_COMPILED_SOURCE_CODE_INSIDE_JARS);
+    }
+
+    public static int getSymlinkScanMaxDepth() {
+        return BazelRegistryKeys.intValue(SYMLINK_SCAN_MAX_DEPTH);
+    }
+
+    public static boolean getShutDownBeforeShardBuild() {
+        return isEnabled(SHUTDOWN_BEFORE_SHARD_BUILD);
+    }
+
+    public static boolean getMergeSourceRoots() {
+        return isEnabled(MERGE_SOURCE_ROOTS);
+    }
+
+    public static boolean getFastBuildEnabled() {
+        return isEnabled(FAST_BUILD_ENABLED);
+    }
+
+    public static boolean getAutoOpenProjectIfPresent() {
+        return isEnabled(AUTO_OPEN_PROJECT_IF_PRESENT);
+    }
+
+    public static boolean getRunConfigRunWithBazel() {
+        return isEnabled(RUN_CONFIG_RUN_WITH_BAZEL);
+    }
+
+    public static boolean getSyntheticRunEnable() {
+        return isEnabled(SYNTHETIC_RUN_ENABLE);
+    }
+
+    public static boolean getSyntheticRunDisableVisibilityCheck() {
+        return isEnabled(SYNTHETIC_RUN_DISABLE_VISIBILITY_CHECK);
+    }
+
+    public static boolean getUsePty() {
+        return isEnabled(USE_PTY);
+    }
+
+    public static boolean getShowBazelStdout() {
+        return isEnabled(SHOW_BAZEL_STDOUT);
+    }
+
+    public static boolean getHardLinkOutputFiles() {
+        return isEnabled(HARD_LINK_OUTPUT_FILES);
+    }
+
+    public static boolean getQueryBazelOnFileEvents() {
+        return isEnabled(QUERY_ON_FILE_EVENTS);
+    }
+
+    public static boolean getHighlightUnsyncedSourceFiles() {
+        return isEnabled(HIGHLIGHT_UNSYNCED_SOURCE_FILES);
+    }
+
+    public static boolean getHighlightIgnoredSourceFiles() {
+        return isEnabled(HIGHLIGHT_IGNORED_SOURCE_FILES);
+    }
+
+    public static boolean getKillServerOnCancel() {
+        return BazelRegistryKeys.is(KILL_SERVER_ON_CANCEL);
+    }
+
+    public static boolean getKillClientTreeOnCancel() {
+        return BazelRegistryKeys.is(KILL_TREE_ON_CANCEL);
+    }
+
+    public static boolean isLogEnabled() {
+        return BazelRegistryKeys.is(ENABLE_LOG);
+    }
+
+    private static boolean isEnabled(String key) {
+        String value = System.getProperty(key);
+        if (value != null) {
+            // consulo: Kotlin String.toBooleanStrict()
+            if (value.equals("true")) {
+                return true;
+            }
+            if (value.equals("false")) {
+                return false;
+            }
+            throw new IllegalArgumentException("The string doesn't represent a boolean value: " + value);
+        }
+        return BazelRegistryKeys.is(key);
+    }
 }

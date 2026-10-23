@@ -1,14 +1,18 @@
-package org.jetbrains.bazel.languages.projectview.imports
+package org.jetbrains.bazel.languages.projectview.imports;
 
-import com.intellij.build.FilePosition
-import org.jetbrains.annotations.ApiStatus
-import java.nio.file.Path
+import consulo.build.ui.FilePosition;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-sealed class Import {
+import java.nio.file.Path;
 
-  abstract val isRequired: Boolean
+// consulo: upstream sealed class with data class subclasses; a sealed interface keeps the records' equals/hashCode
+public sealed interface Import {
 
-  data class Resolved(val path: Path, override val isRequired: Boolean) : Import()
-  data class Unresolved(val text: String, val position: FilePosition?, override val isRequired: Boolean) : Import()
+    boolean isRequired();
+
+    record Resolved(Path path, boolean isRequired) implements Import {
+    }
+
+    record Unresolved(String text, @Nullable FilePosition position, boolean isRequired) implements Import {
+    }
 }

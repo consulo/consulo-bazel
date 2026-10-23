@@ -1,73 +1,98 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import org.jetbrains.annotations.ApiStatus.Internal
-import org.jetbrains.bazel.commons.ExcludableValue
-import org.jetbrains.bazel.label.Label
-import java.nio.file.Path
-import kotlin.io.path.invariantSeparatorsPathString
+import org.jetbrains.bazel.commons.ExcludableValue;
+import org.jetbrains.bazel.label.Label;
+import org.jspecify.annotations.Nullable;
 
-@Internal
-val DIRECTORIES_KEY: ProjectViewSectionKey<List<ExcludableValue<Path>>> = ProjectViewSectionKey("directories", emptyList())
-val ProjectView.directories: List<ExcludableValue<Path>>
-  // Default to workspace root if no directories specified
-  get() = getSection(DIRECTORIES_KEY).takeIf { it.isNotEmpty() } ?: listOf(ExcludableValue.included(Path.of(".")))
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
-@Internal
-val TARGETS_KEY: ProjectViewSectionKey<List<ExcludableValue<Label>>> = ProjectViewSectionKey("targets", emptyList())
-
-val ProjectView.targets: List<ExcludableValue<Label>>
-  @Internal
-  get() {
-    return if (deriveTargetsFromDirectories) {
-      createTargetsFromDirectories(getSection(TARGETS_KEY), directories)
-    }
-    else {
-      getSection(TARGETS_KEY)
-    }
-  }
-
-private fun createTargetsFromDirectories(
-  targets: List<ExcludableValue<Label>>,
-  dirs: List<ExcludableValue<Path>>,
-): List<ExcludableValue<Label>> {
-  fun hasEmptyIncludedAndEmptyExcluded(list: List<ExcludableValue<*>>): Boolean =
-    list.none { it.isIncluded() } && list.none { !it.isIncluded() }
-
-  fun hasEmptyIncludedAndNonEmptyExcluded(list: List<ExcludableValue<*>>): Boolean =
-    list.none { it.isIncluded() } && list.any { !it.isIncluded() }
-
-  fun mapDirectoryToTarget(buildDirectoryIdentifier: Path): Label? {
-    if (buildDirectoryIdentifier.isAbsolute) return null
-    val buildDirectoryPath = buildDirectoryIdentifier.invariantSeparatorsPathString
-    if (buildDirectoryPath.isEmpty()) return null
-
-    return if (buildDirectoryPath == ".") {
-      Label.parse("//...")
-    }
-    else {
-      Label.parse("//$buildDirectoryPath/...")
-    }
-  }
-
-  when {
-    dirs.isEmpty() -> return targets
-    hasEmptyIncludedAndEmptyExcluded(dirs) -> return targets
-    hasEmptyIncludedAndNonEmptyExcluded(dirs) -> {
-      throw IllegalArgumentException("'directories' section has no included targets.")
+// consulo: upstream Kotlin top-level declarations; extension properties ProjectView.x become static getX(ProjectView)
+public final class ProjectViewTargets {
+    private ProjectViewTargets() {
     }
 
-    else -> {
-      val directoriesValues =
-        dirs
-          .filter { it.isIncluded() }
-          .mapNotNull { mapDirectoryToTarget(it.value) }
-          .map { ExcludableValue.included(it) }
-      val directoriesExcludedValues =
-        dirs
-          .filter { !it.isIncluded() }
-          .mapNotNull { mapDirectoryToTarget(it.value) }
-          .map { ExcludableValue.excluded(it) }
-      return targets + directoriesValues + directoriesExcludedValues
+    public static final ProjectViewSectionKey<List<ExcludableValue<Path>>> DIRECTORIES_KEY =
+        new ProjectViewSectionKey<>("directories", List.of());
+
+    public static List<ExcludableValue<Path>> getDirectories(ProjectView receiver) {
+        // Default to workspace root if no directories specified
+        List<ExcludableValue<Path>> directories = receiver.getSection(DIRECTORIES_KEY);
+        return !directories.isEmpty() ? directories : List.of(ExcludableValue.included(Path.of(".")));
     }
-  }
+
+    public static final ProjectViewSectionKey<List<ExcludableValue<Label>>> TARGETS_KEY = new ProjectViewSectionKey<>("targets", List.of());
+
+    public static List<ExcludableValue<Label>> getTargets(ProjectView receiver) {
+        if (ProjectViewExtensions.getDeriveTargetsFromDirectories(receiver)) {
+            return createTargetsFromDirectories(receiver.getSection(TARGETS_KEY), getDirectories(receiver));
+        }
+        else {
+            return receiver.getSection(TARGETS_KEY);
+        }
+    }
+
+    private static List<ExcludableValue<Label>> createTargetsFromDirectories(
+        List<ExcludableValue<Label>> targets,
+        List<ExcludableValue<Path>> dirs
+    ) {
+        Predicate<List<? extends ExcludableValue<?>>> hasEmptyIncludedAndEmptyExcluded =
+            list -> list.stream().noneMatch(it -> it.isIncluded()) && list.stream().noneMatch(it -> !it.isIncluded());
+
+        Predicate<List<? extends ExcludableValue<?>>> hasEmptyIncludedAndNonEmptyExcluded =
+            list -> list.stream().noneMatch(it -> it.isIncluded()) && list.stream().anyMatch(it -> !it.isIncluded());
+
+        Function<Path, @Nullable Label> mapDirectoryToTarget = buildDirectoryIdentifier -> {
+            if (buildDirectoryIdentifier.isAbsolute()) {
+                return null;
+            }
+            // consulo: Kotlin Path.invariantSeparatorsPathString
+            String buildDirectoryPath =
+                buildDirectoryIdentifier.toString().replace(buildDirectoryIdentifier.getFileSystem().getSeparator(), "/");
+            if (buildDirectoryPath.isEmpty()) {
+                return null;
+            }
+
+            if (buildDirectoryPath.equals(".")) {
+                return Label.parse("//...");
+            }
+            else {
+                return Label.parse("//" + buildDirectoryPath + "/...");
+            }
+        };
+
+        if (dirs.isEmpty()) {
+            return targets;
+        }
+        else if (hasEmptyIncludedAndEmptyExcluded.test(dirs)) {
+            return targets;
+        }
+        else if (hasEmptyIncludedAndNonEmptyExcluded.test(dirs)) {
+            throw new IllegalArgumentException("'directories' section has no included targets.");
+        }
+        else {
+            List<ExcludableValue<Label>> directoriesValues =
+                dirs.stream()
+                    .filter(it -> it.isIncluded())
+                    .map(it -> mapDirectoryToTarget.apply(it.value()))
+                    .filter(Objects::nonNull)
+                    .map(it -> ExcludableValue.included(it))
+                    .toList();
+            List<ExcludableValue<Label>> directoriesExcludedValues =
+                dirs.stream()
+                    .filter(it -> !it.isIncluded())
+                    .map(it -> mapDirectoryToTarget.apply(it.value()))
+                    .filter(Objects::nonNull)
+                    .map(it -> ExcludableValue.excluded(it))
+                    .toList();
+            List<ExcludableValue<Label>> result = new ArrayList<>(targets);
+            result.addAll(directoriesValues);
+            result.addAll(directoriesExcludedValues);
+            return result;
+        }
+    }
 }

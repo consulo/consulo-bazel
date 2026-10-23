@@ -1,21 +1,28 @@
-package org.jetbrains.bazel.sync.environment
+package org.jetbrains.bazel.sync.environment;
 
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelProjectInfoService {
-  val isBazelProject: Boolean
-  val projectRootDir: VirtualFile?
-}
+@ServiceAPI(ComponentScope.PROJECT)
+public interface BazelProjectInfoService {
+    boolean isBazelProject();
 
-val Project.bazelProjectInfo: BazelProjectInfoService
-  @ApiStatus.Internal
-  get() = service<BazelProjectInfoService>()
+    @Nullable VirtualFile getProjectRootDir();
 
-@ApiStatus.Internal
-fun BazelProjectInfoService.getProjectRootDirOrThrow(): VirtualFile {
-  return projectRootDir ?: error("Project root directory is not initialized")
+    // consulo: upstream Kotlin extension property Project.bazelProjectInfo
+    static BazelProjectInfoService getBazelProjectInfo(Project receiver) {
+        return receiver.getInstance(BazelProjectInfoService.class);
+    }
+
+    // consulo: upstream Kotlin extension function BazelProjectInfoService.getProjectRootDirOrThrow()
+    static VirtualFile getProjectRootDirOrThrow(BazelProjectInfoService receiver) {
+        VirtualFile projectRootDir = receiver.getProjectRootDir();
+        if (projectRootDir == null) {
+            throw new IllegalStateException("Project root directory is not initialized");
+        }
+        return projectRootDir;
+    }
 }

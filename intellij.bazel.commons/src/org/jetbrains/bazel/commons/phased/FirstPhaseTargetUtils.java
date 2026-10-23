@@ -1,58 +1,85 @@
-package org.jetbrains.bazel.commons.phased
+package org.jetbrains.bazel.commons.phased;
 
-import com.google.devtools.build.lib.query2.proto.proto2api.Build.Target
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.BuildTargetTag
+import com.google.devtools.build.lib.query2.proto.proto2api.Build;
+import com.google.devtools.build.lib.query2.proto.proto2api.Build.Target;
+import org.jetbrains.bsp.protocol.BuildTargetTag;
+import org.jspecify.annotations.Nullable;
 
-val Target.name: String
-  @ApiStatus.Internal
-  get() = rule.name
+import java.util.ArrayList;
+import java.util.List;
 
-val Target.kind: String
-  @ApiStatus.Internal
-  get() = rule.ruleClass
+public final class FirstPhaseTargetUtils {
+    private FirstPhaseTargetUtils() {
+    }
 
-private const val TAGS_NAME = "tags"
-val Target.tags: List<String>
-  @ApiStatus.Internal
-  get() = getListAttribute(TAGS_NAME)
+    public static String getName(Target receiver) {
+        return receiver.getRule().getName();
+    }
 
-private const val SRCS_NAME = "srcs"
-val Target.srcs: List<String>
-  @ApiStatus.Internal
-  get() = getListAttribute(SRCS_NAME)
+    public static String getKind(Target receiver) {
+        return receiver.getRule().getRuleClass();
+    }
 
-private const val RESOURCES_NAME = "resources"
-val Target.resources: List<String>
-  @ApiStatus.Internal
-  get() = getListAttribute(RESOURCES_NAME)
+    private static final String TAGS_NAME = "tags";
 
-private val compileDeps = listOf("deps", "jars", "exports", "associates", "proc_macro_deps")
-private val runtimeDeps = listOf("runtime_deps")
-val Target.interestingDeps: List<String>
-  @ApiStatus.Internal
-  get() = (compileDeps + runtimeDeps).flatMap { getListAttribute(it) }
+    public static List<String> getTags(Target receiver) {
+        return getListAttribute(receiver, TAGS_NAME);
+    }
 
-private const val GENERATOR_NAME = "generator_name"
-val Target.generatorName: String?
-  @ApiStatus.Internal
-  get() = getStringAttribute(GENERATOR_NAME)
+    private static final String SRCS_NAME = "srcs";
 
-internal fun Target.getListAttribute(name: String): List<String> =
-  rule.attributeList
-    .firstOrNull { it.name == name }
-    ?.stringListValueList
-    .orEmpty()
+    public static List<String> getSrcs(Target receiver) {
+        return getListAttribute(receiver, SRCS_NAME);
+    }
 
-internal fun Target.getStringAttribute(name: String): String? =
-  rule.attributeList
-    .firstOrNull { it.name == name }
-    ?.stringValue
+    private static final String RESOURCES_NAME = "resources";
 
-val Target.isManual: Boolean
-  @ApiStatus.Internal
-  get() = BuildTargetTag.MANUAL in tags
+    public static List<String> getResources(Target receiver) {
+        return getListAttribute(receiver, RESOURCES_NAME);
+    }
 
-val Target.isNoIde: Boolean
-  @ApiStatus.Internal
-  get() = BuildTargetTag.NO_IDE in tags
+    private static final List<String> compileDeps = List.of("deps", "jars", "exports", "associates", "proc_macro_deps");
+    private static final List<String> runtimeDeps = List.of("runtime_deps");
+
+    public static List<String> getInterestingDeps(Target receiver) {
+        List<String> names = new ArrayList<>(compileDeps);
+        names.addAll(runtimeDeps);
+        List<String> result = new ArrayList<>();
+        for (String it : names) {
+            result.addAll(getListAttribute(receiver, it));
+        }
+        return result;
+    }
+
+    private static final String GENERATOR_NAME = "generator_name";
+
+    public static @Nullable String getGeneratorName(Target receiver) {
+        return getStringAttribute(receiver, GENERATOR_NAME);
+    }
+
+    static List<String> getListAttribute(Target receiver, String name) {
+        for (Build.Attribute it : receiver.getRule().getAttributeList()) {
+            if (it.getName().equals(name)) {
+                return it.getStringListValueList();
+            }
+        }
+        return List.of();
+    }
+
+    static @Nullable String getStringAttribute(Target receiver, String name) {
+        for (Build.Attribute it : receiver.getRule().getAttributeList()) {
+            if (it.getName().equals(name)) {
+                return it.getStringValue();
+            }
+        }
+        return null;
+    }
+
+    public static boolean isManual(Target receiver) {
+        return getTags(receiver).contains(BuildTargetTag.MANUAL);
+    }
+
+    public static boolean isNoIde(Target receiver) {
+        return getTags(receiver).contains(BuildTargetTag.NO_IDE);
+    }
+}

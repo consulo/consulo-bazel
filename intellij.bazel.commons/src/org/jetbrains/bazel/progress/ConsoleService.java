@@ -1,16 +1,16 @@
-package org.jetbrains.bazel.progress
+package org.jetbrains.bazel.progress;
 
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.project.Project;
 
-@ApiStatus.Internal
-interface ConsoleService {
-  val buildConsole: TaskConsole
-  val syncConsole: TaskConsole
+@ServiceAPI(ComponentScope.PROJECT)
+public interface ConsoleService {
+    TaskConsole getBuildConsole();
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): ConsoleService = project.service<ConsoleService>()
-  }
+    TaskConsole getSyncConsole();
+
+    static ConsoleService getInstance(Project project) {
+        return project.getInstance(ConsoleService.class);
+    }
 }

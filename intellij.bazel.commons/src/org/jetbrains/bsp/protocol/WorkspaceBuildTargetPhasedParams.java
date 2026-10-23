@@ -1,7 +1,5 @@
-package org.jetbrains.bsp.protocol
-
-import org.jetbrains.annotations.ApiStatus
+package org.jetbrains.bsp.protocol;
 
 // TODO: https://youtrack.jetbrains.com/issue/BAZEL-1548
-@ApiStatus.Internal
-data class WorkspaceBuildTargetPhasedParams(val taskId: TaskId)
+public record WorkspaceBuildTargetPhasedParams(TaskId taskId) {
+}

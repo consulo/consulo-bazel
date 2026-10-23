@@ -1,15 +1,19 @@
-package org.jetbrains.bazel.sync
+package org.jetbrains.bazel.sync;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface ProjectSyncService {
-  val lastSyncTaskId: TaskId?
+import java.util.concurrent.CompletableFuture;
 
-  /**
-   * Runs a sync and returns how it ended. The result is [ProjectSyncCompletionResult.SKIPPED] when another sync is running
-   * and when the project is not trusted.
-   */
-  suspend fun sync(scope: ProjectSyncScope): ProjectSyncOutcome
+@ServiceAPI(ComponentScope.PROJECT)
+public interface ProjectSyncService {
+    @Nullable TaskId getLastSyncTaskId();
+
+    /**
+     * Runs a sync and returns how it ended. The result is {@link ProjectSyncOutcome.ProjectSyncCompletionResult#SKIPPED} when another sync
+     * is running and when the project is not trusted.
+     */
+    CompletableFuture<ProjectSyncOutcome> sync(ProjectSyncScope scope);
 }

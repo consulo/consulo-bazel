@@ -13,28 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import org.jetbrains.annotations.ApiStatus
+import java.util.Set;
 
 /**
- * A set of recognized bazel rule names, together with [LanguageClass] and [RuleType].
+ * A set of recognized bazel rule names, together with {@link LanguageClass} and {@link RuleType}.
  * Language-specific extensions can provide their own set of rule names, as well as heuristics to
  * recognize rule names at runtime.
- *
- *
+ * <p>
+ * <p>
  * Each rule name maps to at most one Kind.
  */
-@ApiStatus.Internal
-data class TargetKind(
-  val kind: String,
-  val languageClasses: Set<LanguageClass> = emptySet(),
-  val ruleType: RuleType,
+public record TargetKind(
+    String kind,
+    Set<LanguageClass> languageClasses,
+    RuleType ruleType
 ) {
-  // Used in extension functions
-  companion object
+    public TargetKind(String kind, RuleType ruleType) {
+        this(kind, Set.of(), ruleType);
+    }
 
-  val isExecutable: Boolean
-    get() = ruleType == RuleType.BINARY || ruleType == RuleType.TEST
+    // Used in extension functions
+    // consulo: the empty upstream companion object has no Java equivalent
+
+    public boolean isExecutable() {
+        return ruleType == RuleType.BINARY || ruleType == RuleType.TEST;
+    }
 }
-

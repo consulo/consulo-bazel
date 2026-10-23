@@ -1,112 +1,180 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import com.intellij.util.containers.Interner
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
+import consulo.util.interner.Interner;
+import org.jetbrains.bazel.label.Label;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Unique target identifier
- *
- * @property label Bazel target label
- * @property configuration Unique target configuration identifier can be empty
- */
-@ApiStatus.Internal
-data class WorkspaceTargetKey(
-  val label: Label,
-  val configuration: WorkspaceConfigurationId = WorkspaceConfigurationId.EMPTY,
-  val aspectIds: WorkspaceAspectIds = WorkspaceAspectIds.EMPTY,
-) {
-  override fun toString(): String = buildString {
-    append("TargetKey(")
-    append(label)
-    if (configuration != WorkspaceConfigurationId.EMPTY) {
-      append(", conf=").append(configuration)
+import java.util.List;
+import java.util.Objects;
+
+// consulo: holder class for the top-level declarations of upstream WorkspaceSnapshot.kt
+public final class WorkspaceSnapshot {
+    private WorkspaceSnapshot() {
     }
-    if (aspectIds != WorkspaceAspectIds.EMPTY) {
-      append(", aspects=").append(aspectIds.ids.joinToString(";"))
+
+    /**
+     * Unique target identifier
+     *
+     * @param label         Bazel target label
+     * @param configuration Unique target configuration identifier can be empty
+     */
+    public record WorkspaceTargetKey(
+        Label label,
+        WorkspaceConfigurationId configuration,
+        WorkspaceAspectIds aspectIds
+    ) {
+        public WorkspaceTargetKey(Label label) {
+            this(label, WorkspaceConfigurationId.EMPTY);
+        }
+
+        public WorkspaceTargetKey(Label label, WorkspaceConfigurationId configuration) {
+            this(label, configuration, WorkspaceAspectIds.EMPTY);
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder builder = new StringBuilder();
+            builder.append("TargetKey(");
+            builder.append(label);
+            if (!configuration.equals(WorkspaceConfigurationId.EMPTY)) {
+                builder.append(", conf=").append(configuration);
+            }
+            if (!aspectIds.equals(WorkspaceAspectIds.EMPTY)) {
+                builder.append(", aspects=").append(String.join(";", aspectIds.getIds()));
+            }
+            builder.append(')');
+            return builder.toString();
+        }
     }
-    append(')')
-  }
-}
 
-@ApiStatus.Internal
-@JvmInline
-value class WorkspaceAspectIds private constructor(val ids: List<String>) {
-  companion object {
-    val EMPTY: WorkspaceAspectIds = WorkspaceAspectIds(listOf())
+    // consulo: upstream @JvmInline value class
+    public static final class WorkspaceAspectIds {
+        private final List<String> myIds;
 
-    private val interner = Interner.createWeakInterner<WorkspaceAspectIds>()
+        private WorkspaceAspectIds(List<String> ids) {
+            myIds = ids;
+        }
 
-    fun of(aspectIds: List<String>): WorkspaceAspectIds =
-      when {
-        aspectIds.isEmpty() || aspectIds.all { it.isBlank() } -> EMPTY
-        else -> interner.intern(WorkspaceAspectIds(aspectIds.filterNot { it.isBlank() }))
-      }
-  }
-}
+        public List<String> getIds() {
+            return myIds;
+        }
 
-@ApiStatus.Internal
-@JvmInline
-value class WorkspaceConfigurationId private constructor(
-  val shortChecksum: String? = null
-) {
-  companion object {
-    val EMPTY: WorkspaceConfigurationId = WorkspaceConfigurationId(null)
+        public static final WorkspaceAspectIds EMPTY = new WorkspaceAspectIds(List.of());
 
-    // https://github.com/bazelbuild/bazel/blob/3dcf3fd7c59eaaf207ec342877d6e8978b903825/src/main/java/com/google/devtools/build/lib/analysis/config/BuildOptions.java#L263
-    private const val SHORT_ID_LENGTH: Int = 7
+        private static final Interner<WorkspaceAspectIds> INTERNER = Interner.createWeakInterner();
 
-    // RC: force `WorkspaceConfigurationId` normalization to avoid
-    //  unexpected failing equality checks, don't ask how I know...
-    fun of(configurationChecksum: String?): WorkspaceConfigurationId = when {
-      configurationChecksum.isNullOrBlank() -> EMPTY
+        public static WorkspaceAspectIds of(List<String> aspectIds) {
+            if (aspectIds.isEmpty() || aspectIds.stream().allMatch(String::isBlank)) {
+                return EMPTY;
+            }
+            else {
+                return INTERNER.intern(new WorkspaceAspectIds(aspectIds.stream().filter(it -> !it.isBlank()).toList()));
+            }
+        }
 
-      // normalize to short id
-      else -> {
-        WorkspaceConfigurationId(configurationChecksum.take(SHORT_ID_LENGTH))
-      }
+        @Override
+        public boolean equals(@Nullable Object o) {
+            return o instanceof WorkspaceAspectIds that && myIds.equals(that.myIds);
+        }
+
+        @Override
+        public int hashCode() {
+            return myIds.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return "WorkspaceAspectIds(ids=" + myIds + ")";
+        }
     }
-  }
+
+    // consulo: upstream @JvmInline value class
+    public static final class WorkspaceConfigurationId {
+        private final @Nullable String myShortChecksum;
+
+        private WorkspaceConfigurationId(@Nullable String shortChecksum) {
+            myShortChecksum = shortChecksum;
+        }
+
+        public @Nullable String getShortChecksum() {
+            return myShortChecksum;
+        }
+
+        public static final WorkspaceConfigurationId EMPTY = new WorkspaceConfigurationId(null);
+
+        // https://github.com/bazelbuild/bazel/blob/3dcf3fd7c59eaaf207ec342877d6e8978b903825/src/main/java/com/google/devtools/build/lib/analysis/config/BuildOptions.java#L263
+        private static final int SHORT_ID_LENGTH = 7;
+
+        // RC: force `WorkspaceConfigurationId` normalization to avoid
+        //  unexpected failing equality checks, don't ask how I know...
+        public static WorkspaceConfigurationId of(@Nullable String configurationChecksum) {
+            if (configurationChecksum == null || configurationChecksum.isBlank()) {
+                return EMPTY;
+            }
+
+            // normalize to short id
+            else {
+                return new WorkspaceConfigurationId(
+                    configurationChecksum.substring(0, Math.min(SHORT_ID_LENGTH, configurationChecksum.length()))
+                );
+            }
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            return o instanceof WorkspaceConfigurationId that && Objects.equals(myShortChecksum, that.myShortChecksum);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hashCode(myShortChecksum);
+        }
+
+        @Override
+        public String toString() {
+            return "WorkspaceConfigurationId(shortChecksum=" + myShortChecksum + ")";
+        }
+    }
+
+    // TODO: move `WorkspaceConfiguration` to backend after importer + connector merge
+
+    /**
+     * Definition of bazel configuration
+     *
+     * @param id        Unique configuration identifier
+     * @param summary   Configuration summary taken from BEP
+     * @param fragments Bazel configuration fragments
+     */
+    public record WorkspaceConfiguration(
+        WorkspaceConfigurationId id,
+        WorkspaceConfigurationSummary summary,
+        List<WorkspaceConfigurationFragment> fragments
+    ) {
+    }
+
+    /**
+     * Bazel configuration summary emitted from BEP message
+     *
+     * @param hash         Full configuration hash
+     * @param mnemonic     Platform mnemonic
+     * @param platformName Platform name
+     * @param cpu          Platform cpu
+     * @param isTool       Whether this configuration is used for building tools
+     */
+    public record WorkspaceConfigurationSummary(
+        String hash,
+        String mnemonic,
+        String platformName,
+        String cpu,
+        boolean isTool
+    ) {
+    }
+
+    /**
+     * Marker interface for bazel configuration fragments
+     * <p>
+     * <b>NOTE:</b> Each rule-specific fragment definition shall live in dedicated module
+     */
+    public interface WorkspaceConfigurationFragment {
+    }
 }
-
-// TODO: move `WorkspaceConfiguration` to backend after importer + connector merge
-
-/**
- * Definition of bazel configuration
- *
- * @property id Unique configuration identifier
- * @property summary Configuration summary taken from BEP
- * @property fragments Bazel configuration fragments
- */
-@ApiStatus.Internal
-data class WorkspaceConfiguration(
-  val id: WorkspaceConfigurationId,
-  val summary: WorkspaceConfigurationSummary,
-  val fragments: List<WorkspaceConfigurationFragment>,
-)
-
-/**
- * Bazel configuration summary emitted from BEP message
- *
- * @property hash Full configuration hash
- * @property mnemonic Platform mnemonic
- * @property platformName Platform name
- * @property cpu Platform cpu
- * @property isTool Whether this configuration is used for building tools
- */
-@ApiStatus.Internal
-data class WorkspaceConfigurationSummary(
-  val hash: String,
-  val mnemonic: String,
-  val platformName: String,
-  val cpu: String,
-  val isTool: Boolean,
-)
-
-/**
- * Marker interface for bazel configuration fragments
- *
- * **NOTE:** Each rule-specific fragment definition shall live in dedicated module
- */
-@ApiStatus.Internal
-interface WorkspaceConfigurationFragment

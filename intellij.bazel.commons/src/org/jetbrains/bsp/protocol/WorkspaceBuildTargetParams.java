@@ -1,20 +1,26 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.label.Label
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.label.Label;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-sealed interface WorkspaceBuildTargetSelector {
-  object AllTargets : WorkspaceBuildTargetSelector
+import java.util.List;
 
-  data class SpecificTargets(val targets: List<Label>) : WorkspaceBuildTargetSelector
+public record WorkspaceBuildTargetParams(
+    WorkspaceBuildTargetSelector selector,
+    boolean build,
+    @Nullable List<Label> allTargets, /* all known targets, if any, from first phase */
+    RepoMapping repoMapping,
+    TaskId taskId) {
+    public sealed interface WorkspaceBuildTargetSelector {
+        final class AllTargets implements WorkspaceBuildTargetSelector {
+            public static final AllTargets INSTANCE = new AllTargets();
+
+            private AllTargets() {
+            }
+        }
+
+        record SpecificTargets(List<Label> targets) implements WorkspaceBuildTargetSelector {
+        }
+    }
 }
-
-@ApiStatus.Internal
-data class WorkspaceBuildTargetParams(
-  val selector: WorkspaceBuildTargetSelector,
-  val build: Boolean,
-  val allTargets: List<Label>?, /* all known targets, if any, from first phase */
-  val repoMapping: RepoMapping,
-  val taskId: TaskId)

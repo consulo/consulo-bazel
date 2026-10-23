@@ -1,119 +1,200 @@
-package org.jetbrains.bazel.commons.symlinks
+package org.jetbrains.bazel.commons.symlinks;
 
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.util.SystemInfoRt
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants.WORKSPACE_FILE_NAMES
-import org.jetbrains.bazel.utils.isSymbolicLinkOrJunction
-import org.jetbrains.bazel.utils.isWindowsJunction
-import org.jetbrains.bazel.utils.readSymbolicLinkTarget
-import java.io.IOException
-import java.nio.file.FileVisitResult
-import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.name
-import kotlin.io.path.readSymbolicLink
-import kotlin.io.path.visitFileTree
+import consulo.logging.Logger;
+import consulo.platform.Platform;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.utils.PathUtil;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-object BazelSymlinksCalculator {
-  fun calculateBazelSymlinksToExclude(workspaceRoot: Path, bazelSymlinksScanMaxDepth: Int): Set<Path> {
-    if (bazelSymlinksScanMaxDepth <= 0) return emptySet()
-    // Don't scan non-Bazel projects for symlinks (because it can be quite slow).
-    if (WORKSPACE_FILE_NAMES.none { workspaceFileName -> workspaceRoot.resolve(workspaceFileName).exists() }) return emptySet()
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Consumer;
 
-    val symlinksToExclude = mutableSetOf<Path>()
-    workspaceRoot.visitSymlinksAndJunctions(bazelSymlinksScanMaxDepth) {
-      if (isBazelSymlink(workspaceRoot.name, it)) {
-        symlinksToExclude.add(it)
-      }
+import static org.jetbrains.bazel.commons.constants.Constants.WORKSPACE_FILE_NAMES;
+
+public final class BazelSymlinksCalculator {
+    private BazelSymlinksCalculator() {
     }
-    return symlinksToExclude
-  }
 
-  private fun Path.visitSymlinksAndJunctions(
-    maxDepth: Int,
-    block: (Path) -> Unit
-  ) = visitFileTree(maxDepth = maxDepth) {
-    onVisitFileFailed { file, exception ->
-      // The walk opens a junction as a directory, which fails when the junction's target is missing.
-      when {
-        file != this@visitSymlinksAndJunctions && file.isWindowsJunction -> block(file)
-        else -> log.warn("Failed to visit file $file", exception)
-      }
-      FileVisitResult.SKIP_SUBTREE
+    public static Set<Path> calculateBazelSymlinksToExclude(Path workspaceRoot, int bazelSymlinksScanMaxDepth) {
+        if (bazelSymlinksScanMaxDepth <= 0) {
+            return Set.of();
+        }
+        // Don't scan non-Bazel projects for symlinks (because it can be quite slow).
+        boolean noWorkspaceFile = true;
+        for (String workspaceFileName : WORKSPACE_FILE_NAMES) {
+            if (Files.exists(workspaceRoot.resolve(workspaceFileName))) {
+                noWorkspaceFile = false;
+                break;
+            }
+        }
+        if (noWorkspaceFile) {
+            return Set.of();
+        }
+
+        Set<Path> symlinksToExclude = new HashSet<>();
+        visitSymlinksAndJunctions(workspaceRoot, bazelSymlinksScanMaxDepth, it -> {
+            if (isBazelSymlink(name(workspaceRoot), it)) {
+                symlinksToExclude.add(it);
+            }
+        });
+        return symlinksToExclude;
     }
-    onPreVisitDirectory { directory, attributes ->
-      if (directory == this@visitSymlinksAndJunctions || !attributes.isSymbolicLinkOrJunction) FileVisitResult.CONTINUE
-      else {
-        block(directory)
-        // directory + isSymbolicLinkOrJunction means it's a junction, and we need to skip the subtree manually
-        FileVisitResult.SKIP_SUBTREE
-      }
+
+    private static void visitSymlinksAndJunctions(
+        Path receiver,
+        int maxDepth,
+        Consumer<Path> block
+    ) {
+        try {
+            Files.walkFileTree(receiver, EnumSet.noneOf(FileVisitOption.class), maxDepth, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exception) {
+                    // The walk opens a junction as a directory, which fails when the junction's target is missing.
+                    if (!file.equals(receiver) && PathUtil.isWindowsJunction(file)) {
+                        block.accept(file);
+                    }
+                    else {
+                        LOG.warn("Failed to visit file " + file, exception);
+                    }
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+
+                @Override
+                public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
+                    if (directory.equals(receiver) || !PathUtil.isSymbolicLinkOrJunction(attributes)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    else {
+                        block.accept(directory);
+                        // directory + isSymbolicLinkOrJunction means it's a junction, and we need to skip the subtree manually
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+                    if (PathUtil.isSymbolicLinkOrJunction(attributes)) {
+                        block.accept(file);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        catch (IOException e) {
+            // consulo: Kotlin visitFileTree() propagates the IOException unchecked
+            throw new UncheckedIOException(e);
+        }
     }
-    onVisitFile { file, attributes ->
-      if (attributes.isSymbolicLinkOrJunction) block(file)
-      FileVisitResult.CONTINUE
+
+    public static boolean isBazelSymlink(String workspaceRootName, Path symlink) {
+        boolean noSuffixMatches = true;
+        for (String it : bazelSymlinkSuffixes(workspaceRootName)) {
+            if (endsWith(name(symlink), it, IGNORE_CASE)) {
+                noSuffixMatches = false;
+                break;
+            }
+        }
+        if (noSuffixMatches) {
+            return false;
+        }
+        Path target = resolveSymlinkTarget(symlink);
+        if (target == null && PathUtil.isWindowsJunction(symlink)) {
+            // on Windows, we cannot check the junction's target if it does not exist
+            LOG.info("Unresolved junction " + symlink + " excluded");
+            return true;
+        }
+        else if (target == null) {
+            LOG.info("Symlink " + symlink + " not excluded - cannot resolve the symlink's target");
+            return false;
+        }
+        // Compare with [ignoreCase] and not with Path.equals, which respects the case on macOS
+        // although SystemInfoRt reports the macOS file system as case-insensitive.
+        else if (anyNameEquals(target, EXEC_ROOT, IGNORE_CASE)) {
+            // See https://bazel.build/remote/output-directories
+            // This string used to be "execroot/_main", but for projects without Bzlmod the relevant path is actually "execroot/<my-project>"
+            return true;
+        }
+        else {
+            LOG.info("Symlink " + symlink + " not excluded - symlink does not point to a Bazel output directory");
+            return false;
+        }
     }
-  }
 
-  fun isBazelSymlink(workspaceRootName: String, symlink: Path): Boolean {
-    if (bazelSymlinkSuffixes(workspaceRootName).none { symlink.name.endsWith(suffix = it, ignoreCase = ignoreCase) }) {
-      return false
+    public static @Nullable Path resolveSymlinkTarget(Path symlink) {
+        Path target = PathUtil.readSymbolicLinkTarget(symlink);
+        return target != null ? target : readJunctionTarget(symlink);
     }
-    val target = resolveSymlinkTarget(symlink)
-    return when {
-      target == null && symlink.isWindowsJunction -> {
-        // on Windows, we cannot check the junction's target if it does not exist
-        log.info("Unresolved junction $symlink excluded")
-        true
-      }
-      target == null -> {
-        log.info("Symlink $symlink not excluded - cannot resolve the symlink's target")
-        false
-      }
-      // Compare with [ignoreCase] and not with Path.equals, which respects the case on macOS
-      // although SystemInfoRt reports the macOS file system as case-insensitive.
-      target.any { it.name.equals(EXEC_ROOT, ignoreCase = ignoreCase) } -> {
-        // See https://bazel.build/remote/output-directories
-        // This string used to be "execroot/_main", but for projects without Bzlmod the relevant path is actually "execroot/<my-project>"
-        true
-      }
-      else -> {
-        log.info("Symlink $symlink not excluded - symlink does not point to a Bazel output directory")
-        false
-      }
+
+    /**
+     * Reads the target of a Windows junction.
+     * <p>
+     * {@link Files#readSymbolicLink} rejects a junction, because a junction carries the `IO_REPARSE_TAG_MOUNT_POINT` reparse tag
+     * and not `IO_REPARSE_TAG_SYMLINK`. {@link Path#toRealPath} resolves a junction, but it needs the target to exist.
+     */
+    private static @Nullable Path readJunctionTarget(Path junction) {
+        if (!PathUtil.isWindowsJunction(junction)) {
+            return null;
+        }
+        try {
+            return junction.toRealPath();
+        }
+        catch (IOException e) {
+            return null;
+        }
     }
-  }
 
-  fun resolveSymlinkTarget(symlink: Path): Path? = symlink.readSymbolicLinkTarget() ?: readJunctionTarget(symlink)
-
-  /**
-   * Reads the target of a Windows junction.
-   *
-   * [readSymbolicLink] rejects a junction, because a junction carries the `IO_REPARSE_TAG_MOUNT_POINT` reparse tag
-   * and not `IO_REPARSE_TAG_SYMLINK`. [Path.toRealPath] resolves a junction, but it needs the target to exist.
-   */
-  private fun readJunctionTarget(junction: Path): Path? {
-    if (!junction.isWindowsJunction) return null
-    return try {
-      junction.toRealPath()
+    public static boolean isBazelSymlink(String workspaceRootName, VirtualFile file) {
+        // consulo: IntelliJ VirtualFile.toNioPathOrNull()
+        Path path;
+        try {
+            path = file.toNioPath();
+        }
+        catch (UnsupportedOperationException e) {
+            return false;
+        }
+        return isBazelSymlink(workspaceRootName, path);
     }
-    catch (_: IOException) {
-      null
+
+    private static List<String> bazelSymlinkSuffixes(String workspaceRootName) {
+        return List.of("bin", "out", "testlogs", workspaceRootName);
     }
-  }
 
-  fun isBazelSymlink(workspaceRootName: String, file: VirtualFile): Boolean =
-    file.toNioPathOrNull()?.let { isBazelSymlink(workspaceRootName, it) } == true
+    // consulo: Kotlin Path.name
+    private static String name(Path path) {
+        Path fileName = path.getFileName();
+        return fileName == null ? "" : fileName.toString();
+    }
 
-  private fun bazelSymlinkSuffixes(workspaceRootName: String): List<String> = listOf("bin", "out", "testlogs", workspaceRootName)
+    // consulo: Kotlin String.endsWith(suffix, ignoreCase)
+    private static boolean endsWith(String value, String suffix, boolean ignoreCase) {
+        return value.regionMatches(ignoreCase, value.length() - suffix.length(), suffix, 0, suffix.length());
+    }
 
-  private const val EXEC_ROOT = "execroot"
+    // consulo: Kotlin target.any { it.name.equals(EXEC_ROOT, ignoreCase = ignoreCase) }
+    private static boolean anyNameEquals(Path path, String expected, boolean ignoreCase) {
+        for (Path it : path) {
+            String name = name(it);
+            if (ignoreCase ? name.equalsIgnoreCase(expected) : name.equals(expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
-  private val ignoreCase = !SystemInfoRt.isFileSystemCaseSensitive
+    private static final String EXEC_ROOT = "execroot";
 
-  private val log = logger<BazelSymlinksCalculator>()
+    private static final boolean IGNORE_CASE = !Platform.current().fs().isCaseSensitive();
+
+    private static final Logger LOG = Logger.getInstance(BazelSymlinksCalculator.class);
 }

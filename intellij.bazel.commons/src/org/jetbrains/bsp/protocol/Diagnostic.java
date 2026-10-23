@@ -1,16 +1,20 @@
-package org.jetbrains.bazel.server.diagnostics
+package org.jetbrains.bazel.server.diagnostics;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bsp.protocol.DiagnosticSeverity
-import org.jetbrains.bsp.protocol.Position
-import java.nio.file.Path
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bsp.protocol.DiagnosticSeverity;
+import org.jetbrains.bsp.protocol.Position;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class Diagnostic(
-  val position: Position,
-  val message: String,
-  val fileLocation: Path?,
-  val targetLabel: Label,
-  val level: DiagnosticSeverity? = null,
-)
+import java.nio.file.Path;
+
+public record Diagnostic(
+    Position position,
+    String message,
+    @Nullable Path fileLocation,
+    Label targetLabel,
+    @Nullable DiagnosticSeverity level
+) {
+    public Diagnostic(Position position, String message, @Nullable Path fileLocation, Label targetLabel) {
+        this(position, message, fileLocation, targetLabel, null);
+    }
+}

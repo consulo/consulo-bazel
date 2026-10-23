@@ -1,10 +1,15 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import java.nio.file.Path
+import java.nio.file.Path;
+import java.util.List;
 
-@ApiStatus.Internal
-data class WorkspaceDirectoriesResult(
-  val includedDirectories: List<Path>,
-  val excludedDirectories: List<Path>
-)
+public final class WorkspaceDirectories {
+    private WorkspaceDirectories() {
+    }
+
+    public record WorkspaceDirectoriesResult(
+        List<Path> includedDirectories,
+        List<Path> excludedDirectories
+    ) {
+    }
+}

@@ -1,19 +1,15 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-
-@ApiStatus.Internal
-data class Position(
-  // 0-based
-  val line: Int,
-  // 0-based
-  val character: Int
+public record Position(
+    // 0-based
+    int line,
+    // 0-based
+    int character
 ) {
-  companion object {
-    val NONE: Position = Position(-1, -1)
+    public static final Position NONE = new Position(-1, -1);
 
     // Converts 1-based numbers to 0-based
-    fun fromHumanReadable(line: Int, character: Int): Position =
-      Position(line - 1, character - 1)
-  }
+    public static Position fromHumanReadable(int line, int character) {
+        return new Position(line - 1, character - 1);
+    }
 }

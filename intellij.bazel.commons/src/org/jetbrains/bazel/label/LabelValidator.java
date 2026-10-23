@@ -1,16 +1,17 @@
-package org.jetbrains.bazel.label
+package org.jetbrains.bazel.label;
 
-import org.jetbrains.annotations.ApiStatus
+import java.util.regex.Pattern;
 
-@ApiStatus.Internal
-object LabelValidator {
+public final class LabelValidator {
+    private LabelValidator() {
+    }
 
-  /**
-   * Follows the Bazel doc - https://bazel.build/concepts/labels#target-names
-   */
-  fun isTargetNameValid(targetName: String): Boolean {
-    return targetName.isNotEmpty() && VALID_TARGET_NAME_PATTERN.matches(targetName)
-  }
+    /**
+     * Follows the Bazel doc - https://bazel.build/concepts/labels#target-names
+     */
+    public static boolean isTargetNameValid(String targetName) {
+        return !targetName.isEmpty() && VALID_TARGET_NAME_PATTERN.matcher(targetName).matches();
+    }
 
-  private val VALID_TARGET_NAME_PATTERN = Regex("""[a-zA-Z0-9!%\-@^_"#$&'()*+,;<=>?\[\]{}|~/.]+""")
+    private static final Pattern VALID_TARGET_NAME_PATTERN = Pattern.compile("[a-zA-Z0-9!%\\-@^_\"#$&'()*+,;<=>?\\[\\]{}|~/.]+");
 }

@@ -1,53 +1,108 @@
-package org.jetbrains.bazel.testing
+package org.jetbrains.bazel.testing;
 
-import org.jetbrains.annotations.ApiStatus
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class BazelTestDetails(
-  val displayName: String,
-  val isSuite: Boolean,
-  val classname: String?,
-  val file: String?,
-  val oneBasedLine: Int?,
-  val parentSuiteNames: List<String>,
+import java.util.List;
+
+public record BazelTestDetails(
+    String displayName,
+    boolean isSuite,
+    @Nullable String classname,
+    @Nullable String file,
+    @Nullable Integer oneBasedLine,
+    List<String> parentSuiteNames
 ) {
-  companion object {
-    fun testCase(name: String): Builder =
-      Builder(name, isSuite = false)
+    public static Builder testCase(String name) {
+        return new Builder(name, false);
+    }
 
-    fun testSuite(name: String): Builder =
-      Builder(name, isSuite = true)
-  }
+    public static Builder testSuite(String name) {
+        return new Builder(name, true);
+    }
 
-  class Builder(val name: String, val isSuite: Boolean) {
-    var classname: String? = null
-    var file: String? = null
-    var oneBasedLine: Int? = null
-    var parentSuiteNames: List<String> = emptyList()
+    public static class Builder {
+        private final String myName;
+        private final boolean myIsSuite;
+        private @Nullable String myClassname = null;
+        private @Nullable String myFile = null;
+        private @Nullable Integer myOneBasedLine = null;
+        private List<String> myParentSuiteNames = List.of();
 
-    fun withClassname(classname: String): Builder =
-      apply { this.classname = classname }
+        public Builder(String name, boolean isSuite) {
+            myName = name;
+            myIsSuite = isSuite;
+        }
 
-    fun withFileAndZeroBasedLine(file: String?, line: Int?): Builder =
-      apply {
-        this.file = file
-        this.oneBasedLine = line?.let { it + 1 }
-      }
+        public String getName() {
+            return myName;
+        }
 
-    fun withParentSuites(parentSuiteNames: List<String>): Builder =
-      apply { this.parentSuiteNames = parentSuiteNames }
+        public boolean isSuite() {
+            return myIsSuite;
+        }
 
-    fun withParentSuite(parentSuiteName: String): Builder =
-      apply { this.parentSuiteNames = listOf(parentSuiteName) }
+        public @Nullable String getClassname() {
+            return myClassname;
+        }
 
-    fun build(): BazelTestDetails =
-      BazelTestDetails(
-        displayName = name,
-        isSuite = isSuite,
-        classname = classname,
-        file = file,
-        oneBasedLine = oneBasedLine,
-        parentSuiteNames = parentSuiteNames,
-      )
-  }
+        public void setClassname(@Nullable String classname) {
+            myClassname = classname;
+        }
+
+        public @Nullable String getFile() {
+            return myFile;
+        }
+
+        public void setFile(@Nullable String file) {
+            myFile = file;
+        }
+
+        public @Nullable Integer getOneBasedLine() {
+            return myOneBasedLine;
+        }
+
+        public void setOneBasedLine(@Nullable Integer oneBasedLine) {
+            myOneBasedLine = oneBasedLine;
+        }
+
+        public List<String> getParentSuiteNames() {
+            return myParentSuiteNames;
+        }
+
+        public void setParentSuiteNames(List<String> parentSuiteNames) {
+            myParentSuiteNames = parentSuiteNames;
+        }
+
+        public Builder withClassname(String classname) {
+            myClassname = classname;
+            return this;
+        }
+
+        public Builder withFileAndZeroBasedLine(@Nullable String file, @Nullable Integer line) {
+            myFile = file;
+            myOneBasedLine = line != null ? line + 1 : null;
+            return this;
+        }
+
+        public Builder withParentSuites(List<String> parentSuiteNames) {
+            myParentSuiteNames = parentSuiteNames;
+            return this;
+        }
+
+        public Builder withParentSuite(String parentSuiteName) {
+            myParentSuiteNames = List.of(parentSuiteName);
+            return this;
+        }
+
+        public BazelTestDetails build() {
+            return new BazelTestDetails(
+                myName,
+                myIsSuite,
+                myClassname,
+                myFile,
+                myOneBasedLine,
+                myParentSuiteNames
+            );
+        }
+    }
 }

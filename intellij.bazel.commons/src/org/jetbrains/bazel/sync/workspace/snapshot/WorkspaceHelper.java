@@ -1,34 +1,56 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceAspectIds;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceConfiguration;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceConfigurationId;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-fun IntellijIdeInfo.TargetKey.toWorkspaceTargetKey(): WorkspaceTargetKey = WorkspaceTargetKey(
-  label = Label.parse(this.label),
-  configuration = WorkspaceConfigurationId.of(this.configuration),
-  aspectIds = WorkspaceAspectIds.of(this.aspectIdsList),
-)
+import java.util.ArrayList;
+import java.util.List;
 
-@get:ApiStatus.Internal
-val BuildEventStreamProtos.BuildEventId.workspaceTargetKey: WorkspaceTargetKey?
-  get() {
-    if (!this.hasTargetCompleted()) {
-      return null
+public final class WorkspaceHelper {
+    private WorkspaceHelper() {
     }
-    return WorkspaceTargetKey(
-      label = Label.parseOrNull(targetCompleted.label) ?: return null,
-      configuration = WorkspaceConfigurationId.of(targetCompleted.configuration.id),
-      aspectIds = WorkspaceAspectIds.of(listOf(targetCompleted.aspect)),
-    )
-  }
 
-@get:ApiStatus.Internal
-val WorkspaceAspectIds.labelIds: List<Label>
-  get() = ids.mapNotNull { Label.parseOrNull(it) }
+    public static WorkspaceTargetKey toWorkspaceTargetKey(IntellijIdeInfo.TargetKey receiver) {
+        return new WorkspaceTargetKey(
+            Label.parse(receiver.getLabel()),
+            WorkspaceConfigurationId.of(receiver.getConfiguration()),
+            WorkspaceAspectIds.of(receiver.getAspectIdsList())
+        );
+    }
 
-@get:ApiStatus.Internal
-val WorkspaceConfiguration.isExecConfig: Boolean
-  get() = summary.mnemonic.endsWith("-exec") || summary.mnemonic == "exec"
+    public static @Nullable WorkspaceTargetKey getWorkspaceTargetKey(BuildEventStreamProtos.BuildEventId receiver) {
+        if (!receiver.hasTargetCompleted()) {
+            return null;
+        }
+        Label label = Label.parseOrNull(receiver.getTargetCompleted().getLabel());
+        if (label == null) {
+            return null;
+        }
+        return new WorkspaceTargetKey(
+            label,
+            WorkspaceConfigurationId.of(receiver.getTargetCompleted().getConfiguration().getId()),
+            WorkspaceAspectIds.of(List.of(receiver.getTargetCompleted().getAspect()))
+        );
+    }
+
+    public static List<Label> getLabelIds(WorkspaceAspectIds receiver) {
+        List<Label> result = new ArrayList<>();
+        for (String it : receiver.getIds()) {
+            Label label = Label.parseOrNull(it);
+            if (label != null) {
+                result.add(label);
+            }
+        }
+        return result;
+    }
+
+    public static boolean isExecConfig(WorkspaceConfiguration receiver) {
+        return receiver.summary().mnemonic().endsWith("-exec") || receiver.summary().mnemonic().equals("exec");
+    }
+}

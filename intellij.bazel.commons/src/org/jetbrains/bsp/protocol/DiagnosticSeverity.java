@@ -1,11 +1,19 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
+public enum DiagnosticSeverity {
+    ERROR(1),
+    WARNING(2),
+    INFORMATION(3),
+    HINT(4),
+    ;
 
-@ApiStatus.Internal
-enum class DiagnosticSeverity(val value: Int) {
-  ERROR(1),
-  WARNING(2),
-  INFORMATION(3),
-  HINT(4),
+    private final int myValue;
+
+    DiagnosticSeverity(int value) {
+        myValue = value;
+    }
+
+    public int getValue() {
+        return myValue;
+    }
 }

@@ -1,7 +1,7 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class RunResult(val taskId: TaskId, val statusCode: BazelStatus, val stdout: String?)
+public record RunResult(TaskId taskId, BazelStatus statusCode, @Nullable String stdout) {
+}

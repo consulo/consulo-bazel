@@ -1,3 +1,6 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-internal data class NonModuleTargetsResult(val nonModuleTargets: List<BuildTarget>)
+import java.util.List;
+
+record NonModuleTargetsResult(List<BuildTarget> nonModuleTargets) {
+}

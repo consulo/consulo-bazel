@@ -1,69 +1,83 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bazel.label.DependencyLabel
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.label.DependencyLabel;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BuildTarget {
-  val key: WorkspaceTargetKey
-  val kind: TargetKind
-  val loaded: TargetLoadOptions
+import java.util.List;
+import java.util.stream.Stream;
 
-  // TargetSection.INFO
-  val generatorName: String?
-  val isTestOnly: Boolean
-  val tags: List<String>
-  val workspaceName: String
+public interface BuildTarget {
+    WorkspaceTargetKey getKey();
 
-  // TargetSection.DEPS
-  val dependencies: List<DependencyLabel>
+    TargetKind getKind();
 
-  // TargetSection.FILE_SETS
-  val sources: OutputLocationCollection
-  val resources: OutputLocationCollection
+    TargetLoadOptions getLoaded();
 
-  // language-specific data, selected by TargetLoadOptions.targetData
-  val data: List<BuildTargetData>
+    // TargetSection.INFO
+    @Nullable String getGeneratorName();
+
+    boolean isTestOnly();
+
+    List<String> getTags();
+
+    String getWorkspaceName();
+
+    // TargetSection.DEPS
+    List<DependencyLabel> getDependencies();
+
+    // TargetSection.FILE_SETS
+    OutputLocationCollection getSources();
+
+    OutputLocationCollection getResources();
+
+    // language-specific data, selected by TargetLoadOptions.targetData
+    List<BuildTargetData> getData();
+
+    static Label getId(BuildTarget receiver) {
+        return receiver.getKey().label();
+    }
+
+    /**
+     * whether this target already carries every section, i.e. reading it triggers no further loading
+     */
+    static boolean isFull(BuildTarget receiver) {
+        return receiver.getLoaded().equals(TargetLoadOptions.ALL);
+    }
+
+    static <T extends BuildTargetData> @Nullable T data(BuildTarget receiver, Class<T> type) {
+        return receiver.getData().stream().filter(type::isInstance).findFirst().map(type::cast).orElse(null);
+    }
+
+    interface BuildTargetData {
+    }
+
+    enum StrictDependencyCheckedType {
+        OFF,
+        WARNING,
+        ERROR,
+    }
+
+    // consulo: upstream is `inline fun <reified Data>`, the type is passed explicitly
+    static <Data> @Nullable Data extractData(BuildTarget receiver, Class<Data> type) {
+        List<Data> filtered = receiver.getData().stream().filter(type::isInstance).map(type::cast).toList();
+        return filtered.size() == 1 ? filtered.get(0) : null;
+    }
+
+    /**
+     * From Bazel doc (https://bazel.build/reference/be/common-definitions)
+     * manual tag will exclude the target from expansion of target pattern wildcards (..., :*, :all, etc.) and test_suite rules which do not
+     * list the test explicitly when computing the set of top-level targets to build/run for the build, test, and coverage commands
+     */
+    static boolean isManual(BuildTarget receiver) {
+        return receiver.getTags().contains(BuildTargetTag.MANUAL);
+    }
+
+    static Stream<OutputLocation> nonGeneratedSources(BuildTarget receiver) {
+        return receiver.getSources().getOutputLocations().filter(OutputLocation::isSource);
+    }
 }
-
-@get:ApiStatus.Internal
-val BuildTarget.id: Label
-  get() = key.label
-
-/** whether this target already carries every section, i.e. reading it triggers no further loading */
-@get:ApiStatus.Internal
-val BuildTarget.isFull: Boolean
-  get() = loaded == TargetLoadOptions.ALL
-
-@ApiStatus.Internal
-fun <T : BuildTargetData> BuildTarget.data(type: Class<T>): T? =
-  data.firstOrNull { type.isInstance(it) }?.let { type.cast(it) }
-
-@ApiStatus.Internal
-interface BuildTargetData
-
-@ApiStatus.Internal
-enum class StrictDependencyCheckedType {
-  OFF,
-  WARNING,
-  ERROR,
-}
-
-@ApiStatus.Internal
-inline fun <reified Data> BuildTarget.extractData(): Data? = this.data.filterIsInstance<Data>().singleOrNull()
-
-/**
- * From Bazel doc (https://bazel.build/reference/be/common-definitions)
- * manual tag will exclude the target from expansion of target pattern wildcards (..., :*, :all, etc.) and test_suite rules which do not
- * list the test explicitly when computing the set of top-level targets to build/run for the build, test, and coverage commands
- */
-@get:ApiStatus.Internal
-val BuildTarget.isManual: Boolean
-  get() = BuildTargetTag.MANUAL in tags
-
-@ApiStatus.Internal
-fun BuildTarget.nonGeneratedSources(): Sequence<OutputLocation> = sources.getOutputLocations().filter { it.isSource }

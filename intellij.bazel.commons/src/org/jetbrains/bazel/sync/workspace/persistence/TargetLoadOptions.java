@@ -1,56 +1,105 @@
-package org.jetbrains.bazel.sync.workspace.persistence
+package org.jetbrains.bazel.sync.workspace.persistence;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.BuildTargetData
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Independently loadable section of a target
- */
-@ApiStatus.Internal
-enum class TargetSection {
-  // generator name, `isTestOnly`, tags
-  INFO,
-
-  // target deps
-  DEPS,
-
-  // file collections like: sources, generated sources, etc.
-  FILE_SETS,
-}
-
-@ApiStatus.Internal
-sealed interface BuildTargetLoadHint {
-  data object All : BuildTargetLoadHint
-  data object None : BuildTargetLoadHint
-  data class Subset(val data: Set<Class<out BuildTargetData>>) : BuildTargetLoadHint
-}
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Describes which sections of a target are loaded eagerly.
  * Sections not loaded eagerly will be loaded at access time.
  *
- * @property sections Eagerly loaded sections, everything not listed here is loaded lazily
- * @property targetData Select what [BuildTargetData] types to load eagerly
+ * @param sections   Eagerly loaded sections, everything not listed here is loaded lazily
+ * @param targetData Select what {@link BuildTargetData} types to load eagerly
  */
-@ApiStatus.Internal
-data class TargetLoadOptions(
-  val sections: Set<TargetSection>,
-  val targetData: BuildTargetLoadHint,
+public record TargetLoadOptions(
+    Set<TargetSection> sections,
+    BuildTargetLoadHint targetData
 ) {
-  companion object {
+    /**
+     * Independently loadable section of a target
+     */
+    public enum TargetSection {
+        // generator name, `isTestOnly`, tags
+        INFO,
+
+        // target deps
+        DEPS,
+
+        // file collections like: sources, generated sources, etc.
+        FILE_SETS,
+    }
+
+    public sealed interface BuildTargetLoadHint permits BuildTargetLoadHint.All, BuildTargetLoadHint.None, BuildTargetLoadHint.Subset {
+        final class All implements BuildTargetLoadHint {
+            public static final All INSTANCE = new All();
+
+            private All() {
+            }
+
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof All;
+            }
+
+            @Override
+            public int hashCode() {
+                return All.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "All";
+            }
+        }
+
+        final class None implements BuildTargetLoadHint {
+            public static final None INSTANCE = new None();
+
+            private None() {
+            }
+
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof None;
+            }
+
+            @Override
+            public int hashCode() {
+                return None.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "None";
+            }
+        }
+
+        record Subset(Set<Class<? extends BuildTargetData>> data) implements BuildTargetLoadHint {
+        }
+    }
+
     // entire target
-    val ALL: TargetLoadOptions = TargetLoadOptions(TargetSection.entries.toSet(), BuildTargetLoadHint.All)
+    public static final TargetLoadOptions ALL = new TargetLoadOptions(EnumSet.allOf(TargetSection.class), BuildTargetLoadHint.All.INSTANCE);
 
     // only target summary
-    val SUMMARY: TargetLoadOptions = TargetLoadOptions(setOf(TargetSection.INFO), BuildTargetLoadHint.None)
+    public static final TargetLoadOptions SUMMARY = new TargetLoadOptions(Set.of(TargetSection.INFO), BuildTargetLoadHint.None.INSTANCE);
 
     // only target key
-    val MINIMAL: TargetLoadOptions = TargetLoadOptions(setOf(), BuildTargetLoadHint.None)
-  }
-}
+    public static final TargetLoadOptions MINIMAL = new TargetLoadOptions(Set.of(), BuildTargetLoadHint.None.INSTANCE);
 
-@ApiStatus.Internal
-fun TargetLoadOptions(
-  vararg sections: TargetSection,
-  targetData: BuildTargetLoadHint = BuildTargetLoadHint.None,
-): TargetLoadOptions = TargetLoadOptions(sections.toSet(), targetData)
+    // consulo: upstream top-level factory function TargetLoadOptions(vararg sections, targetData = BuildTargetLoadHint.None)
+    public TargetLoadOptions(TargetSection... sections) {
+        this(BuildTargetLoadHint.None.INSTANCE, sections);
+    }
+
+    // consulo: varargs must be last, so targetData comes first
+    public TargetLoadOptions(BuildTargetLoadHint targetData, TargetSection... sections) {
+        this(new LinkedHashSet<>(Arrays.asList(sections)), targetData);
+    }
+}

@@ -1,20 +1,21 @@
-package org.jetbrains.bazel.ignore
+package org.jetbrains.bazel.ignore;
 
-import com.intellij.openapi.components.service
-import org.jetbrains.annotations.ApiStatus
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import java.nio.file.Path
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
 
-@ApiStatus.Internal
-interface BazelIgnoreService {
-  fun isIgnored(path: Path): Boolean
+import java.nio.file.Path;
 
-  fun isIgnored(file: VirtualFile): Boolean = isIgnored(Path.of(file.path))
+@ServiceAPI(ComponentScope.PROJECT)
+public interface BazelIgnoreService {
+    boolean isIgnored(Path path);
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): BazelIgnoreService = project.service<BazelIgnoreService>()
-  }
+    default boolean isIgnored(VirtualFile file) {
+        return isIgnored(Path.of(file.getPath()));
+    }
+
+    static BazelIgnoreService getInstance(Project project) {
+        return project.getInstance(BazelIgnoreService.class);
+    }
 }

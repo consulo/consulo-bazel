@@ -1,17 +1,23 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import kotlinx.coroutines.CompletableDeferred
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
+import org.jetbrains.bazel.label.Label;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class RunParams(
-  val taskId: TaskId,
-  val target: Label,
-  val checkVisibility: Boolean,
-  val arguments: List<String> = emptyList(),
-  val environmentVariables: Map<String, String> = emptyMap(),
-  val additionalBazelParams: List<String> = emptyList(),
-  val pidDeferred: CompletableDeferred<Long?>? = null,
-  val captureStdout: Boolean = false,
-)
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+public record RunParams(
+    TaskId taskId,
+    Label target,
+    boolean checkVisibility,
+    List<String> arguments,
+    Map<String, String> environmentVariables,
+    List<String> additionalBazelParams,
+    @Nullable CompletableFuture<@Nullable Long> pidDeferred,
+    boolean captureStdout
+) {
+    public RunParams(TaskId taskId, Label target, boolean checkVisibility) {
+        this(taskId, target, checkVisibility, List.of(), Map.of(), List.of(), null, false);
+    }
+}

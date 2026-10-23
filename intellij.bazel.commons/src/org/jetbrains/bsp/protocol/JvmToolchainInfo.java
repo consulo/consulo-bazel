@@ -1,12 +1,11 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
+import java.util.List;
 
 // Underscores needed because this class is used with Gson to parse Bazel's output
-@Suppress("PropertyName")
-@ApiStatus.Internal
-data class JvmToolchainInfo(
-  val java_home: String,
-  val toolchain_path: String,
-  val jvm_opts: List<String>,
-)
+public record JvmToolchainInfo(
+    String java_home,
+    String toolchain_path,
+    List<String> jvm_opts
+) {
+}

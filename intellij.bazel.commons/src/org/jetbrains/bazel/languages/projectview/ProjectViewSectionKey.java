@@ -1,7 +1,21 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import com.intellij.openapi.util.NlsSafe
-import org.jetbrains.annotations.ApiStatus
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class ProjectViewSectionKey<T>(@NlsSafe val name: String, val default: T)
+public class ProjectViewSectionKey<T extends @Nullable Object> {
+    private final String myName;
+    private final T myDefault;
+
+    public ProjectViewSectionKey(String name, T defaultValue) {
+        myName = name;
+        myDefault = defaultValue;
+    }
+
+    public String getName() {
+        return myName;
+    }
+
+    public T getDefault() {
+        return myDefault;
+    }
+}

@@ -1,7 +1,12 @@
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-internal data class LibraryArtifact(
-  val interfaceJar: ArtifactLocation?,
-  val classJar: ArtifactLocation?,
-  val sourceJars: List<ArtifactLocation>,
-)
+import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+
+record LibraryArtifact(
+    @Nullable ArtifactLocation interfaceJar,
+    @Nullable ArtifactLocation classJar,
+    List<ArtifactLocation> sourceJars
+) {
+}

@@ -13,41 +13,78 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import java.nio.file.Paths
+import com.google.common.collect.ComparisonChain;
+
+import java.nio.file.Paths;
 
 /** Represents a blaze-produced artifact.  */
-internal class ArtifactLocation
-  private constructor(
-    val rootExecutionPathFragment: String,
+class ArtifactLocation implements Comparable<ArtifactLocation> {
+    private final String myRootExecutionPathFragment;
+    private final String myRelativePath;
+    private final boolean myIsSource;
+    private final boolean myIsExternal;
+
+    private ArtifactLocation(
+        String rootExecutionPathFragment,
+        String relativePath,
+        boolean isSource,
+        boolean isExternal
+    ) {
+        myRootExecutionPathFragment = rootExecutionPathFragment;
+        myRelativePath = relativePath;
+        myIsSource = isSource;
+        myIsExternal = isExternal;
+    }
+
+    public String getRootExecutionPathFragment() {
+        return myRootExecutionPathFragment;
+    }
+
     /**
      * The root-relative path. For external workspace artifacts, this is relative to the external
      * workspace root.
      */
-    val relativePath: String,
-    val isSource: Boolean,
-    val isExternal: Boolean,
-  ) : Comparable<ArtifactLocation> {
-    val isGenerated: Boolean
-      get() = !this.isSource
+    public String getRelativePath() {
+        return myRelativePath;
+    }
 
-    val isMainWorkspaceSourceArtifact: Boolean
-      /** Returns false for generated or external artifacts  */
-      get() = this.isSource && !this.isExternal
+    public boolean isSource() {
+        return myIsSource;
+    }
 
-    val executionRootRelativePath: String
-      /** For main-workspace source artifacts, this is simply the workspace-relative path.  */
-      get() = Paths.get(this.rootExecutionPathFragment, this.relativePath).toString()
+    public boolean isExternal() {
+        return myIsExternal;
+    }
 
-    override fun toString(): String = this.executionRootRelativePath
+    public boolean isGenerated() {
+        return !this.isSource();
+    }
 
-    override fun compareTo(o: ArtifactLocation): Int =
-      com.google.common.collect.ComparisonChain
-        .start()
-        .compare(this.rootExecutionPathFragment, o.rootExecutionPathFragment)
-        .compare(this.relativePath, o.relativePath)
-        .compareFalseFirst(this.isSource, o.isSource)
-        .compareFalseFirst(this.isExternal, o.isExternal)
-        .result()
-  }
+    /** Returns false for generated or external artifacts  */
+    public boolean isMainWorkspaceSourceArtifact() {
+        return this.isSource() && !this.isExternal();
+    }
+
+    /** For main-workspace source artifacts, this is simply the workspace-relative path.  */
+    public String getExecutionRootRelativePath() {
+        return Paths.get(this.getRootExecutionPathFragment(), this.getRelativePath()).toString();
+    }
+
+    @Override
+    public String toString() {
+        return this.getExecutionRootRelativePath();
+    }
+
+    @Override
+    public int compareTo(ArtifactLocation o) {
+        return ComparisonChain
+            .start()
+            .compare(this.getRootExecutionPathFragment(), o.getRootExecutionPathFragment())
+            .compare(this.getRelativePath(), o.getRelativePath())
+            .compareFalseFirst(this.isSource(), o.isSource())
+            .compareFalseFirst(this.isExternal(), o.isExternal())
+            .result();
+    }
+}

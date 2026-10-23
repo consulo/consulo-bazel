@@ -13,126 +13,126 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import com.intellij.openapi.util.io.FileUtil
-import org.jetbrains.annotations.ApiStatus
-import java.io.File
-import java.nio.file.Path
-import kotlin.io.path.Path
-import kotlin.io.path.absolute
+import consulo.util.io.FileUtil;
+import org.jspecify.annotations.Nullable;
+
+import java.io.File;
+import java.nio.file.Path;
 
 /**
  * An absolute or relative path returned from Bazel. If it is a relative path, it is relative to the
  * execution root.
  */
-@ApiStatus.Internal
-data class ExecutionRootPath(val absoluteOrRelativePath: Path) {
-  constructor(path: String) : this(Path(path))
-
-  val isAbsolute: Boolean
-    get() = absoluteOrRelativePath.isAbsolute
-
-  fun getPathRootedAt(absoluteRoot: Path): Path =
-    if (absoluteOrRelativePath.isAbsolute) {
-      absoluteOrRelativePath
-    } else {
-      absoluteRoot.resolve(absoluteOrRelativePath)
+public record ExecutionRootPath(Path absoluteOrRelativePath) {
+    public ExecutionRootPath(String path) {
+        this(Path.of(path));
     }
 
-  companion object {
+    public boolean isAbsolute() {
+        return absoluteOrRelativePath.isAbsolute();
+    }
+
+    public Path getPathRootedAt(Path absoluteRoot) {
+        if (absoluteOrRelativePath.isAbsolute()) {
+            return absoluteOrRelativePath;
+        }
+        else {
+            return absoluteRoot.resolve(absoluteOrRelativePath);
+        }
+    }
+
     /**
-     * Returns the relative [ExecutionRootPath] if `root` is an ancestor of `path`
+     * Returns the relative {@link ExecutionRootPath} if `root` is an ancestor of `path`
      * otherwise returns null.
      */
-    @JvmStatic
-    fun createAncestorRelativePath(root: Path, path: Path): ExecutionRootPath? {
-      // We cannot find the relative path between an absolute and relative path
-      if (root.isAbsolute != path.isAbsolute) {
-        return null
-      }
+    public static @Nullable ExecutionRootPath createAncestorRelativePath(Path root, Path path) {
+        // We cannot find the relative path between an absolute and relative path
+        if (root.isAbsolute() != path.isAbsolute()) {
+            return null;
+        }
 
-      val rootAbs = root.absolute()
-      val pathAbs = path.absolute()
+        Path rootAbs = root.toAbsolutePath();
+        Path pathAbs = path.toAbsolutePath();
 
-      if (!isAncestor(rootAbs.toString(), pathAbs.toString(), false)) {
-        return null
-      }
+        if (!isAncestor(rootAbs.toString(), pathAbs.toString(), false)) {
+            return null;
+        }
 
-      val relativePath = rootAbs.relativize(pathAbs)
-      return ExecutionRootPath(relativePath)
+        Path relativePath = rootAbs.relativize(pathAbs);
+        return new ExecutionRootPath(relativePath);
     }
 
-    @JvmStatic
-    fun createAncestorRelativePath(root: File, path: File): ExecutionRootPath? = createAncestorRelativePath(root.toPath(), path.toPath())
+    public static @Nullable ExecutionRootPath createAncestorRelativePath(File root, File path) {
+        return createAncestorRelativePath(root.toPath(), path.toPath());
+    }
 
     /**
      * @param possibleParent
      * @param possibleChild
-     * @param strict if `false` then this method returns `true` if `possibleParent`
-     * equals to `possibleChild`.
+     * @param strict         if `false` then this method returns `true` if `possibleParent`
+     *                       equals to `possibleChild`.
      */
-    @JvmStatic
-    fun isAncestor(
-      possibleParent: ExecutionRootPath,
-      possibleChild: ExecutionRootPath,
-      strict: Boolean,
-    ): Boolean =
-      isAncestor(
-        possibleParent.absoluteOrRelativePath.toString(),
-        possibleChild.absoluteOrRelativePath.toString(),
-        strict,
-      )
+    public static boolean isAncestor(
+        ExecutionRootPath possibleParent,
+        ExecutionRootPath possibleChild,
+        boolean strict
+    ) {
+        return isAncestor(
+            possibleParent.absoluteOrRelativePath().toString(),
+            possibleChild.absoluteOrRelativePath().toString(),
+            strict
+        );
+    }
 
     /**
      * @param possibleParentPath
      * @param possibleChild
-     * @param strict if `false` then this method returns `true` if `possibleParent`
-     * equals to `possibleChild`.
+     * @param strict             if `false` then this method returns `true` if `possibleParent`
+     *                           equals to `possibleChild`.
      */
-    @JvmStatic
-    fun isAncestor(
-      possibleParentPath: String,
-      possibleChild: ExecutionRootPath,
-      strict: Boolean,
-    ): Boolean =
-      isAncestor(
-        possibleParentPath,
-        possibleChild.absoluteOrRelativePath.toString(),
-        strict,
-      )
+    public static boolean isAncestor(
+        String possibleParentPath,
+        ExecutionRootPath possibleChild,
+        boolean strict
+    ) {
+        return isAncestor(
+            possibleParentPath,
+            possibleChild.absoluteOrRelativePath().toString(),
+            strict
+        );
+    }
 
     /**
      * @param possibleParent
      * @param possibleChildPath
-     * @param strict if `false` then this method returns `true` if `possibleParent`
-     * equals to `possibleChild`.
+     * @param strict            if `false` then this method returns `true` if `possibleParent`
+     *                          equals to `possibleChild`.
      */
-    @JvmStatic
-    fun isAncestor(
-      possibleParent: ExecutionRootPath,
-      possibleChildPath: String,
-      strict: Boolean,
-    ): Boolean =
-      isAncestor(
-        possibleParent.absoluteOrRelativePath.toString(),
-        possibleChildPath,
-        strict,
-      )
+    public static boolean isAncestor(
+        ExecutionRootPath possibleParent,
+        String possibleChildPath,
+        boolean strict
+    ) {
+        return isAncestor(
+            possibleParent.absoluteOrRelativePath().toString(),
+            possibleChildPath,
+            strict
+        );
+    }
 
     /**
      * @param possibleParentPath
      * @param possibleChildPath
-     * @param strict if `false` then this method returns `true` if `possibleParent`
-     * equals to `possibleChild`.
+     * @param strict             if `false` then this method returns `true` if `possibleParent`
+     *                           equals to `possibleChild`.
      */
-    @JvmStatic
-    fun isAncestor(
-      possibleParentPath: String,
-      possibleChildPath: String,
-      strict: Boolean,
-    ): Boolean {
-      return FileUtil.isAncestor(possibleParentPath, possibleChildPath, strict)
+    public static boolean isAncestor(
+        String possibleParentPath,
+        String possibleChildPath,
+        boolean strict
+    ) {
+        return FileUtil.isAncestor(possibleParentPath, possibleChildPath, strict);
     }
-  }
 }

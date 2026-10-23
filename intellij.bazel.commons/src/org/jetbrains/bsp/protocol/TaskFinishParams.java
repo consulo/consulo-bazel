@@ -1,54 +1,63 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.label.Label
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.label.Label;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class TaskFinishParams(
-  val taskId: TaskId,
-  val eventTime: Long? = null,
-  val message: String? = null,
-  val status: BazelStatus,
-  val data: TaskFinishData? = null,
-)
+public record TaskFinishParams(
+    TaskId taskId,
+    @Nullable Long eventTime,
+    @Nullable String message,
+    BazelStatus status,
+    @Nullable TaskFinishData data
+) {
+    public TaskFinishParams(TaskId taskId, BazelStatus status) {
+        this(taskId, null, null, status, null);
+    }
 
-@ApiStatus.Internal
-sealed interface TaskFinishData
+    public sealed interface TaskFinishData {
+    }
 
-@ApiStatus.Internal
-data class CompileReport(
-  val target: Label,
-  val errors: Int,
-  val warnings: Int,
-  val time: Long? = null,
-  val noOp: Boolean? = null,
-) : TaskFinishData
+    public record CompileReport(
+        Label target,
+        int errors,
+        int warnings,
+        @Nullable Long time,
+        @Nullable Boolean noOp
+    ) implements TaskFinishData {
+        public CompileReport(Label target, int errors, int warnings) {
+            this(target, errors, warnings, null, null);
+        }
+    }
 
-@ApiStatus.Internal
-data class TestFinish(
-  val displayName: String,
-  val status: TestStatus,
-  val message: String? = null,
-  val location: Location? = null,
-  val data: TestFinishData? = null,
-) : TaskFinishData
+    public record TestFinish(
+        String displayName,
+        TestStatus status,
+        @Nullable String message,
+        @Nullable Location location,
+        @Nullable TestFinishData data
+    ) implements TaskFinishData {
+        public TestFinish(String displayName, TestStatus status) {
+            this(displayName, status, null, null, null);
+        }
+    }
 
-@ApiStatus.Internal
-sealed interface TestFinishData
+    public sealed interface TestFinishData {
+    }
 
-@ApiStatus.Internal
-data class JUnitStyleTestCaseData(
-  val time: Double?,
-  val className: String?,
-  val errorMessage: String?,
-  val output: String?,
-  val errorType: String?,
-) : TestFinishData
+    public record JUnitStyleTestCaseData(
+        @Nullable Double time,
+        @Nullable String className,
+        @Nullable String errorMessage,
+        @Nullable String output,
+        @Nullable String errorType
+    ) implements TestFinishData {
+    }
 
-@ApiStatus.Internal
-data class JUnitStyleTestSuiteData(
-  val time: Double?,
-  val systemOut: String?,
-  val systemErr: String?,
-) : TestFinishData
+    public record JUnitStyleTestSuiteData(
+        @Nullable Double time,
+        @Nullable String systemOut,
+        @Nullable String systemErr
+    ) implements TestFinishData {
+    }
+}

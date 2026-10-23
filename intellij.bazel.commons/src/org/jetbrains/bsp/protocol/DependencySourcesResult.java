@@ -1,3 +1,6 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-internal data class DependencySourcesResult(val items: List<DependencySourcesItem>)
+import java.util.List;
+
+record DependencySourcesResult(List<DependencySourcesItem> items) {
+}

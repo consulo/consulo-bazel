@@ -1,3 +1,4 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-internal data class DebugSessionAddress(val uri: String)
+record DebugSessionAddress(String uri) {
+}

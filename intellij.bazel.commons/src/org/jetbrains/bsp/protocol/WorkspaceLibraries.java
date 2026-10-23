@@ -1,26 +1,38 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import java.nio.file.Path
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class LibraryItem(
-  val key: WorkspaceTargetKey,
-  val ijars: List<Path>,
-  val jars: List<Path>,
-  val sourceJars: List<Path>,
-  val mavenCoordinates: MavenCoordinates?,
-  val containsInternalJars: Boolean,
-)
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
-@get:ApiStatus.Internal
-val LibraryItem.allJars: List<Path>
-  get() = ijars + jars + sourceJars
+public final class WorkspaceLibraries {
+    private WorkspaceLibraries() {
+    }
 
-@ApiStatus.Internal
-data class MavenCoordinates(
-  val groupId: String,
-  val artifactId: String,
-  val version: String,
-)
+    public record LibraryItem(
+        WorkspaceTargetKey key,
+        List<Path> ijars,
+        List<Path> jars,
+        List<Path> sourceJars,
+        @Nullable MavenCoordinates mavenCoordinates,
+        boolean containsInternalJars
+    ) {
+    }
+
+    public static List<Path> getAllJars(LibraryItem receiver) {
+        List<Path> result = new ArrayList<>(receiver.ijars().size() + receiver.jars().size() + receiver.sourceJars().size());
+        result.addAll(receiver.ijars());
+        result.addAll(receiver.jars());
+        result.addAll(receiver.sourceJars());
+        return result;
+    }
+
+    public record MavenCoordinates(
+        String groupId,
+        String artifactId,
+        String version
+    ) {
+    }
+}

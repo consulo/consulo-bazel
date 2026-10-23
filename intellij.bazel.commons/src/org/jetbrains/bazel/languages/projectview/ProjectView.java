@@ -1,59 +1,91 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import org.jetbrains.annotations.ApiStatus.Internal
-import org.jetbrains.bazel.languages.projectview.imports.Import
+import org.jetbrains.bazel.languages.projectview.imports.Import;
+import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * Immutable representation of a ProjectView: a map of section keys to parsed values.
  */
-class ProjectView @Internal constructor(
-  @get:Internal val sections: Map<ProjectViewSectionKey<*>, Any>,
-  @get:Internal val imports: List<Import>,
-) {
-  @Internal
-  fun isEmpty(): Boolean = sections.isEmpty() && imports.isEmpty()
+public class ProjectView {
+    private final Map<ProjectViewSectionKey<?>, Object> mySections;
+    private final List<Import> myImports;
 
-  @Internal
-  fun <T> getSection(key: ProjectViewSectionKey<T>): T {
-    val value = sections[key]
-    if (value != null) {
-      @Suppress("UNCHECKED_CAST")
-      return value as T
+    public ProjectView(
+        Map<ProjectViewSectionKey<?>, Object> sections,
+        List<Import> imports
+    ) {
+        mySections = sections;
+        myImports = imports;
     }
-    return key.default
-  }
 
-  override fun equals(other: Any?): Boolean {
-    if (this === other) return true
-    if (javaClass != other?.javaClass) return false
+    public Map<ProjectViewSectionKey<?>, Object> getSections() {
+        return mySections;
+    }
 
-    other as ProjectView
+    public List<Import> getImports() {
+        return myImports;
+    }
 
-    if (sections != other.sections) return false
-    if (imports != other.imports) return false
+    public boolean isEmpty() {
+        return mySections.isEmpty() && myImports.isEmpty();
+    }
 
-    return true
-  }
+    public <T extends @Nullable Object> T getSection(ProjectViewSectionKey<T> key) {
+        Object value = mySections.get(key);
+        if (value != null) {
+            @SuppressWarnings("unchecked")
+            T result = (T) value;
+            return result;
+        }
+        return key.getDefault();
+    }
 
-  override fun hashCode(): Int {
-    var result = sections.hashCode()
-    result = 31 * result + imports.hashCode()
-    return result
-  }
+    @Override
+    public boolean equals(@Nullable Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (other == null || getClass() != other.getClass()) {
+            return false;
+        }
 
-  @Internal
-  companion object {
-    val EMPTY: ProjectView = ProjectView(mapOf(), listOf())
-  }
+        ProjectView that = (ProjectView) other;
+
+        if (!mySections.equals(that.mySections)) {
+            return false;
+        }
+        if (!myImports.equals(that.myImports)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = mySections.hashCode();
+        result = 31 * result + myImports.hashCode();
+        return result;
+    }
+
+    public static final ProjectView EMPTY = new ProjectView(Map.of(), List.of());
+
+    /**
+     * The required `import` statements (i.e. plain `import`, not `try_import`) whose target file could
+     * not be found. A non-empty result means the project view is incomplete and the sync should be
+     * stopped: otherwise it proceeds over an effectively-empty project view and fails slowly with
+     * misleading errors. See `ReparseProjectViewFilePreSyncHook` (which reports each one) and
+     * `ProjectSyncTask` (which aborts the sync).
+     */
+    // consulo: upstream Kotlin extension function ProjectView.unresolvedRequiredImports()
+    public static List<Import.Unresolved> unresolvedRequiredImports(ProjectView receiver) {
+        return receiver.getImports().stream()
+            .filter(it -> it instanceof Import.Unresolved)
+            .map(it -> (Import.Unresolved) it)
+            .filter(Import.Unresolved::isRequired)
+            .toList();
+    }
 }
-
-/**
- * The required `import` statements (i.e. plain `import`, not `try_import`) whose target file could
- * not be found. A non-empty result means the project view is incomplete and the sync should be
- * stopped: otherwise it proceeds over an effectively-empty project view and fails slowly with
- * misleading errors. See `ReparseProjectViewFilePreSyncHook` (which reports each one) and
- * `ProjectSyncTask` (which aborts the sync).
- */
-@Internal
-fun ProjectView.unresolvedRequiredImports(): List<Import.Unresolved> =
-  imports.filterIsInstance<Import.Unresolved>().filter { it.isRequired }

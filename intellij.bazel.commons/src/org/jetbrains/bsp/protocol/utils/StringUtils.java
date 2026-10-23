@@ -1,21 +1,34 @@
-package org.jetbrains.bsp.protocol.utils
+package org.jetbrains.bsp.protocol.utils;
 
-import org.jetbrains.annotations.ApiStatus
-import java.security.MessageDigest
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
-@ApiStatus.Internal
-object StringUtils {
-  private val md5 = ThreadLocal.withInitial { MessageDigest.getInstance ("MD5") }
+public final class StringUtils {
+    private StringUtils() {
+    }
 
-  /**
-   * Creates a md5 hashed string from an original string
-   * @param s the original string
-   * @param n the number of characters taken from the hashed string
-   */
-  fun md5Hash(s: String, n: Int): String {
-    val md5 = md5.get()
-    md5.reset()
-    val hash = md5.digest(s.toByteArray())
-    return hash.toHexString(0, n / 2 + n % 2).take(n)
-  }
+    private static final ThreadLocal<MessageDigest> MD5 = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("MD5");
+        }
+        catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
+    });
+
+    /**
+     * Creates a md5 hashed string from an original string
+     *
+     * @param s the original string
+     * @param n the number of characters taken from the hashed string
+     */
+    public static String md5Hash(String s, int n) {
+        MessageDigest md5 = MD5.get();
+        md5.reset();
+        byte[] hash = md5.digest(s.getBytes(StandardCharsets.UTF_8));
+        String hex = HexFormat.of().formatHex(hash, 0, n / 2 + n % 2);
+        return hex.substring(0, Math.min(n, hex.length()));
+    }
 }

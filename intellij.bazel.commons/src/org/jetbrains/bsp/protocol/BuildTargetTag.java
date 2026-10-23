@@ -1,11 +1,11 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
+public final class BuildTargetTag {
+    private BuildTargetTag() {
+    }
 
-@ApiStatus.Internal
-object BuildTargetTag {
-  const val MANUAL: String = "manual"
-  const val NO_IDE: String = "no-ide"
-  const val MAVEN_COORDINATES: String = "maven_coordinates"
-  const val MODULE_NAME_HINT: String = "ide-module-name"
+    public static final String MANUAL = "manual";
+    public static final String NO_IDE = "no-ide";
+    public static final String MAVEN_COORDINATES = "maven_coordinates";
+    public static final String MODULE_NAME_HINT = "ide-module-name";
 }

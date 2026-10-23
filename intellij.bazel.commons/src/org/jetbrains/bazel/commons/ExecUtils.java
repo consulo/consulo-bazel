@@ -1,14 +1,17 @@
-package org.jetbrains.bazel.commons
+package org.jetbrains.bazel.commons;
 
-import com.intellij.openapi.util.SystemInfo
-import org.jetbrains.annotations.ApiStatus
+import consulo.platform.Platform;
 
-@ApiStatus.Internal
-object ExecUtils {
-  fun calculateExecutableName(name: String): String {
-    return when {
-      SystemInfo.isWindows -> "$name.exe"
-      else -> name
+public final class ExecUtils {
+    private ExecUtils() {
     }
-  }
+
+    public static String calculateExecutableName(String name) {
+        if (Platform.current().os().isWindows()) {
+            return name + ".exe";
+        }
+        else {
+            return name;
+        }
+    }
 }

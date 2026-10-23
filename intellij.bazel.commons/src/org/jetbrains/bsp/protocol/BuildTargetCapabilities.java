@@ -1,9 +1,11 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-internal data class BuildTargetCapabilities(
-  val canCompile: Boolean = false,
-  val canTest: Boolean = false,
-  val canRun: Boolean = false,
-)
-
-internal val BuildTargetCapabilities.isExecutable get() = canTest || canRun
+record BuildTargetCapabilities(
+    boolean canCompile,
+    boolean canTest,
+    boolean canRun
+) {
+    static boolean isExecutable(BuildTargetCapabilities receiver) {
+        return receiver.canTest() || receiver.canRun();
+    }
+}

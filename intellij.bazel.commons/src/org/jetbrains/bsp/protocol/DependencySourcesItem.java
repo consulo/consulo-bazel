@@ -1,6 +1,9 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.bazel.label.Label
-import java.nio.file.Path
+import org.jetbrains.bazel.label.Label;
 
-internal data class DependencySourcesItem(val target: Label, val sources: List<Path>)
+import java.nio.file.Path;
+import java.util.List;
+
+record DependencySourcesItem(Label target, List<Path> sources) {
+}

@@ -1,17 +1,23 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
+import org.jetbrains.bazel.label.Label;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class TestParams(
-  val taskId: TaskId,
-  val targets: List<Label>,
-  val arguments: List<String> = emptyList(),
-  val environmentVariables: Map<String, String> = emptyMap(),
-  val useCoverage: Boolean = false,
-  val coverageInstrumentationFilter: String? = null,
-  val testFilter: String? = null,
-  val additionalBazelParams: List<String> = emptyList(),
-  val streamTestOutput: Boolean = false,
-)
+import java.util.List;
+import java.util.Map;
+
+public record TestParams(
+    TaskId taskId,
+    List<Label> targets,
+    List<String> arguments,
+    Map<String, String> environmentVariables,
+    boolean useCoverage,
+    @Nullable String coverageInstrumentationFilter,
+    @Nullable String testFilter,
+    List<String> additionalBazelParams,
+    boolean streamTestOutput
+) {
+    public TestParams(TaskId taskId, List<Label> targets) {
+        this(taskId, targets, List.of(), Map.of(), false, null, null, List.of(), false);
+    }
+}

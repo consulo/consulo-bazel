@@ -1,56 +1,67 @@
-package org.jetbrains.bazel.label
+package org.jetbrains.bazel.label;
 
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.Dependency.DependencyType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.sync.workspace.snapshot.toWorkspaceTargetKey
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.Dependency.DependencyType;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelper;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
 
 // TODO: move to backend-only entity and use WorkspaceConfigurationId
-@ApiStatus.Internal
-data class DependencyLabel(
-  val targetKey: WorkspaceTargetKey,
-  val kind: DependencyLabelKind = DependencyLabelKind.COMPILE,
+public record DependencyLabel(
+    WorkspaceTargetKey targetKey,
+    DependencyLabelKind kind
 ) {
-  companion object {
-    @ApiStatus.Obsolete
-    fun parse(value: String, isRuntime: Boolean = false): DependencyLabel =
-      DependencyLabel(
-        targetKey = WorkspaceTargetKey(label = Label.parse(value)),
-        kind = if (isRuntime) {
-          DependencyLabelKind.RUNTIME
+    public DependencyLabel(WorkspaceTargetKey targetKey) {
+        this(targetKey, DependencyLabelKind.COMPILE);
+    }
+
+    public static DependencyLabel parse(String value) {
+        return parse(value, false);
+    }
+
+    public static DependencyLabel parse(String value, boolean isRuntime) {
+        return new DependencyLabel(
+            new WorkspaceTargetKey(Label.parse(value)),
+            isRuntime
+                ? DependencyLabelKind.RUNTIME
+                : DependencyLabelKind.COMPILE
+        );
+    }
+
+    public boolean isRuntime() {
+        return kind == DependencyLabelKind.RUNTIME;
+    }
+
+    public boolean getExported() {
+        return kind == DependencyLabelKind.EXPORTED_COMPILE_TIME;
+    }
+
+    public enum DependencyLabelKind {
+        COMPILE, EXPORTED_COMPILE_TIME, RUNTIME, TOOLCHAIN
+    }
+
+    public static DependencyLabel toDependencyLabel(IntellijIdeInfo.Dependency receiver) {
+        DependencyLabelKind kind;
+        DependencyType dependencyType = receiver.getDependencyType();
+        if (dependencyType == DependencyType.EXPORTED_COMPILE_TIME) {
+            kind = DependencyLabelKind.EXPORTED_COMPILE_TIME;
+        }
+        else if (dependencyType == DependencyType.RUNTIME) {
+            kind = DependencyLabelKind.RUNTIME;
+        }
+        else if (dependencyType == DependencyType.TOOLCHAIN) {
+            kind = DependencyLabelKind.TOOLCHAIN;
         }
         else {
-          DependencyLabelKind.COMPILE
-        },
-      )
-  }
+            kind = DependencyLabelKind.COMPILE;
+        }
+        return new DependencyLabel(
+            WorkspaceHelper.toWorkspaceTargetKey(receiver.getTarget()),
+            kind
+        );
+    }
 
-  val isRuntime: Boolean
-    get() = kind == DependencyLabelKind.RUNTIME
-
-  val exported: Boolean
-    get() = kind == DependencyLabelKind.EXPORTED_COMPILE_TIME
+    public static boolean isCompile(IntellijIdeInfo.Dependency receiver) {
+        return receiver.getDependencyType() == DependencyType.COMPILE_TIME
+            || receiver.getDependencyType() == DependencyType.EXPORTED_COMPILE_TIME;
+    }
 }
-
-@ApiStatus.Internal
-enum class DependencyLabelKind {
-  COMPILE, EXPORTED_COMPILE_TIME, RUNTIME, TOOLCHAIN
-}
-
-@ApiStatus.Internal
-fun IntellijIdeInfo.Dependency.toDependencyLabel(): DependencyLabel =
-  DependencyLabel(
-    targetKey = target.toWorkspaceTargetKey(),
-    kind = when (dependencyType) {
-      DependencyType.EXPORTED_COMPILE_TIME -> DependencyLabelKind.EXPORTED_COMPILE_TIME
-      DependencyType.RUNTIME -> DependencyLabelKind.RUNTIME
-      DependencyType.TOOLCHAIN -> DependencyLabelKind.TOOLCHAIN
-      else -> DependencyLabelKind.COMPILE
-    },
-  )
-
-
-@ApiStatus.Internal
-fun IntellijIdeInfo.Dependency.isCompile(): Boolean =
-  dependencyType == DependencyType.COMPILE_TIME || dependencyType == DependencyType.EXPORTED_COMPILE_TIME

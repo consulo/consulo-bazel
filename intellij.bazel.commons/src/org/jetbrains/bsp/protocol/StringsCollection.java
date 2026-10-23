@@ -1,49 +1,72 @@
-package org.jetbrains.bsp.protocol
+package org.jetbrains.bsp.protocol;
 
-import com.intellij.util.containers.Interner
-import org.jetbrains.annotations.ApiStatus
+import consulo.util.interner.Interner;
+import org.jspecify.annotations.Nullable;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 
 /**
  * Immutable list of strings that is interned as a whole, e.g. compiler options or program arguments.
- *
+ * <p>
  * Most targets share the same lists, so equal collections share one instance in memory,
  * and the workspace snapshot stores each distinct collection once per generation.
  */
-@ApiStatus.Internal
-class StringsCollection private constructor(private val strings: Array<String>) {
-  private val contentHash: Int = strings.contentHashCode()
+public final class StringsCollection {
+    private final String[] myStrings;
 
-  val size: Int
-    get() = strings.size
+    private final int myContentHash;
 
-  fun isEmpty(): Boolean = strings.isEmpty()
-
-  operator fun get(index: Int): String = strings[index]
-
-  fun asList(): List<String> = strings.asList()
-
-  override fun equals(other: Any?): Boolean {
-    if (this === other) {
-      return true
+    private StringsCollection(String[] strings) {
+        myStrings = strings;
+        myContentHash = Arrays.hashCode(strings);
     }
-    return other is StringsCollection && contentHash == other.contentHash && strings.contentEquals(other.strings)
-  }
 
-  override fun hashCode(): Int = contentHash
-
-  override fun toString(): String = strings.contentToString()
-
-  companion object {
-    private val arrInterner = Interner.createWeakInterner<StringsCollection>()
-    private val strInterner = Interner.createWeakInterner<String>()
-
-    val EMPTY: StringsCollection = StringsCollection(emptyArray())
-
-    fun of(strings: Collection<String>): StringsCollection {
-      if (strings.isEmpty())
-        return EMPTY
-
-      return arrInterner.intern(StringsCollection(strings.map { strInterner.intern(it) }.toTypedArray()))
+    public int getSize() {
+        return myStrings.length;
     }
-  }
+
+    public boolean isEmpty() {
+        return myStrings.length == 0;
+    }
+
+    public String get(int index) {
+        return myStrings[index];
+    }
+
+    public List<String> asList() {
+        return Arrays.asList(myStrings);
+    }
+
+    @Override
+    public boolean equals(@Nullable Object other) {
+        if (this == other) {
+            return true;
+        }
+        return other instanceof StringsCollection that && myContentHash == that.myContentHash && Arrays.equals(myStrings, that.myStrings);
+    }
+
+    @Override
+    public int hashCode() {
+        return myContentHash;
+    }
+
+    @Override
+    public String toString() {
+        return Arrays.toString(myStrings);
+    }
+
+    private static final Interner<StringsCollection> ARR_INTERNER = Interner.createWeakInterner();
+    private static final Interner<String> STR_INTERNER = Interner.createWeakInterner();
+
+    public static final StringsCollection EMPTY = new StringsCollection(new String[0]);
+
+    public static StringsCollection of(Collection<String> strings) {
+        if (strings.isEmpty()) {
+            return EMPTY;
+        }
+
+        return ARR_INTERNER.intern(new StringsCollection(strings.stream().map(STR_INTERNER::intern).toArray(String[]::new)));
+    }
 }
