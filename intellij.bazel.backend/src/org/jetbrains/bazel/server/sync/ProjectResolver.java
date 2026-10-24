@@ -1,5 +1,7 @@
 package org.jetbrains.bazel.server.sync;
 
+import consulo.bazel.backend.localize.BazelBackendLocalize;
+import consulo.bazel.aspect.BazelAspectModule;
 import com.intellij.aspect.lib.AspectChoice;
 import com.intellij.aspect.lib.OutputGroups;
 import consulo.application.progress.ProgressManager;
@@ -211,6 +213,18 @@ public class ProjectResolver {
                             myBazelInfo.release(),
                             repoMapping
                         );
+                        // consulo: tell which aspect module the workspace's bazel_dep provides
+                        BazelAspectModule.Resolved externalAspect = myBazelBspAspectsManager.getExternalAspect();
+                        if (externalAspect != null) {
+                            util.getSyncConsole(myProject).addDiagnosticMessage(
+                                taskId, null, 0, 0,
+                                externalAspect.module() == BazelAspectModule.INTELLIJ
+                                    ? BazelBackendLocalize.syncAspectExternalIntellijModule(externalAspect.module().getModuleName())
+                                    : BazelBackendLocalize.syncAspectExternalModule(externalAspect.module().getModuleName()),
+                                null,
+                                MessageEvent.Kind.INFO
+                            );
+                        }
                         return CompletableFuture.<@Nullable Void>completedFuture(null);
                     });
                 }).thenCompose(ignored -> {

@@ -286,7 +286,19 @@ CIDR execution and debugger). They are replaced by code in `incubating-consulo-c
 ## Aspect
 
 The Bazel aspect lives in a separate repository, [JetBrains/intellij-aspect](https://github.com/JetBrains/intellij-aspect),
-pinned in `MODULE.bazel`. We plan to fork it the same way (as `consulo/consulo-aspect`), with these rules:
+pinned in `MODULE.bazel` (`git_override` of `intellij_aspect_sdk`; that upstream file stays unchanged). Our fork is
+[consulo/bazel-aspects](https://github.com/consulo/bazel-aspects). `consulo-aspect-sdk` vendors its Starlark
+sources and protos at the commit `MODULE.bazel` pins and ports its SDK library to Java; the procedure is in
+`consulo-aspect-sdk/src/main/aspect/README.md`.
+
+The fork publishes the module as **`consulo_aspect`** (upstream: `intellij_aspect`; the aspect symbol
+`//config:aspect.bzl%intellij_aspect` and its output are the same). Sync supports both: if the root module of the
+workspace has a `bazel_dep` on `consulo_aspect` (preferred) or `intellij_aspect`, the aspect of that module is used
+(`@@<canonical>//config:aspect.bzl%intellij_aspect`) and nothing is materialized; otherwise the aspect is materialized
+into `.bazelbsp` as upstream does. Consulo-only `consulo.bazel.aspect.BazelAspectModule` detects it from the Bzlmod
+repo mapping; `BazelBspAspectsManager.deployIntelliJAspect`/`resolveAspectLabel` use it.
+
+Rules for our changes in the fork:
 
 - New languages (Zig, D, Rust, .NET) are new files in `modules/`.
 - Our new fields in `ide_info.proto` use field numbers **1000 and up**, so they never clash with upstream.

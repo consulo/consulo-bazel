@@ -66,3 +66,7 @@ progress.text.resyncing.targets:
     text: "Resyncing {0,plural,one{# target}other{# targets}}"
 progress.title.process.workspace.targets:
     text: "Process workspace targets"
+sync.aspect.external.module:
+    text: "Using the aspect of the Bazel module ''{0}'' from MODULE.bazel"
+sync.aspect.external.intellij.module:
+    text: "Using the aspect of the Bazel module ''{0}'' (JetBrains) from MODULE.bazel; information added by consulo_aspect is not available"

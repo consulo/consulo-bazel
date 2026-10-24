@@ -9,6 +9,7 @@ import org.jetbrains.bazel.commons.BazelInfo;
 import org.jetbrains.bazel.commons.BazelInfo.BazelRelease;
 import org.jetbrains.bazel.commons.BazelStatus;
 import org.jetbrains.bazel.commons.RepoMapping;
+import consulo.bazel.aspect.BazelAspectModule;
 import org.jetbrains.bazel.commons.RepoMapping.BzlmodRepoMapping;
 import org.jetbrains.bazel.commons.TargetCollection;
 import org.jetbrains.bazel.commons.constants.Constants;
@@ -67,6 +68,10 @@ public class BazelBspAspectsManager {
     private final Path myWorkspaceRoot;
     private final ExecuteService myExecuteService;
     private final BazelRelease myBazelRelease;
+
+    // consulo: the aspect module the workspace depends on (bazel_dep on consulo_aspect or intellij_aspect), set by
+    // deployIntelliJAspect(); null when the aspect is materialized into .bazelbsp
+    private volatile BazelAspectModule.@Nullable Resolved myExternalAspect;
 
     public BazelBspAspectsManager(
         Path workspaceRoot,
@@ -131,6 +136,14 @@ public class BazelBspAspectsManager {
         BazelRelease bazelRelease,
         RepoMapping repoMapping
     ) {
+        // consulo: a workspace that depends on a published aspect module uses it as is (no templating is needed for a
+        // module), the aspect is materialized only otherwise
+        BazelAspectModule.Resolved externalAspect = BazelAspectModule.detect(repoMapping);
+        myExternalAspect = externalAspect;
+        if (externalAspect != null) {
+            return;
+        }
+
         Map<Rules, String> ruleNameMapping = new LinkedHashMap<>();
         for (RulesetInstance it : ruleSetInstances) {
             // As the versions of rules_java for bazel 7 do not provide full information, we
@@ -274,7 +287,17 @@ public class BazelBspAspectsManager {
         return null;
     }
 
+    // consulo: the aspect module the workspace depends on, see deployIntelliJAspect()
+    public BazelAspectModule.@Nullable Resolved getExternalAspect() {
+        return myExternalAspect;
+    }
+
     private String resolveAspectLabel(String aspect) {
+        BazelAspectModule.Resolved externalAspect = myExternalAspect;
+        if (externalAspect != null) {
+            // consulo: the aspect of the module from the workspace's bazel_dep
+            return externalAspect.aspectLabel(aspect);
+        }
         return "//" + Constants.DOT_BAZELBSP_DIR_NAME + "/" + aspect;
     }
 }
