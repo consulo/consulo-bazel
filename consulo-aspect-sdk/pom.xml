@@ -43,11 +43,56 @@
     <packaging>jar</packaging>
 
     <!--
-      Java classes of the IntelliJ aspect protos (common.proto, ide_info.proto).
-      Source: https://github.com/JetBrains/intellij-aspect sdk/proto, at the commit pinned in MODULE.bazel.
+      Java port of the IntelliJ aspect SDK (https://github.com/JetBrains/intellij-aspect, at the commit pinned in
+      MODULE.bazel):
+      - src/main/protobuf: Java classes of the aspect protos (sdk/proto: common.proto, ide_info.proto);
+      - src/main/java/com/intellij/aspect/lib: sdk/lib/*.kt converted to Java;
+      - src/main/aspect: the aspect Starlark sources, zipped into archive_ide.zip at the jar root
+        (upstream //:archive_ide), see src/main/aspect/README.md.
     -->
+    <properties>
+        <!--
+          build cache inputs: by default the cache tracks only some file types in the standard source folders;
+          the aspect sources are .bzl and BUILD files, the protos live in src/main/protobuf
+        -->
+        <maven.build.cache.input.glob>{*.java,*.proto,*.bzl,BUILD}</maven.build.cache.input.glob>
+        <maven.build.cache.input.1>src/main/aspect</maven.build.cache.input.1>
+        <maven.build.cache.input.2>src/main/protobuf</maven.build.cache.input.2>
+    </properties>
+
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>archive-ide</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <!--
+                                  Same layout as upstream's pkg_zip //:archive_ide: common/, intellij/, modules/
+                                  with directory entries, file mode 0555, fixed timestamps.
+                                -->
+                                <mkdir dir="${project.build.outputDirectory}"/>
+                                <zip destfile="${project.build.outputDirectory}/archive_ide.zip"
+                                     modificationtime="315619200000"
+                                     encoding="UTF-8">
+                                    <zipfileset dir="${project.basedir}/src/main/aspect"
+                                                includes="common/**,intellij/**,modules/**"
+                                                filemode="555"
+                                                dirmode="755"/>
+                                </zip>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>io.github.ascopes</groupId>
                 <artifactId>protobuf-maven-plugin</artifactId>

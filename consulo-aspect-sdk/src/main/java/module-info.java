@@ -14,15 +14,26 @@
  * limitations under the License.
  */
 
+import org.jspecify.annotations.NullMarked;
+
 /**
- * Generated protobuf classes of the IntelliJ aspect ({@code sdk/proto} of JetBrains/intellij-aspect).
- * The classes are generated with the full protobuf API (not lite): the plugin parses the aspect text output.
+ * Java port of the IntelliJ aspect SDK (JetBrains/intellij-aspect, see CONSULO.md):
+ * <ul>
+ * <li>generated protobuf classes of {@code sdk/proto}. The classes are generated with the full protobuf API
+ * (not lite): the plugin parses the aspect text output;</li>
+ * <li>{@code com.intellij.aspect.lib}: {@code sdk/lib/*.kt} converted to Java (deploy and read the aspect);</li>
+ * <li>{@code archive_ide.zip} at the module root: the aspect Starlark sources ({@code src/main/aspect}).</li>
+ * </ul>
  *
  * @author VISTALL
  * @since 2026-10-24
  */
+@NullMarked
 module consulo.bazel.aspect.sdk {
     requires transitive com.google.protobuf;
+    requires static org.jspecify;
+
+    exports com.intellij.aspect.lib;
 
     exports com.google.devtools.intellij.aspect;
     exports com.google.devtools.intellij.ideinfo;
