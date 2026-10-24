@@ -73,6 +73,30 @@
             <artifactId>consulo.bazel.base</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- bundled into the plugin: maven-consulo-plugin packages direct dependencies only -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>consulo.bazel.protobuf</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>consulo.bazel.aspect.sdk</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
+          TODO consulo: protobuf-java cannot be bundled: it is an automatic module named com.google.protobuf, like the
+          platform's protobuf-javalite, and JPMS refuses to read both. The generated code needs the full runtime.
+        -->
+        <!-- the platform's commonmark is not visible to plugins -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+        </dependency>
         <dependency>
             <groupId>consulo</groupId>
             <artifactId>consulo-language-api</artifactId>
