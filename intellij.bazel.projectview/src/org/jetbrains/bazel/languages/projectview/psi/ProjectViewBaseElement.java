@@ -1,23 +1,29 @@
-package org.jetbrains.bazel.languages.projectview.psi
+package org.jetbrains.bazel.languages.projectview.psi;
 
-import com.intellij.extapi.psi.ASTWrapperPsiElement
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElementVisitor
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.ast.ASTNode;
+import consulo.language.impl.psi.ASTWrapperPsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-abstract class ProjectViewBaseElement(node: ASTNode) :
-  ASTWrapperPsiElement(node),
-  ProjectViewElement {
-  override fun accept(visitor: PsiElementVisitor) {
-    if (visitor is ProjectViewElementVisitor) {
-      acceptVisitor(visitor)
-    } else {
-      super.accept(visitor)
+public abstract class ProjectViewBaseElement extends ASTWrapperPsiElement implements ProjectViewElement {
+    public ProjectViewBaseElement(ASTNode node) {
+        super(node);
     }
-  }
 
-  protected abstract fun acceptVisitor(visitor: ProjectViewElementVisitor)
+    @Override
+    public void accept(PsiElementVisitor visitor) {
+        if (visitor instanceof ProjectViewElementVisitor projectViewVisitor) {
+            acceptVisitor(projectViewVisitor);
+        }
+        else {
+            super.accept(visitor);
+        }
+    }
 
-  override fun getName(): String? = node.text
+    protected abstract void acceptVisitor(ProjectViewElementVisitor visitor);
+
+    @Override
+    public @Nullable String getName() {
+        return getNode().getText();
+    }
 }

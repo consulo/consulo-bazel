@@ -1,5 +1,6 @@
-package org.jetbrains.bazel.languages.projectview.psi
+package org.jetbrains.bazel.languages.projectview.psi;
 
-import com.intellij.psi.NavigatablePsiElement
+import consulo.language.psi.NavigatablePsiElement;
 
-internal interface ProjectViewElement : NavigatablePsiElement
+public interface ProjectViewElement extends NavigatablePsiElement {
+}

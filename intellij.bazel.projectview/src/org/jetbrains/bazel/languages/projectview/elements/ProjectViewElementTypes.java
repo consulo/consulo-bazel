@@ -1,22 +1,25 @@
-package org.jetbrains.bazel.languages.projectview.elements
+package org.jetbrains.bazel.languages.projectview.elements;
 
-import com.intellij.psi.tree.IFileElementType
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImport
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImportItem
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionItem
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionName
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiTryImport
+import consulo.language.ast.IFileElementType;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImport;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImportItem;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionItem;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionName;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiTryImport;
 
-internal object ProjectViewElementTypes {
-  val FILE = IFileElementType(ProjectViewLanguage)
+public final class ProjectViewElementTypes {
+    private ProjectViewElementTypes() {
+    }
 
-  val IMPORT = ProjectViewElementType("import", ProjectViewPsiImport::class.java)
-  val TRY_IMPORT = ProjectViewElementType("try_import", ProjectViewPsiTryImport::class.java)
-  val IMPORT_ITEM = ProjectViewElementType("import_item", ProjectViewPsiImportItem::class.java)
+    public static final IFileElementType FILE = new IFileElementType(ProjectViewLanguage.INSTANCE);
 
-  val SECTION = ProjectViewElementType("section", ProjectViewPsiSection::class.java)
-  val SECTION_NAME = ProjectViewElementType("section_name", ProjectViewPsiSectionName::class.java)
-  val SECTION_ITEM = ProjectViewElementType("section_item", ProjectViewPsiSectionItem::class.java)
+    public static final ProjectViewElementType IMPORT = new ProjectViewElementType("import", ProjectViewPsiImport.class);
+    public static final ProjectViewElementType TRY_IMPORT = new ProjectViewElementType("try_import", ProjectViewPsiTryImport.class);
+    public static final ProjectViewElementType IMPORT_ITEM = new ProjectViewElementType("import_item", ProjectViewPsiImportItem.class);
+
+    public static final ProjectViewElementType SECTION = new ProjectViewElementType("section", ProjectViewPsiSection.class);
+    public static final ProjectViewElementType SECTION_NAME = new ProjectViewElementType("section_name", ProjectViewPsiSectionName.class);
+    public static final ProjectViewElementType SECTION_ITEM = new ProjectViewElementType("section_item", ProjectViewPsiSectionItem.class);
 }

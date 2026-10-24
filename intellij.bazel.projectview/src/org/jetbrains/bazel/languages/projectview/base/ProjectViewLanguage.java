@@ -1,7 +1,11 @@
-package org.jetbrains.bazel.languages.projectview.base
+package org.jetbrains.bazel.languages.projectview.base;
 
-import com.intellij.lang.Language
-import org.jetbrains.annotations.ApiStatus
+import consulo.language.Language;
 
-@ApiStatus.Internal
-object ProjectViewLanguage : Language("ProjectView")
+public class ProjectViewLanguage extends Language {
+    public static final ProjectViewLanguage INSTANCE = new ProjectViewLanguage();
+
+    private ProjectViewLanguage() {
+        super("ProjectView");
+    }
+}

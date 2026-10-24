@@ -1,67 +1,146 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import com.intellij.codeInspection.util.InspectionMessage
-import com.intellij.openapi.extensions.forEachExtensionSafeInline
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.parentOfType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.Nls
-import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
+import consulo.bazel.projectview.localize.BazelProjectViewLocalize;
+import consulo.component.extension.ExtensionPointCacheKey;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class ProjectViewSection<T>(
-  val key: ProjectViewSectionKey<T>,
-  val type: ProjectViewSectionType<T & Any>,
-  @Nls val documentation: String,
-  val deprecation: Deprecation? = null,
-) {
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
 
-  class Deprecation(
-    @InspectionMessage val message: String,
-    val level: Level = Level.Warning,
-    val quickFixes: List<ProjectViewProblem.QuickFix> = emptyList()
-  ) {
+public class ProjectViewSection<T extends @Nullable Object> {
+    private final ProjectViewSectionKey<T> myKey;
+    private final ProjectViewSectionType<@NonNull T> myType;
+    private final LocalizeValue myDocumentation;
+    private final @Nullable Deprecation myDeprecation;
 
-    enum class Level {
-      Warning, Error
+    public ProjectViewSection(
+        ProjectViewSectionKey<T> key,
+        ProjectViewSectionType<@NonNull T> type,
+        LocalizeValue documentation
+    ) {
+        this(key, type, documentation, null);
     }
 
-    companion object {
-
-      fun withMergeQuickFix(
-        targetKey: ProjectViewSectionKey<*>,
-        level: Level = Level.Warning,
-      ): Deprecation = Deprecation(
-        message = BazelProjectViewBundle.message("annotator.deprecated.section.with.replacement.warning", targetKey.name),
-        level = level,
-        quickFixes = listOf(ProjectViewProblem.QuickFix.MergeIntoSection(targetKey))
-      )
+    public ProjectViewSection(
+        ProjectViewSectionKey<T> key,
+        ProjectViewSectionType<@NonNull T> type,
+        LocalizeValue documentation,
+        @Nullable Deprecation deprecation
+    ) {
+        myKey = key;
+        myType = type;
+        myDocumentation = documentation;
+        myDeprecation = deprecation;
     }
-  }
 
-  companion object {
+    public ProjectViewSectionKey<T> getKey() {
+        return myKey;
+    }
 
-    private val byName: Map<String, ProjectViewSection<*>>
-      get() = ProjectViewSectionProvider.EP_NAME.computeIfAbsent(ProjectViewSection::class.java) {
-        buildMap {
-          ProjectViewSectionProvider.EP_NAME.forEachExtensionSafeInline { provider ->
-            provider.sections.forEach { putIfAbsent(it.key.name, it) }
-          }
+    public ProjectViewSectionType<@NonNull T> getType() {
+        return myType;
+    }
+
+    public LocalizeValue getDocumentation() {
+        return myDocumentation;
+    }
+
+    public @Nullable Deprecation getDeprecation() {
+        return myDeprecation;
+    }
+
+    public static class Deprecation {
+        private final LocalizeValue myMessage;
+        private final Level myLevel;
+        private final List<ProjectViewProblem.QuickFix> myQuickFixes;
+
+        public Deprecation(LocalizeValue message) {
+            this(message, Level.Warning);
         }
-      }
 
-    val allRegistered: Sequence<ProjectViewSection<*>>
-      get() = byName.values.asSequence()
+        public Deprecation(LocalizeValue message, Level level) {
+            this(message, level, List.of());
+        }
 
-    fun findByName(name: String): ProjectViewSection<*>? = byName[name]
+        public Deprecation(
+            LocalizeValue message,
+            Level level,
+            List<ProjectViewProblem.QuickFix> quickFixes
+        ) {
+            myMessage = message;
+            myLevel = level;
+            myQuickFixes = quickFixes;
+        }
 
-    fun findByPsi(psi: PsiElement): ProjectViewSection<*>? {
-      val section = psi.parentOfType<ProjectViewPsiSection>(withSelf = true) ?: return null
-      return section.getKeyword()
-        .text
-        .trim()
-        .let(::findByName)
+        public LocalizeValue getMessage() {
+            return myMessage;
+        }
+
+        public Level getLevel() {
+            return myLevel;
+        }
+
+        public List<ProjectViewProblem.QuickFix> getQuickFixes() {
+            return myQuickFixes;
+        }
+
+        public enum Level {
+            Warning, Error
+        }
+
+        public static Deprecation withMergeQuickFix(ProjectViewSectionKey<?> targetKey) {
+            return withMergeQuickFix(targetKey, Level.Warning);
+        }
+
+        public static Deprecation withMergeQuickFix(
+            ProjectViewSectionKey<?> targetKey,
+            Level level
+        ) {
+            return new Deprecation(
+                BazelProjectViewLocalize.annotatorDeprecatedSectionWithReplacementWarning(targetKey.getName()),
+                level,
+                List.of(new ProjectViewProblem.QuickFix.MergeIntoSection(targetKey))
+            );
+        }
     }
-  }
+
+    // consulo: upstream caches the map on the extension point with computeIfAbsent(ProjectViewSection::class.java)
+    private static final ExtensionPointCacheKey<ProjectViewSectionProvider, Map<String, ProjectViewSection<?>>> BY_NAME =
+        ExtensionPointCacheKey.create("ProjectViewSection.byName", walker -> {
+            Map<String, ProjectViewSection<?>> map = new LinkedHashMap<>();
+            walker.walk(provider -> provider.getSections().forEach(it -> map.putIfAbsent(it.getKey().getName(), it)));
+            return map;
+        });
+
+    private static Map<String, ProjectViewSection<?>> getByName() {
+        return ProjectViewSectionProvider.getEpName().getOrBuildCache(BY_NAME);
+    }
+
+    public static Stream<ProjectViewSection<?>> getAllRegistered() {
+        return getByName().values().stream();
+    }
+
+    public static @Nullable ProjectViewSection<?> findByName(String name) {
+        return getByName().get(name);
+    }
+
+    public static @Nullable ProjectViewSection<?> findByPsi(PsiElement psi) {
+        ProjectViewPsiSection section = PsiTreeUtil.getParentOfType(psi, ProjectViewPsiSection.class, false);
+        if (section == null) {
+            return null;
+        }
+        return findByName(
+            section.getKeyword()
+                .getText()
+                .trim()
+        );
+    }
 }

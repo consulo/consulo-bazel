@@ -1,11 +1,18 @@
-package org.jetbrains.bazel.languages.projectview.psi.sections
+package org.jetbrains.bazel.languages.projectview.psi.sections;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewBaseElement
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewBaseElement;
+import org.jspecify.annotations.Nullable;
 
-internal abstract class ProjectViewPsiImportBase(node: ASTNode) : ProjectViewBaseElement(node) {
-  fun getImportPath(): ProjectViewPsiImportItem? = PsiTreeUtil.getChildOfType(this, ProjectViewPsiImportItem::class.java)
+public abstract class ProjectViewPsiImportBase extends ProjectViewBaseElement {
+    public ProjectViewPsiImportBase(ASTNode node) {
+        super(node);
+    }
 
-  abstract val isImportRequired: Boolean
+    public @Nullable ProjectViewPsiImportItem getImportPath() {
+        return PsiTreeUtil.getChildOfType(this, ProjectViewPsiImportItem.class);
+    }
+
+    public abstract boolean isImportRequired();
 }

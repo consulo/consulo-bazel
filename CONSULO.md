@@ -198,7 +198,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | aspect SDK protos (JetBrains/intellij-aspect) | `consulo.bazel.aspect.sdk` (`consulo-aspect-sdk/`) | builds |
 | `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.commons` | `consulo.bazel.base` | converted, builds |
-| `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | not started |
+| `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | not started |
 | `intellij.bazel.core` | `consulo.bazel.base` | not started |
 | `java/*`, `kotlin/*` | `bazel` module in consulo-java / consulo-kotlin | not started |
@@ -218,6 +218,21 @@ and port the logic into the replacement.
 | `intellij.bazel.languages/resources/intellij.bazel.languages.xml` | Consulo registers extensions with annotations | `@ExtensionImpl` on each class, `consulo.bazel.languages.BazelLanguagesFileTypeFactory` for file types |
 | `intellij.bazel.languages/resources/colorSchemes/Starlark{Default,Darcula}.xml` | Consulo color schemes are extended in code | `consulo.bazel.languages.Starlark{Default,Darcula}ColorSchemeExtender` |
 | `intellij.bazel.languages/resources/messages/*.properties` (deleted) | Consulo localization | `resources/LOCALIZE-LIB/en_US/*.yaml` |
+
+### Renamed files
+
+Java needs every public top-level class in a file of its own name. Where upstream Kotlin files declare public
+classes under other names, the Java file is renamed. Upstream diffs of the left column are ported into the right one.
+
+| Upstream file | Java file(s) |
+|---|---|
+| `intellij.bazel.projectview/.../bazelrc/flags/Annotations.kt` | `Option.java`, `OptionEffectTag.java`, `OptionMetadataTag.java` |
+| `intellij.bazel.projectview/.../bazelrc/flags/BazelFlag.kt` | `Flag.java` |
+| `intellij.bazel.projectview/.../projectview/imports/Import.kt` | `ImportFactory.java` |
+| `intellij.bazel.commons/.../commons/LanguageClass.kt` (the `LanguageClassService` part) | `LanguageClass.java` + `LanguageClassService.java` |
+
+`KnownFlags.kt` is generated upstream and was converted mechanically: re-run the conversion when it changes
+(fields named after Java keywords - `long`, `null`, `short` - get a trailing underscore).
 
 Expected entries: the `clion/*` files that import `com.jetbrains.cidr.*` (compiler resolver, OC workspace,
 CIDR execution and debugger). They are replaced by code in `incubating-consulo-cpp/bazel`, built on

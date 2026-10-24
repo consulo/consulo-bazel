@@ -1,50 +1,70 @@
-package org.jetbrains.bazel.languages.projectview.lexer
+package org.jetbrains.bazel.languages.projectview.lexer;
 
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
+import consulo.language.ast.IElementType;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
 
 /**
  * A token type for the project view language.
- *
+ * <p>
  * See the Project Views documentation for more information.
- *
- * @param debugName the name of the element type, used for debugging purposes.
  */
-@ApiStatus.Internal
-class ProjectViewTokenType private constructor(debugName: String) : IElementType(debugName, ProjectViewLanguage) {
-  companion object {
-    /** The character ':' */
-    val COLON = ProjectViewTokenType("colon")
+public class ProjectViewTokenType extends IElementType {
+    /**
+     * @param debugName the name of the element type, used for debugging purposes.
+     */
+    private ProjectViewTokenType(String debugName) {
+        super(debugName, ProjectViewLanguage.INSTANCE);
+    }
+
+    /**
+     * The character ':'
+     */
+    public static final ProjectViewTokenType COLON = new ProjectViewTokenType("colon");
 
     /**
      * A comment starting with '#'.
-     *
+     * <p>
      * No non-white characters are present before the comment.
      */
-    val COMMENT = ProjectViewTokenType("comment")
+    public static final ProjectViewTokenType COMMENT = new ProjectViewTokenType("comment");
 
-    /** A sequence of characters that are neither whitespace nor colon nor comment. */
-    val IDENTIFIER = ProjectViewTokenType("identifier")
+    /**
+     * A sequence of characters that are neither whitespace nor colon nor comment.
+     */
+    public static final ProjectViewTokenType IDENTIFIER = new ProjectViewTokenType("identifier");
 
-    /** A series of whitespaces at the beginning of a line NOT followed by a comment or '\n'. */
-    val INDENT = ProjectViewTokenType("indent")
+    /**
+     * A series of whitespaces at the beginning of a line NOT followed by a comment or '\n'.
+     */
+    public static final ProjectViewTokenType INDENT = new ProjectViewTokenType("indent");
 
-    /** An identifier that is a section keyword. */
-    val SECTION_KEYWORD = ProjectViewTokenType("section_keyword")
+    /**
+     * An identifier that is a section keyword.
+     */
+    public static final ProjectViewTokenType SECTION_KEYWORD = new ProjectViewTokenType("section_keyword");
 
-    /** An identifier that is an import keyword. */
-    val IMPORT_KEYWORD = ProjectViewTokenType("import_keyword")
+    /**
+     * An identifier that is an import keyword.
+     */
+    public static final ProjectViewTokenType IMPORT_KEYWORD = new ProjectViewTokenType("import_keyword");
 
-    /** An identifier that is an try_import keyword. */
-    val TRY_IMPORT_KEYWORD = ProjectViewTokenType("try_import_keyword")
+    /**
+     * An identifier that is an try_import keyword.
+     */
+    public static final ProjectViewTokenType TRY_IMPORT_KEYWORD = new ProjectViewTokenType("try_import_keyword");
 
-    /** The character '\n'. */
-    val NEWLINE = ProjectViewTokenType("newline")
+    /**
+     * The character '\n'.
+     */
+    public static final ProjectViewTokenType NEWLINE = new ProjectViewTokenType("newline");
 
-    /** A consecutive sequence of characters from the set { ' ', '\r', '\t' }. */
-    val WHITESPACE = ProjectViewTokenType("whitespace")
-  }
+    /**
+     * A consecutive sequence of characters from the set { ' ', '\r', '\t' }.
+     */
+    public static final ProjectViewTokenType WHITESPACE = new ProjectViewTokenType("whitespace");
 
-  override fun toString(): String = "ProjectView:" + super.toString()
+    @Override
+    public String toString() {
+        return "ProjectView:" + super.toString();
+    }
 }

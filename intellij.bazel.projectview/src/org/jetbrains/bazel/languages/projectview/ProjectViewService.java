@@ -1,29 +1,37 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.flow.StateFlow
-import org.jetbrains.annotations.ApiStatus
-import java.nio.file.Path
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.project.Project;
+import org.jspecify.annotations.Nullable;
 
-interface ProjectViewService {
-  @get:ApiStatus.Internal
-  val projectViewState: StateFlow<ProjectView>
+import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 
-  suspend fun forceReparseCurrentProjectViewFiles()
+@ServiceAPI(ComponentScope.PROJECT)
+public interface ProjectViewService {
+    // consulo: StateFlow replaced by current value
+    ProjectView getProjectViewState();
 
-  val projectView: ProjectView
-    get() = projectViewState.value
+    CompletableFuture<Void> forceReparseCurrentProjectViewFiles();
 
-  val projectViewPath: Path?
+    default ProjectView getProjectView() {
+        return getProjectViewState();
+    }
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): ProjectViewService = project.getService(ProjectViewService::class.java)
-  }
+    @Nullable Path getProjectViewPath();
+
+    static ProjectViewService getInstance(Project project) {
+        return project.getInstance(ProjectViewService.class);
+    }
+
+    // consulo: upstream Kotlin top-level extension functions of Project
+
+    static ProjectView projectView(Project receiver) {
+        return ProjectViewService.getInstance(receiver).getProjectView();
+    }
+
+    static @Nullable Path projectViewPath(Project receiver) {
+        return ProjectViewService.getInstance(receiver).getProjectViewPath();
+    }
 }
-
-@ApiStatus.Internal
-fun Project.projectView(): ProjectView = ProjectViewService.getInstance(this).projectView
-
-@ApiStatus.Internal
-fun Project.projectViewPath(): Path? = ProjectViewService.getInstance(this).projectViewPath

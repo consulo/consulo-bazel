@@ -1,24 +1,38 @@
-package org.jetbrains.bazel.languages.projectview.completion
+package org.jetbrains.bazel.languages.projectview.completion;
 
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.codeInsight.completion.CompletionResultSet
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.util.PlatformIcons
-import com.intellij.util.ProcessingContext
+import consulo.language.editor.completion.CompletionParameters;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionResultSet;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.util.ProcessingContext;
+import consulo.platform.base.icon.PlatformIconGroup;
 
-internal class SimpleCompletionProvider(val variants: List<String>) : CompletionProvider<CompletionParameters>() {
-  override fun addCompletions(
-    parameters: CompletionParameters,
-    context: ProcessingContext,
-    result: CompletionResultSet,
-  ) {
-    result.addAllElements(variants.map { sectionItemLookupElement(it) })
-  }
+import java.util.List;
 
-  private fun sectionItemLookupElement(value: String): LookupElement =
-    LookupElementBuilder
-      .create(value)
-      .withIcon(PlatformIcons.PROPERTY_ICON)
+public class SimpleCompletionProvider implements CompletionProvider {
+    private final List<String> myVariants;
+
+    public SimpleCompletionProvider(List<String> variants) {
+        myVariants = variants;
+    }
+
+    public List<String> getVariants() {
+        return myVariants;
+    }
+
+    @Override
+    public void addCompletions(
+        CompletionParameters parameters,
+        ProcessingContext context,
+        CompletionResultSet result
+    ) {
+        result.addAllElements(myVariants.stream().map(this::sectionItemLookupElement).toList());
+    }
+
+    private LookupElement sectionItemLookupElement(String value) {
+        return LookupElementBuilder
+            .create(value)
+            .withIcon(PlatformIconGroup.nodesProperty());
+    }
 }

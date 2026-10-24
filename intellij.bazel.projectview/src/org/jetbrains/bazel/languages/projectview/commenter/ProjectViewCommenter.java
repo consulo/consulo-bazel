@@ -1,15 +1,40 @@
-package org.jetbrains.bazel.languages.projectview.commenter
+package org.jetbrains.bazel.languages.projectview.commenter;
 
-import com.intellij.lang.Commenter
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Commenter;
+import consulo.language.Language;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jspecify.annotations.Nullable;
 
-internal class ProjectViewCommenter : Commenter {
-  override fun getLineCommentPrefix(): String = "#"
+@ExtensionImpl
+public class ProjectViewCommenter implements Commenter {
+    @Override
+    public String getLineCommentPrefix() {
+        return "#";
+    }
 
-  override fun getBlockCommentPrefix(): String? = null
+    @Override
+    public @Nullable String getBlockCommentPrefix() {
+        return null;
+    }
 
-  override fun getBlockCommentSuffix(): String? = null
+    @Override
+    public @Nullable String getBlockCommentSuffix() {
+        return null;
+    }
 
-  override fun getCommentedBlockCommentPrefix(): String? = null
+    @Override
+    public @Nullable String getCommentedBlockCommentPrefix() {
+        return null;
+    }
 
-  override fun getCommentedBlockCommentSuffix(): String? = null
+    @Override
+    public @Nullable String getCommentedBlockCommentSuffix() {
+        return null;
+    }
+
+    @Override
+    public Language getLanguage() {
+        return ProjectViewLanguage.INSTANCE;
+    }
 }

@@ -1,46 +1,55 @@
-package org.jetbrains.bazel.languages.projectview.completion
+package org.jetbrains.bazel.languages.projectview.completion;
 
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.codeInsight.completion.CompletionResultSet
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.openapi.components.service
-import com.intellij.psi.util.startOffset
-import com.intellij.util.ProcessingContext
-import org.jetbrains.bazel.languages.projectview.ProjectViewCodeInsightSupport
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewFileType
-import org.jetbrains.bazel.languages.projectview.lexer.ProjectViewTokenType
+import consulo.language.ast.ASTNode;
+import consulo.language.editor.completion.CompletionParameters;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionResultSet;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.psi.PsiElement;
+import consulo.language.util.ProcessingContext;
+import consulo.project.Project;
+import consulo.util.lang.StringUtil;
+import org.jetbrains.bazel.languages.projectview.ProjectViewCodeInsightSupport;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewFileType;
+import org.jetbrains.bazel.languages.projectview.completion.ProjectViewSectionItemCompletionContributor.ProjectViewPrefixMatcher;
+import org.jetbrains.bazel.languages.projectview.lexer.ProjectViewTokenType;
 
-internal class TargetCompletionProvider : CompletionProvider<CompletionParameters>() {
-  override fun addCompletions(
-    parameters: CompletionParameters,
-    context: ProcessingContext,
-    result: CompletionResultSet,
-  ) {
-    val project = parameters.position.project
-    var prefix =
-      parameters.position.text
-        .take(parameters.offset - parameters.position.startOffset)
-        .removePrefix("-")
-
-    if (parameters.position.prevSibling
-        ?.node
-        ?.elementType == ProjectViewTokenType.COLON
+public class TargetCompletionProvider implements CompletionProvider {
+    @Override
+    public void addCompletions(
+        CompletionParameters parameters,
+        ProcessingContext context,
+        CompletionResultSet result
     ) {
-      prefix = ":$prefix"
+        Project project = parameters.getPosition().getProject();
+        String positionText = parameters.getPosition().getText();
+        // consulo: Kotlin take(n).removePrefix("-")
+        String prefix =
+            StringUtil.trimStart(
+                positionText.substring(
+                    0,
+                    Math.min(parameters.getOffset() - parameters.getPosition().getTextRange().getStartOffset(), positionText.length())
+                ),
+                "-"
+            );
+
+        PsiElement prevSibling = parameters.getPosition().getPrevSibling();
+        ASTNode prevSiblingNode = prevSibling != null ? prevSibling.getNode() : null;
+        if (prevSiblingNode != null && prevSiblingNode.getElementType() == ProjectViewTokenType.COLON) {
+            prefix = ":" + prefix;
+        }
+
+        CompletionResultSet resultWithPrefixMatcher = result.withPrefixMatcher(new ProjectViewPrefixMatcher(prefix));
+        resultWithPrefixMatcher.addAllElements(
+            project.getInstance(ProjectViewCodeInsightSupport.class).getAllTargetLabels().map(this::labelLookupElement)
+                .toList()
+        );
     }
 
-    result.withPrefixMatcher(ProjectViewPrefixMatcher(prefix)).run {
-      addAllElements(
-        project.service<ProjectViewCodeInsightSupport>().allTargetLabels.map { labelLookupElement(it) }
-          .toList(),
-      )
+    private LookupElement labelLookupElement(String label) {
+        return LookupElementBuilder
+            .create(label)
+            .withIcon(ProjectViewFileType.INSTANCE.getBazelIcon());
     }
-  }
-
-  private fun labelLookupElement(label: String): LookupElement =
-    LookupElementBuilder
-      .create(label)
-      .withIcon(ProjectViewFileType.bazelIcon)
 }

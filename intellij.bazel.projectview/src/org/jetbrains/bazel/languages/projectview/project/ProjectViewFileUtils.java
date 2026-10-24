@@ -1,42 +1,63 @@
-package org.jetbrains.bazel.flow.open
+package org.jetbrains.bazel.flow.open;
 
 // TODO rewrite with no VirtualFile operations!
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.readText
-import com.intellij.openapi.vfs.resolveFromRootOrRelative
-import org.jetbrains.annotations.ApiStatus
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jspecify.annotations.Nullable;
 
-private const val PROJECTVIEW_DEFAULT_TEMPLATE_PATH = "tools/intellij/.managed.bazelproject"
+import java.io.IOException;
+import java.io.UncheckedIOException;
 
-private val INFERRED_DIRECTORY_PROJECT_VIEW_TEMPLATE =
-  """
-  # This project view file may be overwritten by the Bazel plugin.
-  # To use it as default, place it in the Bazel module or workspace root directory.
-  # For more options, see project view file documentation: https://www.jetbrains.com/help/idea/bazel-project-view.html
-  
-  derive_targets_from_directories: true
-  directories: %s
-  
-  # Uncomment this line to make indexing quicker:
-  # import_depth: 0
-  
-  """.trimIndent()
+public final class ProjectViewFileUtils {
+    // consulo: upstream private top-level declarations of this file
 
-@ApiStatus.Internal
-object ProjectViewFileUtils {
-  fun projectViewTemplate(
-    projectRootDir: VirtualFile,
-    format: String? = null,
-    forceDefaultTemplate: Boolean = false,
-  ): String {
-    val rawText = if (forceDefaultTemplate) {
-      INFERRED_DIRECTORY_PROJECT_VIEW_TEMPLATE
+    private static final String PROJECTVIEW_DEFAULT_TEMPLATE_PATH = "tools/intellij/.managed.bazelproject";
+
+    private static final String INFERRED_DIRECTORY_PROJECT_VIEW_TEMPLATE =
+        """
+            # This project view file may be overwritten by the Bazel plugin.
+            # To use it as default, place it in the Bazel module or workspace root directory.
+            # For more options, see project view file documentation: https://www.jetbrains.com/help/idea/bazel-project-view.html
+
+            derive_targets_from_directories: true
+            directories: %s
+
+            # Uncomment this line to make indexing quicker:
+            # import_depth: 0
+            """;
+
+    private ProjectViewFileUtils() {
     }
-    else {
-        projectRootDir.resolveFromRootOrRelative(PROJECTVIEW_DEFAULT_TEMPLATE_PATH)
-          ?.readText()
-        ?: INFERRED_DIRECTORY_PROJECT_VIEW_TEMPLATE
+
+    // consulo: Kotlin default arguments format = null, forceDefaultTemplate = false
+    public static String projectViewTemplate(VirtualFile projectRootDir) {
+        return projectViewTemplate(projectRootDir, null, false);
     }
-    return rawText.format(format.orEmpty().ifBlank { "." })
-  }
+
+    public static String projectViewTemplate(
+        VirtualFile projectRootDir,
+        @Nullable String format,
+        boolean forceDefaultTemplate
+    ) {
+        String rawText;
+        if (forceDefaultTemplate) {
+            rawText = INFERRED_DIRECTORY_PROJECT_VIEW_TEMPLATE;
+        }
+        else {
+            // consulo: VirtualFile.resolveFromRootOrRelative(path) -> findFileByRelativePath (the path is relative)
+            VirtualFile templateFile = projectRootDir.findFileByRelativePath(PROJECTVIEW_DEFAULT_TEMPLATE_PATH);
+            rawText = templateFile != null ? readText(templateFile) : INFERRED_DIRECTORY_PROJECT_VIEW_TEMPLATE;
+        }
+        return rawText.formatted(format == null || format.isBlank() ? "." : format);
+    }
+
+    // consulo: IntelliJ VirtualFile.readText()
+    private static String readText(VirtualFile file) {
+        try {
+            return VirtualFileUtil.loadText(file);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 }

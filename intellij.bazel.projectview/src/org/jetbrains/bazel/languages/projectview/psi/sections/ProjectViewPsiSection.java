@@ -1,28 +1,43 @@
-package org.jetbrains.bazel.languages.projectview.psi.sections
+package org.jetbrains.bazel.languages.projectview.psi.sections;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.childrenOfType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.lexer.ProjectViewTokenType
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewBaseElement
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewElementVisitor
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.languages.projectview.lexer.ProjectViewTokenType;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewBaseElement;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewElementVisitor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class ProjectViewPsiSection(node: ASTNode) : ProjectViewBaseElement(node) {
-  override fun acceptVisitor(visitor: ProjectViewElementVisitor) {
-    visitor.visitSection(this)
-  }
+import java.util.List;
+import java.util.Objects;
 
-  fun getKeyword(): PsiElement = firstChild
+public class ProjectViewPsiSection extends ProjectViewBaseElement {
+    public ProjectViewPsiSection(ASTNode node) {
+        super(node);
+    }
 
-  fun getItems(): List<ProjectViewPsiSectionItem> = childrenOfType<ProjectViewPsiSectionItem>()
+    @Override
+    protected void acceptVisitor(ProjectViewElementVisitor visitor) {
+        visitor.visitSection(this);
+    }
 
-  fun getColon(): PsiElement? = findChildByType(ProjectViewTokenType.COLON)
+    public PsiElement getKeyword() {
+        return Objects.requireNonNull(getFirstChild());
+    }
 
-  companion object {
+    public List<ProjectViewPsiSectionItem> getItems() {
+        return PsiTreeUtil.getChildrenOfTypeAsList(this, ProjectViewPsiSectionItem.class);
+    }
 
-    fun findByName(psi: PsiElement, name: String): ProjectViewPsiSection? = psi.childrenOfType<ProjectViewPsiSection>()
-      .firstOrNull { it.getKeyword().text.trim() == name }
-  }
+    public @Nullable PsiElement getColon() {
+        return findChildByType(ProjectViewTokenType.COLON);
+    }
+
+    public static @Nullable ProjectViewPsiSection findByName(PsiElement psi, String name) {
+        return PsiTreeUtil.getChildrenOfTypeAsList(psi, ProjectViewPsiSection.class)
+            .stream()
+            .filter(it -> it.getKeyword().getText().trim().equals(name))
+            .findFirst()
+            .orElse(null);
+    }
 }

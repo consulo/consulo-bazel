@@ -1,19 +1,29 @@
-package org.jetbrains.bazel.languages.bazelrc.flags
+package org.jetbrains.bazel.languages.bazelrc.flags;
 
-import com.intellij.model.Pointer
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.documentation.DocumentationSymbol
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelrc.documentation.BazelFlagDocumentationTarget
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelrc.documentation.BazelFlagDocumentationTarget;
 
-@Suppress("UnstableApiUsage")
-@ApiStatus.Internal
-class BazelFlagSymbol(val flag: Flag, val project: Project) :
-  DocumentationSymbol,
-  Pointer<BazelFlagSymbol> {
-  override fun createPointer() = this
+// consulo: DocumentationSymbol and Pointer (IntelliJ symbol API) do not exist in Consulo, the symbol is a plain class
+public class BazelFlagSymbol {
+    private final Flag myFlag;
+    private final Project myProject;
 
-  override fun dereference() = this
+    public BazelFlagSymbol(Flag flag, Project project) {
+        myFlag = flag;
+        myProject = project;
+    }
 
-  override fun getDocumentationTarget() = BazelFlagDocumentationTarget(this)
+    public Flag getFlag() {
+        return myFlag;
+    }
+
+    public Project getProject() {
+        return myProject;
+    }
+
+    // consulo: createPointer()/dereference() are dropped, pointer/presentation are not used by the classic documentation provider
+
+    public BazelFlagDocumentationTarget getDocumentationTarget() {
+        return new BazelFlagDocumentationTarget(this);
+    }
 }

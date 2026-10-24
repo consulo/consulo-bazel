@@ -1,124 +1,141 @@
-package org.jetbrains.bazel.languages.projectview.lexer
+package org.jetbrains.bazel.languages.projectview.lexer;
+
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 /**
- * A base class responsible for tokenizing a given [input] project view into a list of tokens.
- *
- * @constructor Creates a lexer which returns a list of tokens for the given [input].
- * @param input The input to tokenize.
+ * A base class responsible for tokenizing a given {@code input} project view into a list of tokens.
  */
-internal class ProjectViewLexerBase(input: CharSequence) {
-  private val tokens = mutableListOf<Token>()
-  private var buffer = input.toString()
-  private var pos = 0
-  private var identifierStart: Int? = null
-  private var isPosAfterNonWhitespaceCharInLine = false
-  private var lastTokenType: ProjectViewTokenType? = null
+public class ProjectViewLexerBase {
+    private final List<Token> myTokens = new ArrayList<>();
+    private String myBuffer;
+    private int myPos = 0;
+    private @Nullable Integer myIdentifierStart = null;
+    private boolean myIsPosAfterNonWhitespaceCharInLine = false;
+    private @Nullable ProjectViewTokenType myLastTokenType = null;
 
-  init {
-    tokenize()
-  }
-
-  fun getTokens(): List<Token> = tokens
-
-  private fun tokenize() {
-    var c: Char
-
-    while (pos < buffer.length) {
-      c = buffer[pos]
-      pos++
-
-      when {
-        c == '\n' -> {
-          addPrecedingIdentifier(pos - 1)
-          tokens.add(Token(ProjectViewTokenType.NEWLINE, pos - 1, pos))
-          lastTokenType = ProjectViewTokenType.NEWLINE
-          isPosAfterNonWhitespaceCharInLine = false
-        }
-        isHorizontalWhitespace(c) -> {
-          addPrecedingIdentifier(pos - 1)
-          handleWhiteSpace()
-        }
-        c == ':' -> {
-          addPrecedingIdentifier(pos - 1)
-          tokens.add(Token(ProjectViewTokenType.COLON, pos - 1, pos))
-        }
-        c == '#' && !isPosAfterNonWhitespaceCharInLine -> {
-          addPrecedingIdentifier(pos - 1)
-          addCommentLine(pos - 1)
-        }
-        else -> {
-          isPosAfterNonWhitespaceCharInLine = true
-          if (identifierStart == null) {
-            identifierStart = pos - 1
-          }
-        }
-      }
+    /**
+     * Creates a lexer which returns a list of tokens for the given {@code input}.
+     *
+     * @param input The input to tokenize.
+     */
+    public ProjectViewLexerBase(CharSequence input) {
+        myBuffer = input.toString();
+        tokenize();
     }
 
-    addPrecedingIdentifier(pos)
-  }
-
-  private fun addPrecedingIdentifier(end: Int) {
-    identifierStart?.let {
-      tokens.add(Token(getIdentifierToken(it, end), it, end))
-      identifierStart = null
-    }
-  }
-
-  private fun addCommentLine(start: Int) {
-    while (pos < buffer.length && buffer[pos] != '\n') {
-      pos++
-    }
-    tokens.add(Token(ProjectViewTokenType.COMMENT, start, pos))
-  }
-
-  private fun handleWhiteSpace() {
-    // Every whitespace followed by a single-line comment or a newline is fused with the following token.
-    val oldPos = pos - 1
-    while (pos < buffer.length) {
-      if (isHorizontalWhitespace(buffer[pos])) {
-        pos++
-        continue
-      }
-
-      if (isPosAfterNonWhitespaceCharInLine || buffer[pos] == '#' || buffer[pos] == '\n') {
-        tokens.add(Token(ProjectViewTokenType.WHITESPACE, oldPos, pos))
-      } else {
-        tokens.add(Token(ProjectViewTokenType.INDENT, oldPos, pos))
-      }
-
-      return
+    public List<Token> getTokens() {
+        return myTokens;
     }
 
-    tokens.add(Token(ProjectViewTokenType.WHITESPACE, oldPos, pos))
-  }
+    private void tokenize() {
+        char c;
 
-  private fun getIdentifierToken(start: Int, end: Int): ProjectViewTokenType {
-    val identifier = buffer.substring(start, end)
-    val prevChar = buffer.getOrNull(start - 1)
-    return when {
-      identifier == "import" -> ProjectViewTokenType.IMPORT_KEYWORD
-      identifier == "try_import" -> ProjectViewTokenType.TRY_IMPORT_KEYWORD
+        while (myPos < myBuffer.length()) {
+            c = myBuffer.charAt(myPos);
+            myPos++;
 
-      (prevChar == '\n' || prevChar == null) && buffer.length > end && buffer[end] == ':'
-      -> ProjectViewTokenType.SECTION_KEYWORD
+            if (c == '\n') {
+                addPrecedingIdentifier(myPos - 1);
+                myTokens.add(new Token(ProjectViewTokenType.NEWLINE, myPos - 1, myPos));
+                myLastTokenType = ProjectViewTokenType.NEWLINE;
+                myIsPosAfterNonWhitespaceCharInLine = false;
+            }
+            else if (isHorizontalWhitespace(c)) {
+                addPrecedingIdentifier(myPos - 1);
+                handleWhiteSpace();
+            }
+            else if (c == ':') {
+                addPrecedingIdentifier(myPos - 1);
+                myTokens.add(new Token(ProjectViewTokenType.COLON, myPos - 1, myPos));
+            }
+            else if (c == '#' && !myIsPosAfterNonWhitespaceCharInLine) {
+                addPrecedingIdentifier(myPos - 1);
+                addCommentLine(myPos - 1);
+            }
+            else {
+                myIsPosAfterNonWhitespaceCharInLine = true;
+                if (myIdentifierStart == null) {
+                    myIdentifierStart = myPos - 1;
+                }
+            }
+        }
 
-      else -> ProjectViewTokenType.IDENTIFIER
+        addPrecedingIdentifier(myPos);
     }
-  }
 
-  private fun isHorizontalWhitespace(c: Char): Boolean = c == ' ' || c == '\t' || c == '\r'
+    private void addPrecedingIdentifier(int end) {
+        Integer it = myIdentifierStart;
+        if (it != null) {
+            myTokens.add(new Token(getIdentifierToken(it, end), it, end));
+            myIdentifierStart = null;
+        }
+    }
 
-  /**
-   * Represents a token in the project view file.
-   *
-   * @property type The type of the token.
-   * @property start Position of the first character of the token in the buffer passed to the [ProjectViewLexerBase] constructor.
-   * @property end Sum of [start] and the length of the token.
-   */
-  data class Token(
-    val type: ProjectViewTokenType,
-    val start: Int,
-    val end: Int,
-  )
+    private void addCommentLine(int start) {
+        while (myPos < myBuffer.length() && myBuffer.charAt(myPos) != '\n') {
+            myPos++;
+        }
+        myTokens.add(new Token(ProjectViewTokenType.COMMENT, start, myPos));
+    }
+
+    private void handleWhiteSpace() {
+        // Every whitespace followed by a single-line comment or a newline is fused with the following token.
+        int oldPos = myPos - 1;
+        while (myPos < myBuffer.length()) {
+            if (isHorizontalWhitespace(myBuffer.charAt(myPos))) {
+                myPos++;
+                continue;
+            }
+
+            if (myIsPosAfterNonWhitespaceCharInLine || myBuffer.charAt(myPos) == '#' || myBuffer.charAt(myPos) == '\n') {
+                myTokens.add(new Token(ProjectViewTokenType.WHITESPACE, oldPos, myPos));
+            }
+            else {
+                myTokens.add(new Token(ProjectViewTokenType.INDENT, oldPos, myPos));
+            }
+
+            return;
+        }
+
+        myTokens.add(new Token(ProjectViewTokenType.WHITESPACE, oldPos, myPos));
+    }
+
+    private ProjectViewTokenType getIdentifierToken(int start, int end) {
+        String identifier = myBuffer.substring(start, end);
+        Character prevChar = start - 1 >= 0 && start - 1 < myBuffer.length() ? myBuffer.charAt(start - 1) : null;
+        if (identifier.equals("import")) {
+            return ProjectViewTokenType.IMPORT_KEYWORD;
+        }
+        else if (identifier.equals("try_import")) {
+            return ProjectViewTokenType.TRY_IMPORT_KEYWORD;
+        }
+        else if ((Objects.equals(prevChar, '\n') || prevChar == null) && myBuffer.length() > end && myBuffer.charAt(end) == ':') {
+            return ProjectViewTokenType.SECTION_KEYWORD;
+        }
+        else {
+            return ProjectViewTokenType.IDENTIFIER;
+        }
+    }
+
+    private boolean isHorizontalWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\r';
+    }
+
+    /**
+     * Represents a token in the project view file.
+     *
+     * @param type  The type of the token.
+     * @param start Position of the first character of the token in the buffer passed to the {@link ProjectViewLexerBase} constructor.
+     * @param end   Sum of {@code start} and the length of the token.
+     */
+    public record Token(
+        ProjectViewTokenType type,
+        int start,
+        int end
+    ) {
+    }
 }

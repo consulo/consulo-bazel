@@ -1,25 +1,36 @@
-package org.jetbrains.bazel.languages.projectview.psi.sections
+package org.jetbrains.bazel.languages.projectview.psi.sections;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiReference
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewBaseElement
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewElementVisitor
-import org.jetbrains.bazel.languages.projectview.references.ProjectViewLabelReference
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewBaseElement;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewElementVisitor;
+import org.jetbrains.bazel.languages.projectview.references.ProjectViewLabelReference;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class ProjectViewPsiSectionItem(node: ASTNode) : ProjectViewBaseElement(node) {
-  override fun acceptVisitor(visitor: ProjectViewElementVisitor) {
-    visitor.visitSectionItem(this)
-  }
-
-  internal fun getSection(): ProjectViewPsiSection? = parent as? ProjectViewPsiSection
-
-  override fun getReference(): PsiReference? {
-    val sectionKeyword = getSection()?.getKeyword()?.text?.trim() ?: return ProjectViewLabelReference(this)
-    if (sectionKeyword == "targets") {
-      return ProjectViewLabelReference(this)
+public class ProjectViewPsiSectionItem extends ProjectViewBaseElement {
+    public ProjectViewPsiSectionItem(ASTNode node) {
+        super(node);
     }
-    return null
-  }
+
+    @Override
+    protected void acceptVisitor(ProjectViewElementVisitor visitor) {
+        visitor.visitSectionItem(this);
+    }
+
+    public @Nullable ProjectViewPsiSection getSection() {
+        return getParent() instanceof ProjectViewPsiSection section ? section : null;
+    }
+
+    @Override
+    public @Nullable PsiReference getReference() {
+        ProjectViewPsiSection section = getSection();
+        if (section == null) {
+            return new ProjectViewLabelReference(this);
+        }
+        String sectionKeyword = section.getKeyword().getText().trim();
+        if (sectionKeyword.equals("targets")) {
+            return new ProjectViewLabelReference(this);
+        }
+        return null;
+    }
 }

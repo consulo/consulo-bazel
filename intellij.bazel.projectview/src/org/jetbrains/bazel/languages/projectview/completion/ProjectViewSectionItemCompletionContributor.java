@@ -1,76 +1,117 @@
-package org.jetbrains.bazel.languages.projectview.completion
+package org.jetbrains.bazel.languages.projectview.completion;
 
-import com.intellij.codeInsight.AutoPopupController
-import com.intellij.codeInsight.completion.CompletionContributor
-import com.intellij.codeInsight.completion.CompletionType
-import com.intellij.codeInsight.completion.PrefixMatcher
-import com.intellij.codeInsight.editorActions.TypedHandlerDelegate
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.psi.PsiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.ProjectViewSection
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImport
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionName
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.application.util.matcher.PrefixMatcher;
+import consulo.codeEditor.Editor;
+import consulo.language.Language;
+import consulo.language.editor.AutoPopupController;
+import consulo.language.editor.action.TypedHandlerDelegate;
+import consulo.language.editor.completion.CompletionContributor;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionType;
+import consulo.language.pattern.PsiElementPattern;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.project.Project;
+import consulo.util.lang.StringUtil;
+import org.jetbrains.bazel.languages.projectview.ProjectViewSection;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImport;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionName;
 
-@ApiStatus.Internal
-class ProjectViewPrefixMatcher(prefix: String) : PrefixMatcher(prefix) {
-  override fun prefixMatches(name: String): Boolean = name.contains(prefix, ignoreCase = true)
+import java.util.List;
 
-  override fun cloneWithPrefix(newPrefix: String): PrefixMatcher = ProjectViewPrefixMatcher(newPrefix)
+import static consulo.language.pattern.PlatformPatterns.psiElement;
+
+@ExtensionImpl
+public class ProjectViewSectionItemCompletionContributor extends CompletionContributor implements DumbAware {
+    // consulo: upstream top-level public class of this file, kept as a public nested class
+    public static class ProjectViewPrefixMatcher extends PrefixMatcher {
+        public ProjectViewPrefixMatcher(String prefix) {
+            super(prefix);
+        }
+
+        @Override
+        public boolean prefixMatches(String name) {
+            return StringUtil.containsIgnoreCase(name, getPrefix());
+        }
+
+        @Override
+        public PrefixMatcher cloneWithPrefix(String newPrefix) {
+            return new ProjectViewPrefixMatcher(newPrefix);
+        }
+    }
+
+    // consulo: the nested class AutoPopup is the top-level class AutoPopup below (nested @ExtensionImpl classes are not supported)
+
+    public ProjectViewSectionItemCompletionContributor() {
+        ProjectViewSection.getAllRegistered().forEach(section -> {
+            CompletionProvider provider = section.getType().getCompletionProvider();
+            if (provider == null) {
+                return;
+            }
+            extend(
+                CompletionType.BASIC,
+                sectionItemElement(section.getKey().getName()),
+                provider
+            );
+        });
+
+        extend(
+            CompletionType.BASIC,
+            importElement(),
+            new PathCompletionProviders.ImportCompletionProvider()
+        );
+    }
+
+    private PsiElementPattern.Capture<PsiElement> sectionItemElement(String sectionName) {
+        return psiElement()
+            .withLanguage(ProjectViewLanguage.INSTANCE)
+            .withSuperParent(
+                2,
+                psiElement(ProjectViewPsiSection.class).withFirstChild(
+                    psiElement(ProjectViewPsiSectionName.class).withText(sectionName)
+                )
+            );
+    }
+
+    private PsiElementPattern.Capture<PsiElement> importElement() {
+        return psiElement()
+            .withLanguage(ProjectViewLanguage.INSTANCE)
+            .inside(ProjectViewPsiImport.class);
+    }
+
+    // consulo: completion contributors are language-bound extensions
+    @Override
+    public Language getLanguage() {
+        return ProjectViewLanguage.INSTANCE;
+    }
 }
 
-internal class ProjectViewSectionItemCompletionContributor : CompletionContributor(), DumbAware {
-  class AutoPopup : TypedHandlerDelegate() {
-    private val acceptedChars = listOf('/', ':', '_')
+// consulo: upstream nested class ProjectViewSectionItemCompletionContributor.AutoPopup (registered as typedHandler);
+// Consulo's annotation processor does not support nested @ExtensionImpl classes
+@ExtensionImpl
+class AutoPopup extends TypedHandlerDelegate {
+    private final List<Character> myAcceptedChars = List.of('/', ':', '_');
 
-    override fun checkAutoPopup(
-      charTyped: Char,
-      project: Project,
-      editor: Editor,
-      file: PsiFile,
-    ): Result {
-      if (file !is ProjectViewPsiFile || (!charTyped.isLetterOrDigit() && charTyped !in acceptedChars)) return Result.CONTINUE
-
-      AutoPopupController.getInstance(project).scheduleAutoPopup(editor)
-      return Result.CONTINUE
-    }
-  }
-
-  init {
-    for (section in ProjectViewSection.allRegistered) {
-      val provider = section.type.completionProvider ?: continue
-      extend(
-        CompletionType.BASIC,
-        sectionItemElement(section.key.name),
-        provider,
-      )
+    public AutoPopup() {
     }
 
-    extend(
-      CompletionType.BASIC,
-      importElement(),
-      ImportCompletionProvider(),
-    )
-  }
+    @Override
+    public Result checkAutoPopup(
+        char charTyped,
+        Project project,
+        Editor editor,
+        PsiFile file
+    ) {
+        if (!(file instanceof ProjectViewPsiFile) || (!Character.isLetterOrDigit(charTyped) && !myAcceptedChars.contains(charTyped))) {
+            return Result.CONTINUE;
+        }
 
-  private fun sectionItemElement(sectionName: String) =
-    psiElement()
-      .withLanguage(ProjectViewLanguage)
-      .withSuperParent(
-        2,
-        psiElement(ProjectViewPsiSection::class.java).withFirstChild(
-          psiElement(ProjectViewPsiSectionName::class.java).withText(sectionName),
-        ),
-      )
-
-  private fun importElement() =
-    psiElement()
-      .withLanguage(ProjectViewLanguage)
-      .inside(ProjectViewPsiImport::class.java)
+        AutoPopupController.getInstance(project).scheduleAutoPopup(editor);
+        return Result.CONTINUE;
+    }
 }

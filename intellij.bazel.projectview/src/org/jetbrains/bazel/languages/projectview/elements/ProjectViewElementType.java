@@ -1,20 +1,33 @@
-package org.jetbrains.bazel.languages.projectview.elements
+package org.jetbrains.bazel.languages.projectview.elements;
 
-import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
-import java.lang.reflect.Constructor
+import consulo.language.ast.ASTNode;
+import consulo.language.ast.IElementType;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
 
-internal class ProjectViewElementType(name: String, psiElementClass: Class<out PsiElement?>) : IElementType(name, ProjectViewLanguage) {
-  private val parameterTypes = arrayOf(ASTNode::class.java)
-  private val constructor: Constructor<out PsiElement?> = psiElementClass.getConstructor(*parameterTypes)
+import java.lang.reflect.Constructor;
 
-  fun createElement(node: ASTNode): PsiElement {
-    try {
-      return constructor.newInstance(node)
-    } catch (e: Exception) {
-      throw IllegalStateException("No necessary constructor for " + node.elementType, e)
+public class ProjectViewElementType extends IElementType {
+    private final Class<?>[] myParameterTypes = new Class<?>[]{ASTNode.class};
+    private final Constructor<? extends PsiElement> myConstructor;
+
+    public ProjectViewElementType(String name, Class<? extends PsiElement> psiElementClass) {
+        super(name, ProjectViewLanguage.INSTANCE);
+        try {
+            myConstructor = psiElementClass.getConstructor(myParameterTypes);
+        }
+        catch (NoSuchMethodException e) {
+            // consulo: Kotlin does not have checked exceptions, upstream lets NoSuchMethodException propagate
+            throw new IllegalStateException(e);
+        }
     }
-  }
+
+    public PsiElement createElement(ASTNode node) {
+        try {
+            return myConstructor.newInstance(node);
+        }
+        catch (Exception e) {
+            throw new IllegalStateException("No necessary constructor for " + node.getElementType(), e);
+        }
+    }
 }

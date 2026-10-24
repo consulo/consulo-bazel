@@ -1,42 +1,60 @@
-package org.jetbrains.bazel.languages.projectview.checker
+package org.jetbrains.bazel.languages.projectview.checker;
 
-import com.intellij.codeInspection.util.InspectionMessage
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.ProjectViewSectionKey
+import consulo.language.psi.PsiElement;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.projectview.ProjectViewSectionKey;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class ProjectViewProblem(
-  @InspectionMessage val message: String,
-  val severity: Severity,
-  val type: Type = Type.Message,
-  val quickFixes: List<QuickFix> = emptyList(),
-  val element: PsiElement? = null,
+import java.util.List;
+
+// consulo: the inspection message is a LocalizeValue (Consulo AnnotationHolder.newAnnotation takes a LocalizeValue)
+public record ProjectViewProblem(
+    LocalizeValue message,
+    Severity severity,
+    Type type,
+    List<QuickFix> quickFixes,
+    @Nullable PsiElement element
 ) {
+    // consulo: Kotlin default parameter values (type = Type.Message, quickFixes = emptyList(), element = null)
+    public ProjectViewProblem(LocalizeValue message, Severity severity) {
+        this(message, severity, Type.Message, List.of(), null);
+    }
 
-  enum class Severity {
-    Error, Warning, WeakWarning
-  }
+    public enum Severity {
+        Error, Warning, WeakWarning
+    }
 
-  enum class Type {
-    Message, Deprecation
-  }
-
-  /**
-   * Quick fix descriptor which will be turned into appropriate action.
-   */
-  sealed interface QuickFix {
-
-    /**
-     * Merge the deprecated section values to the section with [targetSectionKey]. If target section does not exist, it will be created.
-     *
-     * Can only be applied to section PSI element.
-     */
-    data class MergeIntoSection(val targetSectionKey: ProjectViewSectionKey<*>) : QuickFix
+    public enum Type {
+        Message, Deprecation
+    }
 
     /**
-     * Special quick fix to replace deprecated `index_...` sections with `index`.
+     * Quick fix descriptor which will be turned into appropriate action.
      */
-    data object ReplaceWithIndex : QuickFix
-  }
+    public sealed interface QuickFix {
+
+        /**
+         * Merge the deprecated section values to the section with {@code targetSectionKey}.
+         * If target section does not exist, it will be created.
+         * <p>
+         * Can only be applied to section PSI element.
+         */
+        record MergeIntoSection(ProjectViewSectionKey<?> targetSectionKey) implements QuickFix {
+        }
+
+        /**
+         * Special quick fix to replace deprecated `index_...` sections with `index`.
+         */
+        final class ReplaceWithIndex implements QuickFix {
+            public static final ReplaceWithIndex INSTANCE = new ReplaceWithIndex();
+
+            private ReplaceWithIndex() {
+            }
+
+            @Override
+            public String toString() {
+                return "ReplaceWithIndex";
+            }
+        }
+    }
 }

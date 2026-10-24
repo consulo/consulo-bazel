@@ -1,57 +1,82 @@
-package org.jetbrains.bazel.languages.projectview.lexer
+package org.jetbrains.bazel.languages.projectview.lexer;
 
-import com.intellij.lexer.LexerBase
-import com.intellij.psi.tree.IElementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.lexer.ProjectViewLexerBase.Token
+import consulo.language.ast.IElementType;
+import consulo.language.lexer.LexerBase;
+import org.jetbrains.bazel.languages.projectview.lexer.ProjectViewLexerBase.Token;
+import org.jspecify.annotations.Nullable;
+
+import java.util.Collections;
+import java.util.Iterator;
 
 /**
- * A lexer that extends [LexerBase] using [ProjectViewLexerBase] to tokenize text.
- *
- * @constructor Create an empty project view lexer.
+ * A lexer that extends {@link LexerBase} using {@link ProjectViewLexerBase} to tokenize text.
+ * <p>
+ * Create an empty project view lexer.
  */
-@ApiStatus.Internal
-class ProjectViewLexer : LexerBase() {
-  private var endOffset = 0
-  private var offsetStart = 0
-  private var buffer = ""
-  private var tokens: Iterator<Token> = emptyList<Token>().iterator()
-  private var currentToken: Token? = null
+public class ProjectViewLexer extends LexerBase {
+    private int myEndOffset = 0;
+    private int myOffsetStart = 0;
+    private String myBuffer = "";
+    private Iterator<Token> myTokens = Collections.emptyIterator();
+    private @Nullable Token myCurrentToken;
 
-  override fun start(
-    buffer: CharSequence,
-    startOffset: Int,
-    endOffset: Int,
-    initialState: Int,
-  ) {
-    this.buffer = buffer.toString()
-    this.offsetStart = startOffset
-    this.endOffset = endOffset
+    @Override
+    public void start(
+        CharSequence buffer,
+        int startOffset,
+        int endOffset,
+        int initialState
+    ) {
+        myBuffer = buffer.toString();
+        myOffsetStart = startOffset;
+        myEndOffset = endOffset;
 
-    val lexer = ProjectViewLexerBase(buffer.subSequence(startOffset, endOffset))
-    tokens = lexer.getTokens().iterator()
-    currentToken = if (tokens.hasNext()) tokens.next() else null
-  }
+        ProjectViewLexerBase lexer = new ProjectViewLexerBase(buffer.subSequence(startOffset, endOffset));
+        myTokens = lexer.getTokens().iterator();
+        myCurrentToken = myTokens.hasNext() ? myTokens.next() : null;
+    }
 
-  /** ProjectViewLexer doesn't use states, so we return 0 as described in the Lexer docs. */
-  override fun getState(): Int = 0
+    /**
+     * ProjectViewLexer doesn't use states, so we return 0 as described in the Lexer docs.
+     */
+    @Override
+    public int getState() {
+        return 0;
+    }
 
-  override fun getTokenType(): IElementType? = currentToken?.type
+    @Override
+    public @Nullable IElementType getTokenType() {
+        Token currentToken = myCurrentToken;
+        return currentToken != null ? currentToken.type() : null;
+    }
 
-  override fun getTokenStart(): Int = currentToken?.start?.plus(offsetStart) ?: 0
+    @Override
+    public int getTokenStart() {
+        Token currentToken = myCurrentToken;
+        return currentToken != null ? currentToken.start() + myOffsetStart : 0;
+    }
 
-  override fun getTokenEnd(): Int = currentToken?.end?.plus(offsetStart) ?: 0
+    @Override
+    public int getTokenEnd() {
+        Token currentToken = myCurrentToken;
+        return currentToken != null ? currentToken.end() + myOffsetStart : 0;
+    }
 
-  override fun advance() {
-    currentToken =
-      if (currentToken != null && tokens.hasNext()) {
-        tokens.next()
-      } else {
-        null
-      }
-  }
+    @Override
+    public void advance() {
+        myCurrentToken =
+            myCurrentToken != null && myTokens.hasNext()
+                ? myTokens.next()
+                : null;
+    }
 
-  override fun getBufferSequence(): CharSequence = buffer
+    @Override
+    public CharSequence getBufferSequence() {
+        return myBuffer;
+    }
 
-  override fun getBufferEnd(): Int = endOffset
+    @Override
+    public int getBufferEnd() {
+        return myEndOffset;
+    }
 }

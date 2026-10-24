@@ -1,12 +1,20 @@
-package org.jetbrains.bazel.languages.projectview.psi.sections
+package org.jetbrains.bazel.languages.projectview.psi.sections;
 
-import com.intellij.lang.ASTNode
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewElementVisitor
+import consulo.language.ast.ASTNode;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewElementVisitor;
 
-internal class ProjectViewPsiTryImport(node: ASTNode) : ProjectViewPsiImportBase(node) {
-  override fun acceptVisitor(visitor: ProjectViewElementVisitor) {
-    visitor.visitTryImport(this)
-  }
+public class ProjectViewPsiTryImport extends ProjectViewPsiImportBase {
+    public ProjectViewPsiTryImport(ASTNode node) {
+        super(node);
+    }
 
-  override val isImportRequired: Boolean = false
+    @Override
+    protected void acceptVisitor(ProjectViewElementVisitor visitor) {
+        visitor.visitTryImport(this);
+    }
+
+    @Override
+    public boolean isImportRequired() {
+        return false;
+    }
 }

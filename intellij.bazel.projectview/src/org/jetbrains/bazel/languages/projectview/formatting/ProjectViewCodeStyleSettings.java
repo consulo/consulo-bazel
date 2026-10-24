@@ -1,6 +1,10 @@
-package org.jetbrains.bazel.languages.projectview.formatting
+package org.jetbrains.bazel.languages.projectview.formatting;
 
-import com.intellij.psi.codeStyle.CodeStyleSettings
-import com.intellij.psi.codeStyle.CustomCodeStyleSettings
+import consulo.language.codeStyle.CodeStyleSettings;
+import consulo.language.codeStyle.CustomCodeStyleSettings;
 
-internal class ProjectViewCodeStyleSettings(settings: CodeStyleSettings) : CustomCodeStyleSettings("ProjectView", settings)
+public class ProjectViewCodeStyleSettings extends CustomCodeStyleSettings {
+    public ProjectViewCodeStyleSettings(CodeStyleSettings settings) {
+        super("ProjectView", settings);
+    }
+}

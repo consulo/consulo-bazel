@@ -1,16 +1,24 @@
-package org.jetbrains.bazel.languages.projectview.psi
+package org.jetbrains.bazel.languages.projectview.psi;
 
-import com.intellij.extapi.psi.PsiFileBase
-import com.intellij.openapi.fileTypes.FileType
-import com.intellij.psi.FileViewProvider
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewFileType
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
+import consulo.language.file.FileViewProvider;
+import consulo.language.impl.psi.PsiFileBase;
+import consulo.virtualFileSystem.fileType.FileType;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewFileType;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class ProjectViewPsiFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, ProjectViewLanguage) {
-  override fun getFileType(): FileType = ProjectViewFileType
+public class ProjectViewPsiFile extends PsiFileBase {
+    public ProjectViewPsiFile(FileViewProvider viewProvider) {
+        super(viewProvider, ProjectViewLanguage.INSTANCE);
+    }
 
-  internal fun getSection(keyword: String): ProjectViewPsiSection? = ProjectViewPsiSection.findByName(this, keyword)
+    @Override
+    public FileType getFileType() {
+        return ProjectViewFileType.INSTANCE;
+    }
+
+    public @Nullable ProjectViewPsiSection getSection(String keyword) {
+        return ProjectViewPsiSection.findByName(this, keyword);
+    }
 }

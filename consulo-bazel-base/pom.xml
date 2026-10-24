@@ -64,6 +64,7 @@
                             <sources>
                                 <source>${project.basedir}/../intellij.bazel.languages/src</source>
                                 <source>${project.basedir}/../intellij.bazel.commons/src</source>
+                                <source>${project.basedir}/../intellij.bazel.projectview/src</source>
                             </sources>
                         </configuration>
                     </execution>
@@ -234,6 +235,18 @@
             <scope>provided</scope>
         </dependency>
 
+        <dependency>
+            <groupId>consulo</groupId>
+            <artifactId>consulo-language-code-style-ui-api</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>consulo</groupId>
+            <artifactId>consulo-datacontext-api</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- provided by the Consulo platform -->
         <dependency>
             <groupId>com.google.code.gson</groupId>

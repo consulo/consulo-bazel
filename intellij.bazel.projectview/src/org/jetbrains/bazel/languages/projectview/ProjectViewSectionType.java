@@ -1,201 +1,349 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.openapi.util.io.toNioPathOrNull
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.ExcludableValue
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.bazelrc.flags.Flag
-import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem
-import org.jetbrains.bazel.languages.projectview.checker.ProjectViewValueChecker
-import org.jetbrains.bazel.languages.projectview.completion.FiletypeCompletionProvider
-import org.jetbrains.bazel.languages.projectview.completion.FlagCompletionProvider
-import org.jetbrains.bazel.languages.projectview.completion.SimpleCompletionProvider
-import org.jetbrains.bazel.languages.projectview.completion.TargetCompletionProvider
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
-import java.nio.file.Path
-import kotlin.collections.contains
-import kotlin.enums.EnumEntries
-import kotlin.enums.enumEntries
-import kotlin.io.path.exists
+import consulo.bazel.projectview.localize.BazelProjectViewLocalize;
+import consulo.language.editor.completion.CompletionProvider;
+import org.jetbrains.bazel.commons.ExcludableValue;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewChecker;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem;
+import org.jetbrains.bazel.languages.projectview.completion.FlagCompletionProvider;
+import org.jetbrains.bazel.languages.projectview.completion.PathCompletionProviders.FiletypeCompletionProvider;
+import org.jetbrains.bazel.languages.projectview.completion.SimpleCompletionProvider;
+import org.jetbrains.bazel.languages.projectview.completion.TargetCompletionProvider;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface ProjectViewSectionType<T : Any> {
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.function.Function;
 
-  val valueChecker: ProjectViewValueChecker?
-  val completionProvider: CompletionProvider<CompletionParameters>?
-  fun readFrom(values: List<String>): T?
+import static org.jetbrains.bazel.config.project.getRootDir;
 
-  interface Scalar<T : Any> : ProjectViewSectionType<T> {
+// consulo: the upstream typealias ProjectViewValueChecker is ProjectViewChecker<String>
+public interface ProjectViewSectionType<T> {
 
-    fun readFrom(value: String): T?
+    @Nullable ProjectViewChecker<String> getValueChecker();
 
-    override fun readFrom(values: List<String>): T? = values
-      .singleOrNull()
-      ?.let(::readFrom)
-  }
+    @Nullable CompletionProvider getCompletionProvider();
 
-  companion object {
+    @Nullable T readFrom(List<String> values);
 
-    val int: Scalar<Int> = scalar(String::toIntOrNull)
-    val boolean: Scalar<Boolean> = variants(read = String::toBooleanStrictOrNull, variants = listOf("true", "false"))
-    val label: Scalar<Label> = scalar(read = Label::parseOrNull, completionProvider = TargetCompletionProvider())
-    fun string(
-      completionProvider: CompletionProvider<CompletionParameters>? = null,
-    ): Scalar<String> = scalar(
-      read = { it },
-      completionProvider = completionProvider,
-    )
+    interface Scalar<T> extends ProjectViewSectionType<T> {
 
-    fun path(
-      existing: Boolean = false,
-      completionProvider: CompletionProvider<CompletionParameters>? = null,
-    ): Scalar<Path> = scalar(
-      read = String::toNioPathOrNull,
-      checker = pathChecker(String::toNioPathOrNull, existing),
-      completionProvider = completionProvider,
-    )
+        @Nullable T readFrom(String value);
 
-    fun file(extension: String): Scalar<Path> = path(existing = true, completionProvider = FiletypeCompletionProvider(extension))
-
-    inline fun <reified T : Enum<T>> enum(): Scalar<T> = enum(enumEntries<T>())
-
-    fun flag(vararg commands: String): Scalar<String> = scalar(
-      read = { it },
-      checker = flagChecker(commands),
-      completionProvider = FlagCompletionProvider(commands),
-    )
-
-    @PublishedApi
-    internal fun <T : Enum<T>> enum(entries: EnumEntries<T>): Scalar<T> = variants(
-      variants = entries.map { it.name.lowercase() },
-      read = { value -> entries.find { it.name.equals(value, ignoreCase = true) } },
-    )
-
-    private fun <T : Any> variants(
-      read: (String) -> T?,
-      variants: List<String>,
-    ): Scalar<T> = scalar(
-      read = read,
-      checker = variantsChecker(read, variants),
-      completionProvider = SimpleCompletionProvider(variants),
-    )
-
-    private fun <T : Any> scalar(
-      read: (String) -> T?,
-      checker: ProjectViewValueChecker = scalarChecker(read),
-      completionProvider: CompletionProvider<CompletionParameters>? = null,
-    ): Scalar<T> = object : Scalar<T> {
-
-      override val valueChecker = checker
-      override val completionProvider = completionProvider
-
-      override fun readFrom(value: String): T? = read(value)
-    }
-  }
-}
-
-@ApiStatus.Internal
-fun ProjectViewSectionType<*>.isScalar(): Boolean = this is ProjectViewSectionType.Scalar<*>
-
-@ApiStatus.Internal
-fun <T : Any> ProjectViewPsiSection.read(type: ProjectViewSectionType<T>): T? =
-  type.readFrom(this.getItems().map { it.text.trim() })
-
-@ApiStatus.Internal
-fun <T : Any> ProjectViewSectionType.Scalar<T>.excludable(): ProjectViewSectionType.Scalar<ExcludableValue<T>> {
-  val type = this
-  return object : ProjectViewSectionType.Scalar<ExcludableValue<T>> {
-    override val valueChecker = ProjectViewValueChecker { project, value, sink ->
-      type.valueChecker?.check(project, value.removePrefix("-"), sink)
+        @Override
+        default @Nullable T readFrom(List<String> values) {
+            // consulo: Kotlin singleOrNull()
+            return values.size() == 1 ? readFrom(values.get(0)) : null;
+        }
     }
 
-    override val completionProvider: CompletionProvider<CompletionParameters>?
-      get() = type.completionProvider
+    // consulo: upstream companion object members; `int`, `boolean`, `label` and `enum` are renamed (Java keywords)
 
-    override fun readFrom(value: String): ExcludableValue<T>? = when {
-      value.startsWith("-") -> type.readFrom(value.removePrefix("-"))?.let(ExcludableValue.Companion::excluded)
-      else -> type.readFrom(value)?.let(ExcludableValue.Companion::included)
+    Scalar<Integer> INT = scalar(ProjectViewSectionType::toIntOrNull);
+    Scalar<Boolean> BOOLEAN = variants(ProjectViewSectionType::toBooleanStrictOrNull, List.of("true", "false"));
+    Scalar<Label> LABEL = scalar(Label::parseOrNull, scalarChecker(Label::parseOrNull), new TargetCompletionProvider());
+
+    static Scalar<String> string() {
+        return string(null);
     }
-  }
-}
 
-@ApiStatus.Internal
-fun <T : Any> ProjectViewSectionType.Scalar<T>.list(): ProjectViewSectionType<List<T>> {
-  val itemType = this
-  return object : ProjectViewSectionType<List<T>> {
+    static Scalar<String> string(
+        @Nullable CompletionProvider completionProvider
+    ) {
+        Function<String, @Nullable String> read = it -> it;
+        return scalar(
+            read,
+            scalarChecker(read),
+            completionProvider
+        );
+    }
 
-    override val completionProvider: CompletionProvider<CompletionParameters>? = itemType.completionProvider
+    static Scalar<Path> path() {
+        return path(false);
+    }
 
-    override val valueChecker: ProjectViewValueChecker? = itemType.valueChecker
+    static Scalar<Path> path(boolean existing) {
+        return path(existing, null);
+    }
 
-    override fun readFrom(values: List<String>) = values.mapNotNull { itemType.readFrom(it) }
-  }
-}
+    static Scalar<Path> path(
+        boolean existing,
+        @Nullable CompletionProvider completionProvider
+    ) {
+        return scalar(
+            ProjectViewSectionType::toNioPathOrNull,
+            pathChecker(ProjectViewSectionType::toNioPathOrNull, existing),
+            completionProvider
+        );
+    }
 
-private fun <T> scalarChecker(read: (String) -> T?) = ProjectViewValueChecker { _, subject, sink ->
-  if (read(subject) == null) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.cannot.parse.value", subject),
-      severity = ProjectViewProblem.Severity.Error,
-    )
-    sink.report(problem)
-  }
-}
+    static Scalar<Path> file(String extension) {
+        return path(true, new FiletypeCompletionProvider(extension));
+    }
 
-private fun pathChecker(read: (String) -> Path?, existing: Boolean) = ProjectViewValueChecker { project, subject, sink ->
-  val path = read(subject)
-  if (path == null) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.invalid.path.error"),
-      severity = ProjectViewProblem.Severity.Error,
-    )
-    sink.report(problem)
-    return@ProjectViewValueChecker
-  }
+    static <T extends Enum<T>> Scalar<T> enumType(Class<T> enumClass) {
+        return enumType(List.of(enumClass.getEnumConstants()));
+    }
 
-  if (!existing) return@ProjectViewValueChecker
+    static Scalar<String> flag(String... commands) {
+        return scalar(
+            it -> it,
+            flagChecker(commands),
+            new FlagCompletionProvider(commands)
+        );
+    }
 
-  val resolvedPath = when {
-    path.isAbsolute -> path
-    else -> project.rootDir.toNioPath().resolve(path)
-  }
-  if (!resolvedPath.exists()) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.path.not.exists.error"),
-      severity = ProjectViewProblem.Severity.Warning,
-    )
-    sink.report(problem)
-  }
-}
+    private static <T extends Enum<T>> Scalar<T> enumType(List<T> entries) {
+        return variants(
+            value -> entries.stream().filter(it -> it.name().equalsIgnoreCase(value)).findFirst().orElse(null),
+            entries.stream().map(it -> it.name().toLowerCase(Locale.ROOT)).toList()
+        );
+    }
 
-private fun <T> variantsChecker(read: (String) -> T?, variants: List<String>) = ProjectViewValueChecker { _, subject, sink ->
-  if (read(subject) == null) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.unknown.variant.error", subject, variants.joinToString()),
-      severity = ProjectViewProblem.Severity.Error,
-    )
-    sink.report(problem)
-  }
-}
+    private static <T> Scalar<T> variants(
+        Function<String, @Nullable T> read,
+        List<String> variants
+    ) {
+        return scalar(
+            read,
+            variantsChecker(read, variants),
+            new SimpleCompletionProvider(variants)
+        );
+    }
 
-private fun flagChecker(commands: Array<out String>) = ProjectViewValueChecker { _, subject, sink ->
-  val flag = Flag.byName(subject.takeWhile { it != '=' })
-  if (flag == null) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.unknown.flag.error", subject),
-      severity = ProjectViewProblem.Severity.Warning,
-    )
-    sink.report(problem)
-    return@ProjectViewValueChecker
-  }
-  if (commands.any { it !in flag.option.commands }) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.flag.not.allowed.here.error", subject, commands.contentToString()),
-      severity = ProjectViewProblem.Severity.Warning,
-    )
-    sink.report(problem)
-  }
+    private static <T> Scalar<T> scalar(Function<String, @Nullable T> read) {
+        return scalar(read, scalarChecker(read), null);
+    }
+
+    private static <T> Scalar<T> scalar(
+        Function<String, @Nullable T> read,
+        ProjectViewChecker<String> checker,
+        @Nullable CompletionProvider completionProvider
+    ) {
+        return new Scalar<T>() {
+
+            @Override
+            public ProjectViewChecker<String> getValueChecker() {
+                return checker;
+            }
+
+            @Override
+            public @Nullable CompletionProvider getCompletionProvider() {
+                return completionProvider;
+            }
+
+            @Override
+            public @Nullable T readFrom(String value) {
+                return read.apply(value);
+            }
+        };
+    }
+
+    // consulo: upstream Kotlin top-level (extension) functions of this file
+
+    static boolean isScalar(ProjectViewSectionType<?> receiver) {
+        return receiver instanceof ProjectViewSectionType.Scalar<?>;
+    }
+
+    static <T> @Nullable T read(ProjectViewPsiSection receiver, ProjectViewSectionType<T> type) {
+        return type.readFrom(receiver.getItems().stream().map(it -> it.getText().trim()).toList());
+    }
+
+    static <T> ProjectViewSectionType.Scalar<ExcludableValue<T>> excludable(ProjectViewSectionType.Scalar<T> receiver) {
+        ProjectViewSectionType.Scalar<T> type = receiver;
+        return new ProjectViewSectionType.Scalar<ExcludableValue<T>>() {
+            private final ProjectViewChecker<String> myValueChecker = (project, value, sink) -> {
+                ProjectViewChecker<String> valueChecker = type.getValueChecker();
+                if (valueChecker != null) {
+                    valueChecker.check(project, removePrefix(value, "-"), sink);
+                }
+            };
+
+            @Override
+            public ProjectViewChecker<String> getValueChecker() {
+                return myValueChecker;
+            }
+
+            @Override
+            public @Nullable CompletionProvider getCompletionProvider() {
+                return type.getCompletionProvider();
+            }
+
+            @Override
+            public @Nullable ExcludableValue<T> readFrom(String value) {
+                if (value.startsWith("-")) {
+                    T result = type.readFrom(removePrefix(value, "-"));
+                    return result != null ? ExcludableValue.excluded(result) : null;
+                }
+                else {
+                    T result = type.readFrom(value);
+                    return result != null ? ExcludableValue.included(result) : null;
+                }
+            }
+        };
+    }
+
+    static <T> ProjectViewSectionType<List<T>> list(ProjectViewSectionType.Scalar<T> receiver) {
+        ProjectViewSectionType.Scalar<T> itemType = receiver;
+        return new ProjectViewSectionType<List<T>>() {
+
+            private final @Nullable CompletionProvider myCompletionProvider = itemType.getCompletionProvider();
+
+            private final @Nullable ProjectViewChecker<String> myValueChecker = itemType.getValueChecker();
+
+            @Override
+            public @Nullable CompletionProvider getCompletionProvider() {
+                return myCompletionProvider;
+            }
+
+            @Override
+            public @Nullable ProjectViewChecker<String> getValueChecker() {
+                return myValueChecker;
+            }
+
+            @Override
+            public List<T> readFrom(List<String> values) {
+                return values.stream().map(it -> itemType.readFrom(it)).filter(Objects::nonNull).toList();
+            }
+        };
+    }
+
+    private static <T> ProjectViewChecker<String> scalarChecker(Function<String, @Nullable T> read) {
+        return (project, subject, sink) -> {
+            if (read.apply(subject) == null) {
+                ProjectViewProblem problem = new ProjectViewProblem(
+                    BazelProjectViewLocalize.annotatorCannotParseValue(subject),
+                    ProjectViewProblem.Severity.Error,
+                    ProjectViewProblem.Type.Message,
+                    List.of(),
+                    null
+                );
+                sink.report(problem);
+            }
+        };
+    }
+
+    private static ProjectViewChecker<String> pathChecker(Function<String, @Nullable Path> read, boolean existing) {
+        return (project, subject, sink) -> {
+            Path path = read.apply(subject);
+            if (path == null) {
+                ProjectViewProblem problem = new ProjectViewProblem(
+                    BazelProjectViewLocalize.annotatorInvalidPathError(),
+                    ProjectViewProblem.Severity.Error,
+                    ProjectViewProblem.Type.Message,
+                    List.of(),
+                    null
+                );
+                sink.report(problem);
+                return;
+            }
+
+            if (!existing) {
+                return;
+            }
+
+            Path resolvedPath = path.isAbsolute()
+                ? path
+                : getRootDir(project).toNioPath().resolve(path);
+            if (!Files.exists(resolvedPath)) {
+                ProjectViewProblem problem = new ProjectViewProblem(
+                    BazelProjectViewLocalize.annotatorPathNotExistsError(),
+                    ProjectViewProblem.Severity.Warning,
+                    ProjectViewProblem.Type.Message,
+                    List.of(),
+                    null
+                );
+                sink.report(problem);
+            }
+        };
+    }
+
+    private static <T> ProjectViewChecker<String> variantsChecker(Function<String, @Nullable T> read, List<String> variants) {
+        return (project, subject, sink) -> {
+            if (read.apply(subject) == null) {
+                ProjectViewProblem problem = new ProjectViewProblem(
+                    BazelProjectViewLocalize.annotatorUnknownVariantError(subject, String.join(", ", variants)),
+                    ProjectViewProblem.Severity.Error,
+                    ProjectViewProblem.Type.Message,
+                    List.of(),
+                    null
+                );
+                sink.report(problem);
+            }
+        };
+    }
+
+    private static ProjectViewChecker<String> flagChecker(String[] commands) {
+        return (project, subject, sink) -> {
+            int equalsIndex = subject.indexOf('=');
+            Flag flag = Flag.byName(equalsIndex >= 0 ? subject.substring(0, equalsIndex) : subject);
+            if (flag == null) {
+                ProjectViewProblem problem = new ProjectViewProblem(
+                    BazelProjectViewLocalize.annotatorUnknownFlagError(subject),
+                    ProjectViewProblem.Severity.Warning,
+                    ProjectViewProblem.Type.Message,
+                    List.of(),
+                    null
+                );
+                sink.report(problem);
+                return;
+            }
+            if (Arrays.stream(commands).anyMatch(it -> !Arrays.asList(flag.getOption().commands()).contains(it))) {
+                ProjectViewProblem problem = new ProjectViewProblem(
+                    BazelProjectViewLocalize.annotatorFlagNotAllowedHereError(subject, Arrays.toString(commands)),
+                    ProjectViewProblem.Severity.Warning,
+                    ProjectViewProblem.Type.Message,
+                    List.of(),
+                    null
+                );
+                sink.report(problem);
+            }
+        };
+    }
+
+    // consulo: Kotlin stdlib/IntelliJ helpers used by the upstream code
+
+    // Kotlin String.toIntOrNull()
+    private static @Nullable Integer toIntOrNull(String value) {
+        try {
+            return Integer.parseInt(value);
+        }
+        catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // Kotlin String.toBooleanStrictOrNull()
+    private static @Nullable Boolean toBooleanStrictOrNull(String value) {
+        if (value.equals("true")) {
+            return true;
+        }
+        if (value.equals("false")) {
+            return false;
+        }
+        return null;
+    }
+
+    // IntelliJ String.toNioPathOrNull()
+    private static @Nullable Path toNioPathOrNull(String value) {
+        try {
+            return Path.of(value);
+        }
+        catch (InvalidPathException e) {
+            return null;
+        }
+    }
+
+    // Kotlin String.removePrefix()
+    private static String removePrefix(String value, String prefix) {
+        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
+    }
 }

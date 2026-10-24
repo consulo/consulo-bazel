@@ -18,7 +18,7 @@ import org.jspecify.annotations.NullMarked;
 
 /**
  * Upstream Bazel plugin core modules compiled as one module (they share packages), see CONSULO.md:
- * {@code intellij.bazel.languages}, {@code intellij.bazel.commons}.
+ * {@code intellij.bazel.languages}, {@code intellij.bazel.commons}, {@code intellij.bazel.projectview}.
  *
  * @author VISTALL
  * @since 2026-10-24
@@ -29,6 +29,8 @@ module consulo.bazel.base {
     requires consulo.language.impl;
     requires consulo.language.editor.api;
     requires consulo.language.code.style.api;
+    requires consulo.language.code.style.ui.api;
+    requires consulo.datacontext.api;
     requires consulo.color.scheme.api;
     requires consulo.code.editor.api;
     requires consulo.ui.api;
@@ -63,11 +65,13 @@ module consulo.bazel.base {
     exports consulo.bazel.languages.icon;
     exports consulo.bazel.languages.localize;
     exports consulo.bazel.commons.localize;
+    exports consulo.bazel.projectview.localize;
 
     // consulo-only
     exports consulo.bazel.languages;
     exports consulo.bazel.commons;
     exports consulo.bazel.documentation;
+    exports consulo.bazel.projectview;
 
     exports org.jetbrains.bazel.languages;
     exports org.jetbrains.bazel.languages.bazelquery;
@@ -132,6 +136,27 @@ module consulo.bazel.base {
     exports org.jetbrains.bazel.workspace;
     exports org.jetbrains.bsp.protocol;
     exports org.jetbrains.bsp.protocol.utils;
+
+    // intellij.bazel.projectview
+    exports org.jetbrains.bazel.flow.open;
+    exports org.jetbrains.bazel.languages.bazelrc.documentation;
+    exports org.jetbrains.bazel.languages.bazelrc.flags;
+    exports org.jetbrains.bazel.languages.projectview.annotation;
+    exports org.jetbrains.bazel.languages.projectview.annotation.quickfix;
+    exports org.jetbrains.bazel.languages.projectview.base;
+    exports org.jetbrains.bazel.languages.projectview.checker;
+    exports org.jetbrains.bazel.languages.projectview.commenter;
+    exports org.jetbrains.bazel.languages.projectview.completion;
+    exports org.jetbrains.bazel.languages.projectview.documentation;
+    exports org.jetbrains.bazel.languages.projectview.elements;
+    exports org.jetbrains.bazel.languages.projectview.formatting;
+    exports org.jetbrains.bazel.languages.projectview.highlighting;
+    exports org.jetbrains.bazel.languages.projectview.lexer;
+    exports org.jetbrains.bazel.languages.projectview.parser;
+    exports org.jetbrains.bazel.languages.projectview.project;
+    exports org.jetbrains.bazel.languages.projectview.psi;
+    exports org.jetbrains.bazel.languages.projectview.psi.sections;
+    exports org.jetbrains.bazel.languages.projectview.references;
 
     // reflection: persistent settings state and Gson-parsed model classes
     opens org.jetbrains.bazel.settings.bazel to consulo.util.xml.serializer;

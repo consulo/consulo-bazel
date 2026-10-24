@@ -1,64 +1,105 @@
-package org.jetbrains.bazel.languages.projectview.documentation
+package org.jetbrains.bazel.languages.projectview.documentation;
 
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.lang.documentation.QuickDocHighlightingHelper
-import com.intellij.model.Pointer
-import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.platform.backend.documentation.DocumentationResult
-import com.intellij.platform.backend.documentation.DocumentationTarget
-import com.intellij.platform.backend.documentation.DocumentationTargetProvider
-import com.intellij.platform.backend.documentation.LookupElementDocumentationTargetProvider
-import com.intellij.platform.backend.presentation.TargetPresentation
-import com.intellij.psi.PsiFile
-import org.jetbrains.bazel.languages.projectview.ProjectViewSection
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
-import org.jetbrains.bazel.languages.projectview.highlighting.ProjectViewHighlightingColors
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionName
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.documentation.DocumentationResult;
+import consulo.bazel.documentation.DocumentationTarget;
+import consulo.bazel.documentation.DocumentationTargetProvider;
+import consulo.bazel.documentation.LookupElementDocumentationTargetProvider;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.pattern.PsiElementPattern;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.util.lang.xml.XmlStringUtil;
+import org.jetbrains.bazel.languages.projectview.ProjectViewSection;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionName;
+import org.jspecify.annotations.Nullable;
 
-internal class ProjectViewSectionDocumentationTargetProvider : DocumentationTargetProvider {
-  override fun documentationTargets(file: PsiFile, offset: Int): List<DocumentationTarget> {
-    val element = file.findElementAt(offset) ?: return emptyList()
-    if (element.language !is ProjectViewLanguage) return emptyList()
-    if (element.parent !is ProjectViewPsiSectionName) return emptyList()
-    val section = ProjectViewSection.findByPsi(element) ?: return emptyList()
-    return listOf(SectionDocumentationTarget(section))
-  }
+import java.util.List;
+
+import static consulo.language.pattern.PlatformPatterns.psiElement;
+
+// consulo: this file declares only package-private top-level classes (registered with @ExtensionImpl, which does not
+// support nested classes), so no class is named after the file
+
+@ExtensionImpl
+class ProjectViewSectionDocumentationTargetProvider implements DocumentationTargetProvider {
+    public ProjectViewSectionDocumentationTargetProvider() {
+    }
+
+    @Override
+    public List<? extends DocumentationTarget> documentationTargets(PsiFile file, int offset) {
+        PsiElement element = file.findElementAt(offset);
+        if (element == null) {
+            return List.of();
+        }
+        if (!(element.getLanguage() instanceof ProjectViewLanguage)) {
+            return List.of();
+        }
+        if (!(element.getParent() instanceof ProjectViewPsiSectionName)) {
+            return List.of();
+        }
+        ProjectViewSection<?> section = ProjectViewSection.findByPsi(element);
+        if (section == null) {
+            return List.of();
+        }
+        return List.of(new SectionDocumentationTarget(section));
+    }
 }
 
-internal class ProjectViewSectionLookupElementDocumentationTargetProvider : LookupElementDocumentationTargetProvider {
-  override fun documentationTarget(
-    psiFile: PsiFile,
-    lookupElement: LookupElement,
-    offset: Int,
-  ): DocumentationTarget? {
-    val psiElement = psiFile.findElementAt(offset) ?: return null
-    if (!projectViewSectionElement.accepts(psiElement)) return null
-    val section = ProjectViewSection.findByName(lookupElement.lookupString) ?: return null
-    return SectionDocumentationTarget(section)
-  }
+@ExtensionImpl
+class ProjectViewSectionLookupElementDocumentationTargetProvider implements LookupElementDocumentationTargetProvider {
+    public ProjectViewSectionLookupElementDocumentationTargetProvider() {
+    }
 
-  companion object {
-    private val projectViewSectionElement =
-      psiElement()
-        .withLanguage(ProjectViewLanguage)
-        .withSuperParent(2, ProjectViewPsiFile::class.java)
-        .inFile(psiElement(ProjectViewPsiFile::class.java))
-  }
+    @Override
+    public @Nullable DocumentationTarget documentationTarget(
+        PsiFile psiFile,
+        LookupElement lookupElement,
+        int offset
+    ) {
+        PsiElement psiElement = psiFile.findElementAt(offset);
+        if (psiElement == null) {
+            return null;
+        }
+        if (!PROJECT_VIEW_SECTION_ELEMENT.accepts(psiElement)) {
+            return null;
+        }
+        ProjectViewSection<?> section = ProjectViewSection.findByName(lookupElement.getLookupString());
+        if (section == null) {
+            return null;
+        }
+        return new SectionDocumentationTarget(section);
+    }
+
+    // companion object
+
+    private static final PsiElementPattern.Capture<PsiElement> PROJECT_VIEW_SECTION_ELEMENT =
+        psiElement()
+            .withLanguage(ProjectViewLanguage.INSTANCE)
+            .withSuperParent(2, ProjectViewPsiFile.class)
+            .inFile(psiElement(ProjectViewPsiFile.class));
 }
 
-internal class SectionDocumentationTarget(
-  private val section: ProjectViewSection<*>,
-) : DocumentationTarget, Pointer<SectionDocumentationTarget> {
-  override fun createPointer(): Pointer<SectionDocumentationTarget> = this
-  override fun dereference(): SectionDocumentationTarget = this
+class SectionDocumentationTarget implements DocumentationTarget {
+    private final ProjectViewSection<?> mySection;
 
-  override fun computePresentation(): TargetPresentation = TargetPresentation.builder(section.key.name).presentation()
+    SectionDocumentationTarget(
+        ProjectViewSection<?> section
+    ) {
+        mySection = section;
+    }
 
-  override fun computeDocumentation(): DocumentationResult {
-    val sectionName = QuickDocHighlightingHelper.getStyledFragment(section.key.name, ProjectViewHighlightingColors.KEYWORD)
-    @Suppress("HardCodedStringLiteral")
-    val documentation = "<pre>${sectionName}</pre><hr/> ${section.documentation}"
-    return DocumentationResult.documentation(documentation)
-  }
+    // consulo: createPointer(), dereference() and computePresentation() are dropped,
+    // pointer/presentation are not used by the classic documentation provider
+
+    @Override
+    public DocumentationResult computeDocumentation() {
+        // consulo: QuickDocHighlightingHelper.getStyledFragment(name, ProjectViewHighlightingColors.KEYWORD) does not exist in Consulo,
+        // the section name is bold escaped text
+        String sectionName = "<b>" + XmlStringUtil.escapeText(mySection.getKey().getName()) + "</b>";
+        String documentation = "<pre>" + sectionName + "</pre><hr/> " + mySection.getDocumentation().get();
+        return DocumentationResult.documentation(documentation);
+    }
 }

@@ -1,51 +1,76 @@
-package org.jetbrains.bazel.languages.projectview.completion
+package org.jetbrains.bazel.languages.projectview.completion;
 
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.codeInsight.completion.CompletionResultSet
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.util.endOffset
-import com.intellij.util.PlatformIcons
-import com.intellij.util.ProcessingContext
-import org.jetbrains.bazel.languages.bazelrc.flags.BazelFlagSymbol
-import org.jetbrains.bazel.languages.bazelrc.flags.Flag
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
+import consulo.language.editor.completion.CompletionParameters;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionResultSet;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.language.util.ProcessingContext;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.util.lang.Pair;
+import org.jetbrains.bazel.languages.bazelrc.flags.BazelFlagSymbol;
+import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
 
-internal class FlagCompletionProvider(
-  val commands: Array<out String>
-) : CompletionProvider<CompletionParameters>() {
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-  override fun addCompletions(
-    parameters: CompletionParameters,
-    context: ProcessingContext,
-    result: CompletionResultSet,
-  ) {
-    val section = PsiTreeUtil.getParentOfType(parameters.position, ProjectViewPsiSection::class.java) ?: return
-    val previousFlags = section.getItems().map { it.text.trim() }.filter { it.isNotEmpty() }
-    val pos = parameters.position
-    val flags =
-      Flag.all().filter {
-        !previousFlags.contains(it.key) &&
-          commands.all { cmd -> cmd in it.value.option.commands }
-      }
-    result.run {
-      addAllElements(
-        flags.entries.map { it -> Pair(it.key, BazelFlagSymbol(it.value, pos.project)) }.map { (k, flagSymbol) ->
-          LookupElementBuilder
-            .create(flagSymbol, k)
-            .withTypeText(" ${flagSymbol.flag.option.valueHelp}")
-            .withPresentableText(k)
-            .withIcon(PlatformIcons.PARAMETER_ICON)
-            .withInsertHandler { ctx, _ ->
-              ctx.file.findElementAt(ctx.startOffset)?.let { psiElement ->
-                if (psiElement.text != k) {
-                  ctx.editor.document.replaceString(psiElement.textOffset, psiElement.endOffset, k)
-                }
-              }
-            }
-        },
-      )
+public class FlagCompletionProvider implements CompletionProvider {
+    private final String[] myCommands;
+
+    public FlagCompletionProvider(String[] commands) {
+        myCommands = commands;
     }
-  }
+
+    public String[] getCommands() {
+        return myCommands;
+    }
+
+    @Override
+    public void addCompletions(
+        CompletionParameters parameters,
+        ProcessingContext context,
+        CompletionResultSet result
+    ) {
+        ProjectViewPsiSection section = PsiTreeUtil.getParentOfType(parameters.getPosition(), ProjectViewPsiSection.class);
+        if (section == null) {
+            return;
+        }
+        List<String> previousFlags = section.getItems().stream().map(it -> it.getText().trim()).filter(it -> !it.isEmpty()).toList();
+        PsiElement pos = parameters.getPosition();
+        Map<String, Flag> flags = new LinkedHashMap<>();
+        for (Map.Entry<String, Flag> it : Flag.all().entrySet()) {
+            if (!previousFlags.contains(it.getKey()) &&
+                Arrays.stream(myCommands).allMatch(cmd -> Arrays.asList(it.getValue().getOption().commands()).contains(cmd))) {
+                flags.put(it.getKey(), it.getValue());
+            }
+        }
+        result.addAllElements(
+            flags.entrySet().stream()
+                .map(it -> Pair.create(it.getKey(), new BazelFlagSymbol(it.getValue(), pos.getProject())))
+                .map(pair -> {
+                    String k = pair.getFirst();
+                    BazelFlagSymbol flagSymbol = pair.getSecond();
+                    return LookupElementBuilder
+                        .create(flagSymbol, k)
+                        .withTypeText(" " + flagSymbol.getFlag().getOption().valueHelp())
+                        .withPresentableText(k)
+                        .withIcon(PlatformIconGroup.nodesParameter())
+                        .withInsertHandler((ctx, item) -> {
+                            PsiElement psiElement = ctx.getFile().findElementAt(ctx.getStartOffset());
+                            if (psiElement != null) {
+                                if (!psiElement.getText().equals(k)) {
+                                    ctx.getEditor()
+                                        .getDocument()
+                                        .replaceString(psiElement.getTextOffset(), psiElement.getTextRange().getEndOffset(), k);
+                                }
+                            }
+                        });
+                })
+                .toList()
+        );
+    }
 }

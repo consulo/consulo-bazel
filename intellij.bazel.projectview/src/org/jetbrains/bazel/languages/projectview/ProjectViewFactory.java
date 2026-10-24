@@ -1,174 +1,276 @@
-package org.jetbrains.bazel.languages.projectview
+package org.jetbrains.bazel.languages.projectview;
 
-import com.intellij.openapi.diagnostic.getOrHandleException
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.fileEditor.impl.LoadTextUtil
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiFileFactory
-import com.intellij.psi.impl.PsiFileFactoryImpl
-import com.intellij.testFramework.ReadOnlyLightVirtualFile
-import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.flow.open.ProjectViewFileUtils
-import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage
-import org.jetbrains.bazel.languages.projectview.imports.Import
-import org.jetbrains.bazel.languages.projectview.imports.ImportFactory
-import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImportBase
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
-import org.jetbrains.bazel.utils.findVirtualFile
-import java.nio.file.Path
-import kotlin.io.path.readBytes
+import consulo.document.Document;
+import consulo.document.FileDocumentManager;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiFileFactory;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.io.CharsetToolkit;
+import consulo.util.lang.ControlFlowException;
+import consulo.util.lang.Pair;
+import consulo.util.lang.StringUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.flow.open.ProjectViewFileUtils;
+import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jetbrains.bazel.languages.projectview.imports.Import;
+import org.jetbrains.bazel.languages.projectview.imports.ImportFactory;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiImportBase;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jetbrains.bazel.utils.PathUtil;
+import org.jspecify.annotations.Nullable;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CancellationException;
+
+import static org.jetbrains.bazel.config.project.getRootDir;
 
 /**
  * The project view is parsed using light PSI rather than regular PSI.
- *
+ * <p>
  * Using regular PSI was leading to problems when used in `BazelProjectStorePathCustomizer`. Also, using regular PSI is not needed.
- *
+ * <p>
  * Regular PSI might lead to FileDocumentManagerListener.fileContentLoaded publishing,
  * which reaches the listeners of every project - including the one that might be currently initialized.
  * In our case BreakpointInstrumentationFileDocumentManagerListener, could be triggered resulting in some project-level service access,
  * but it's not allowed before the project is fully initialized.
- *
+ * <p>
  * It is hard to reproduce because in regular usage `BazelProjectStorePathCustomizer` is called multiple times e.g. before the project init.
  * `BazelProjectStorePathCustomizer` call before actual project init is safe, and it keeps the project view file cached,
  * so the later call during the project init does not produce the event (and therefore the error).
  * However, if the GC clears the loaded file, then the call during project init needs to load the file again, and it leads to exception.
  */
-@ApiStatus.Internal
-object ProjectViewFactory {
-
-  @RequiresBackgroundThread(generateAssertion = false)
-  fun fromOrNull(
-    project: Project,
-    path: Path,
-    root: Path = project.rootDir.toNioPath(),
-  ): ProjectView? = runCatching { from(project, path, root) }
-    // In principle, project view parse should not throw.
-    // However, in case it does, it might break some code paths e.g. project opening, so it's better to keep it in a try-catch block.
-    .getOrHandleException {
-      log.error("Failed to load project view file at $path.", it)
+public final class ProjectViewFactory {
+    private ProjectViewFactory() {
     }
 
-  @RequiresBackgroundThread(generateAssertion = false)
-  fun fromDefault(
-    project: Project,
-    forceDefaultTemplate: Boolean = false,
-  ): ProjectView = from(
-    project = project,
-    content = ProjectViewFileUtils.projectViewTemplate(project.rootDir, forceDefaultTemplate = forceDefaultTemplate),
-  )
+    public static @Nullable ProjectView fromOrNull(
+        Project project,
+        Path path
+    ) {
+        return fromOrNull(project, path, getRootDir(project).toNioPath());
+    }
 
-  @RequiresBackgroundThread(generateAssertion = false)
-  fun from(
-    project: Project,
-    source: Path,
-    root: Path = project.rootDir.toNioPath(),
-  ): ProjectView = from(project, readContent(source), root, source)
-
-  @RequiresBackgroundThread(generateAssertion = false)
-  fun from(
-    project: Project,
-    content: CharSequence,
-    root: Path = project.rootDir.toNioPath(),
-    source: Path? = null,
-  ): ProjectView {
-    val name = source?.fileName?.toString() ?: Constants.DEFAULT_PROJECT_VIEW_FILE_NAME
-    return fromPsiFile(createLightPsiFile(project, name, content), source, root, setOfNotNull(source))
-  }
-
-  private fun fromPsiFile(
-    psi: ProjectViewPsiFile,
-    source: Path?,
-    root: Path,
-    visited: Set<Path>,
-  ): ProjectView {
-    val imports = mutableListOf<Import>()
-    val sections = mutableMapOf<ProjectViewSectionKey<*>, Any>()
-    for (it in psi.children) {
-      when (it) {
-        is ProjectViewPsiSection -> {
-          val (section, value) = it.toSectionWithValue() ?: continue
-          mergeSection(sections, section.key, value)
+    public static @Nullable ProjectView fromOrNull(
+        Project project,
+        Path path,
+        Path root
+    ) {
+        try {
+            return from(project, path, root);
         }
-
-        is ProjectViewPsiImportBase -> {
-          val import = ImportFactory.from(root, it, source)
-          imports += import
-          // skip if recursion detected
-          if (import is Import.Resolved && import.path !in visited) {
-            parseImport(
-              project = psi.project,
-              import = import,
-              into = sections,
-              root = root,
-              visited = visited,
-            )
-          }
+        // In principle, project view parse should not throw.
+        // However, in case it does, it might break some code paths e.g. project opening, so it's better to keep it in a try-catch block.
+        catch (Throwable e) {
+            // consulo: upstream getOrHandleException rethrows control flow and cancellation exceptions
+            if (e instanceof ControlFlowException || e instanceof CancellationException) {
+                throw e;
+            }
+            LOG.error("Failed to load project view file at " + path + ".", e);
+            return null;
         }
-      }
     }
-    return ProjectView(sections, imports)
-  }
 
-  private fun mergeSection(
-    target: MutableMap<ProjectViewSectionKey<*>, Any>,
-    sectionKey: ProjectViewSectionKey<*>,
-    value: Any,
-  ) {
-    val existing = target[sectionKey]
-    if (existing is Collection<*> && value is Collection<*>) {
-      target[sectionKey] = existing + value
+    public static ProjectView fromDefault(Project project) {
+        return fromDefault(project, false);
     }
-    else {
-      target[sectionKey] = value
+
+    public static ProjectView fromDefault(
+        Project project,
+        boolean forceDefaultTemplate
+    ) {
+        return from(
+            project,
+            ProjectViewFileUtils.projectViewTemplate(getRootDir(project), null, forceDefaultTemplate)
+        );
     }
-  }
 
-  private fun parseImport(
-    project: Project,
-    import: Import.Resolved,
-    into: MutableMap<ProjectViewSectionKey<*>, Any>,
-    root: Path,
-    visited: Set<Path>,
-  ) {
-    val psiFile = runCatching { createLightPsiFile(project, import.path.fileName.toString(), readContent(import.path)) }
-      .getOrHandleException { log.warn("Failed to parse imported project view file ${import.path}. Skipping the import.", it) }
-      ?: return
-    val otherProjectView = fromPsiFile(psiFile, import.path, root, visited.plusElement(import.path))
-    for ((sectionKey, value) in otherProjectView.sections) {
-      mergeSection(into, sectionKey, value)
+    public static ProjectView from(
+        Project project,
+        Path source
+    ) {
+        return from(project, source, getRootDir(project).toNioPath());
     }
-  }
 
-  /**
-   * - the file already has a document - take its text, so that unsaved editor changes are not lost.
-   *   [FileDocumentManager.getCachedDocument] returns an already loaded document and never loads one.
-   * - otherwise - read the file itself.
-   *
-   * [LoadTextUtil] decodes the bytes, so the charset of the file is respected and its byte order mark is stripped.
-   */
-  private fun readContent(path: Path): CharSequence {
-    val document = path.findVirtualFile()?.let { FileDocumentManager.getInstance().getCachedDocument(it) }
-    return document?.immutableCharSequence ?: LoadTextUtil.getTextByBinaryPresentation(path.readBytes(), Charsets.UTF_8)
-  }
+    public static ProjectView from(
+        Project project,
+        Path source,
+        Path root
+    ) {
+        return from(project, readContent(source), root, source);
+    }
 
-  private fun createLightPsiFile(project: Project, name: String, content: CharSequence): ProjectViewPsiFile {
-    val lightFile = ReadOnlyLightVirtualFile(name, ProjectViewLanguage, content)
-    val psiFileFactory = PsiFileFactory.getInstance(project)
-    val factory = psiFileFactory as? PsiFileFactoryImpl ?: error("Expected ${PsiFileFactoryImpl::class.simpleName}, got ${psiFileFactory.javaClass.name}")
-    val psiFile = factory.trySetupPsiForFile(lightFile, ProjectViewLanguage, false, false)
-    return psiFile as? ProjectViewPsiFile ?: error("Expected ${ProjectViewPsiFile::class.simpleName} for $name, got ${psiFile?.javaClass?.name}")
-  }
+    public static ProjectView from(
+        Project project,
+        CharSequence content
+    ) {
+        return from(project, content, getRootDir(project).toNioPath());
+    }
 
-  private fun ProjectViewPsiSection.toSectionWithValue(): Pair<ProjectViewSection<*>, Any>? {
-    val section = ProjectViewSection.findByPsi(this) ?: return null
-    val value = read(type = section.type) ?: return null
-    return section to value
-  }
+    public static ProjectView from(
+        Project project,
+        CharSequence content,
+        Path root
+    ) {
+        return from(project, content, root, null);
+    }
 
-  private val log = logger<ProjectViewFactory>()
+    public static ProjectView from(
+        Project project,
+        CharSequence content,
+        Path root,
+        @Nullable Path source
+    ) {
+        Path fileName = source != null ? source.getFileName() : null;
+        String name = fileName != null ? fileName.toString() : Constants.DEFAULT_PROJECT_VIEW_FILE_NAME;
+        return fromPsiFile(createLightPsiFile(project, name, content), source, root, source != null ? Set.of(source) : Set.of());
+    }
+
+    private static ProjectView fromPsiFile(
+        ProjectViewPsiFile psi,
+        @Nullable Path source,
+        Path root,
+        Set<Path> visited
+    ) {
+        List<Import> imports = new ArrayList<>();
+        Map<ProjectViewSectionKey<?>, Object> sections = new LinkedHashMap<>();
+        for (PsiElement it : psi.getChildren()) {
+            if (it instanceof ProjectViewPsiSection psiSection) {
+                Pair<ProjectViewSection<?>, Object> sectionWithValue = toSectionWithValue(psiSection);
+                if (sectionWithValue == null) {
+                    continue;
+                }
+                ProjectViewSection<?> section = sectionWithValue.getFirst();
+                Object value = sectionWithValue.getSecond();
+                mergeSection(sections, section.getKey(), value);
+            }
+            else if (it instanceof ProjectViewPsiImportBase psiImport) {
+                Import anImport = ImportFactory.from(root, psiImport, source);
+                imports.add(anImport);
+                // skip if recursion detected
+                if (anImport instanceof Import.Resolved resolved && !visited.contains(resolved.path())) {
+                    parseImport(
+                        psi.getProject(),
+                        resolved,
+                        sections,
+                        root,
+                        visited
+                    );
+                }
+            }
+        }
+        return new ProjectView(sections, imports);
+    }
+
+    private static void mergeSection(
+        Map<ProjectViewSectionKey<?>, Object> target,
+        ProjectViewSectionKey<?> sectionKey,
+        Object value
+    ) {
+        Object existing = target.get(sectionKey);
+        if (existing instanceof Collection<?> existingCollection && value instanceof Collection<?> valueCollection) {
+            List<Object> merged = new ArrayList<>(existingCollection);
+            merged.addAll(valueCollection);
+            target.put(sectionKey, merged);
+        }
+        else {
+            target.put(sectionKey, value);
+        }
+    }
+
+    private static void parseImport(
+        Project project,
+        Import.Resolved anImport,
+        Map<ProjectViewSectionKey<?>, Object> into,
+        Path root,
+        Set<Path> visited
+    ) {
+        ProjectViewPsiFile psiFile;
+        try {
+            psiFile = createLightPsiFile(project, anImport.path().getFileName().toString(), readContent(anImport.path()));
+        }
+        catch (Throwable e) {
+            // consulo: upstream getOrHandleException rethrows control flow and cancellation exceptions
+            if (e instanceof ControlFlowException || e instanceof CancellationException) {
+                throw e;
+            }
+            LOG.warn("Failed to parse imported project view file " + anImport.path() + ". Skipping the import.", e);
+            return;
+        }
+        Set<Path> newVisited = new LinkedHashSet<>(visited);
+        newVisited.add(anImport.path());
+        ProjectView otherProjectView = fromPsiFile(psiFile, anImport.path(), root, newVisited);
+        for (Map.Entry<ProjectViewSectionKey<?>, Object> entry : otherProjectView.getSections().entrySet()) {
+            mergeSection(into, entry.getKey(), entry.getValue());
+        }
+    }
+
+    /**
+     * - the file already has a document - take its text, so that unsaved editor changes are not lost.
+     * {@link FileDocumentManager#getCachedDocument} returns an already loaded document and never loads one.
+     * - otherwise - read the file itself.
+     * <p>
+     * LoadTextUtil decodes the bytes, so the charset of the file is respected and its byte order mark is stripped.
+     */
+    private static CharSequence readContent(Path path) {
+        VirtualFile virtualFile = PathUtil.findVirtualFile(path);
+        Document document = virtualFile != null ? FileDocumentManager.getInstance().getCachedDocument(virtualFile) : null;
+        if (document != null) {
+            return document.getImmutableCharSequence();
+        }
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(path);
+        }
+        catch (IOException e) {
+            // consulo: Kotlin does not have checked exceptions
+            throw new UncheckedIOException(e);
+        }
+        // consulo: LoadTextUtil.getTextByBinaryPresentation(bytes, UTF_8) is internal in Consulo; the same steps with public API:
+        // the charset is overridden by the byte order mark, the mark is skipped, line separators are converted to '\n'
+        Charset bomCharset = CharsetToolkit.guessFromBOM(bytes);
+        Charset charset = bomCharset != null ? bomCharset : StandardCharsets.UTF_8;
+        return StringUtil.convertLineSeparators(CharsetToolkit.decodeString(bytes, charset));
+    }
+
+    private static ProjectViewPsiFile createLightPsiFile(Project project, String name, CharSequence content) {
+        // consulo: upstream creates a ReadOnlyLightVirtualFile(name, ProjectViewLanguage, content) and calls
+        // (PsiFileFactory as PsiFileFactoryImpl).trySetupPsiForFile(lightFile, ProjectViewLanguage, false, false)
+        PsiFile psiFile = PsiFileFactory.getInstance(project).createFileFromText(name, ProjectViewLanguage.INSTANCE, content, false, false);
+        if (psiFile instanceof ProjectViewPsiFile projectViewPsiFile) {
+            return projectViewPsiFile;
+        }
+        throw new IllegalStateException(
+            "Expected " + ProjectViewPsiFile.class.getSimpleName() + " for " + name + ", got " + psiFile.getClass().getName()
+        );
+    }
+
+    private static @Nullable Pair<ProjectViewSection<?>, Object> toSectionWithValue(ProjectViewPsiSection receiver) {
+        ProjectViewSection<?> section = ProjectViewSection.findByPsi(receiver);
+        if (section == null) {
+            return null;
+        }
+        Object value = ProjectViewSectionType.read(receiver, section.getType());
+        if (value == null) {
+            return null;
+        }
+        return Pair.create(section, value);
+    }
+
+    private static final Logger LOG = Logger.getInstance(ProjectViewFactory.class);
 }

@@ -1,23 +1,44 @@
-package org.jetbrains.bazel.languages.projectview.base
+package org.jetbrains.bazel.languages.projectview.base;
 
-import com.intellij.openapi.fileTypes.LanguageFileType
-import com.intellij.openapi.util.IconLoader
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.BazelProjectViewBundle
-import javax.swing.Icon
+import consulo.bazel.projectview.localize.BazelProjectViewLocalize;
+import consulo.language.file.LanguageFileType;
+import consulo.localize.LocalizeValue;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.BazelLanguagesIcons;
 
-@ApiStatus.Internal
-object ProjectViewFileType : LanguageFileType(ProjectViewLanguage) {
+public class ProjectViewFileType extends LanguageFileType {
+    public static final ProjectViewFileType INSTANCE = new ProjectViewFileType();
 
-  // TODO: whole icon loading for entire bazel plugin should be moved to dedicated module
-  //  this works because intellij.bazel.projectview module is in the same classloader as core module
-  val bazelIcon = IconLoader.getIcon("icons/bazel.svg", ProjectViewFileType::class.java.classLoader)
+    private ProjectViewFileType() {
+        super(ProjectViewLanguage.INSTANCE);
+    }
 
-  override fun getName(): String = "ProjectView"
+    // TODO: whole icon loading for entire bazel plugin should be moved to dedicated module
+    //  this works because intellij.bazel.projectview module is in the same classloader as core module
+    // consulo: upstream loads icons/bazel.svg with IconLoader; the icon is served by BazelLanguagesIconGroup
+    private final Image myBazelIcon = BazelLanguagesIcons.bazel();
 
-  override fun getDescription(): String = BazelProjectViewBundle.message("bazel.language.projectview.description")
+    public Image getBazelIcon() {
+        return myBazelIcon;
+    }
 
-  override fun getDefaultExtension(): String = "bazelproject"
+    @Override
+    public String getId() {
+        return "ProjectView";
+    }
 
-  override fun getIcon(): Icon = bazelIcon
+    @Override
+    public LocalizeValue getDescription() {
+        return BazelProjectViewLocalize.bazelLanguageProjectviewDescription();
+    }
+
+    @Override
+    public String getDefaultExtension() {
+        return "bazelproject";
+    }
+
+    @Override
+    public Image getIcon() {
+        return myBazelIcon;
+    }
 }

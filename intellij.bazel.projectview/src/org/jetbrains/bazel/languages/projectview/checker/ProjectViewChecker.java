@@ -1,87 +1,113 @@
-package org.jetbrains.bazel.languages.projectview.checker
+package org.jetbrains.bazel.languages.projectview.checker;
 
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.BazelProjectViewBundle
-import org.jetbrains.bazel.languages.projectview.ProjectViewSection
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection
+import consulo.bazel.projectview.localize.BazelProjectViewLocalize;
+import consulo.language.psi.PsiElement;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.projectview.ProjectViewSection;
+import org.jetbrains.bazel.languages.projectview.ProjectViewSectionType;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSectionItem;
 
-typealias ProjectViewPsiSectionChecker = ProjectViewChecker<ProjectViewPsiSection>
-typealias ProjectViewValueChecker = ProjectViewChecker<String>
+import java.util.List;
 
-@ApiStatus.Internal
-fun interface ProjectViewChecker<T> {
+// consulo: the upstream typealiases are spelled out:
+// ProjectViewPsiSectionChecker = ProjectViewChecker<ProjectViewPsiSection>, ProjectViewValueChecker = ProjectViewChecker<String>
 
-  fun check(project: Project, subject: T, sink: Sink)
+@FunctionalInterface
+public interface ProjectViewChecker<T> {
 
-  fun interface Sink {
-    fun report(problem: ProjectViewProblem)
-  }
+    void check(Project project, T subject, Sink sink);
 
-  companion object {
-
-    private val checkers = listOf(
-      unsupportedSectionChecker,
-      typeValueChecker,
-      sectionDeprecationChecker,
-    )
-
-    fun run(section: ProjectViewPsiSection, sink: Sink) {
-      checkers.forEach {
-        it.check(section.project, section, sink)
-      }
+    @FunctionalInterface
+    interface Sink {
+        void report(ProjectViewProblem problem);
     }
-  }
-}
 
-private val unsupportedSectionChecker = ProjectViewPsiSectionChecker { _, subject, sink ->
-  val section = ProjectViewSection.findByPsi(subject)
-  if (section == null) {
-    val problem = ProjectViewProblem(
-      message = BazelProjectViewBundle.message("annotator.unsupported.section.warning"),
-      severity = ProjectViewProblem.Severity.Warning,
-      element = subject.getKeyword(),
-    )
-    sink.report(problem)
-    return@ProjectViewPsiSectionChecker
-  }
-}
+    // companion object
 
-private val typeValueChecker = ProjectViewPsiSectionChecker { project, subject, sink ->
-  val section = ProjectViewSection.findByPsi(subject) ?: return@ProjectViewPsiSectionChecker
-  val type = section.type
-  subject.getItems().forEach {
-    type.valueChecker?.check(project, it.text.trim(), sink.withElement(it))
-  }
-}
-
-private val sectionDeprecationChecker = ProjectViewPsiSectionChecker { _, subject, sink ->
-  val section = ProjectViewSection.findByPsi(subject) ?: return@ProjectViewPsiSectionChecker
-  val deprecation = section.deprecation ?: return@ProjectViewPsiSectionChecker
-  sink.report(
-    ProjectViewProblem(
-      message = deprecation.message,
-      severity = deprecation.level.toSeverity(),
-      type = ProjectViewProblem.Type.Deprecation,
-      element = subject.getKeyword(),
-      quickFixes = deprecation.quickFixes
-    )
-  )
-}
-
-private fun ProjectViewSection.Deprecation.Level.toSeverity() = when (this) {
-  ProjectViewSection.Deprecation.Level.Warning -> ProjectViewProblem.Severity.WeakWarning
-  ProjectViewSection.Deprecation.Level.Error -> ProjectViewProblem.Severity.Error
-}
-
-private fun ProjectViewChecker.Sink.withElement(element: PsiElement): ProjectViewChecker.Sink {
-  val delegate = this
-  return ProjectViewChecker.Sink {
-    val problem = when {
-      it.element == null -> it.copy(element = element)
-      else -> it
+    static void run(ProjectViewPsiSection section, Sink sink) {
+        for (ProjectViewChecker<ProjectViewPsiSection> it : ProjectViewCheckers.CHECKERS) {
+            it.check(section.getProject(), section, sink);
+        }
     }
-    delegate.report(problem)
-  }
+}
+
+// consulo: upstream private top-level declarations of ProjectViewChecker.kt and the private companion property `checkers`
+// (an interface cannot have private fields)
+final class ProjectViewCheckers {
+    private ProjectViewCheckers() {
+    }
+
+    private static final ProjectViewChecker<ProjectViewPsiSection> UNSUPPORTED_SECTION_CHECKER = (project, subject, sink) -> {
+        ProjectViewSection<?> section = ProjectViewSection.findByPsi(subject);
+        if (section == null) {
+            ProjectViewProblem problem = new ProjectViewProblem(
+                BazelProjectViewLocalize.annotatorUnsupportedSectionWarning(),
+                ProjectViewProblem.Severity.Warning,
+                ProjectViewProblem.Type.Message,
+                List.of(),
+                subject.getKeyword()
+            );
+            sink.report(problem);
+            return;
+        }
+    };
+
+    private static final ProjectViewChecker<ProjectViewPsiSection> TYPE_VALUE_CHECKER = (project, subject, sink) -> {
+        ProjectViewSection<?> section = ProjectViewSection.findByPsi(subject);
+        if (section == null) {
+            return;
+        }
+        ProjectViewSectionType<?> type = section.getType();
+        for (ProjectViewPsiSectionItem it : subject.getItems()) {
+            ProjectViewChecker<String> valueChecker = type.getValueChecker();
+            if (valueChecker != null) {
+                valueChecker.check(project, it.getText().trim(), withElement(sink, it));
+            }
+        }
+    };
+
+    private static final ProjectViewChecker<ProjectViewPsiSection> SECTION_DEPRECATION_CHECKER = (project, subject, sink) -> {
+        ProjectViewSection<?> section = ProjectViewSection.findByPsi(subject);
+        if (section == null) {
+            return;
+        }
+        ProjectViewSection.Deprecation deprecation = section.getDeprecation();
+        if (deprecation == null) {
+            return;
+        }
+        sink.report(
+            new ProjectViewProblem(
+                deprecation.getMessage(),
+                toSeverity(deprecation.getLevel()),
+                ProjectViewProblem.Type.Deprecation,
+                deprecation.getQuickFixes(),
+                subject.getKeyword()
+            )
+        );
+    };
+
+    // consulo: companion `checkers`, declared after the checkers it refers to (Java static initialization order)
+    static final List<ProjectViewChecker<ProjectViewPsiSection>> CHECKERS = List.of(
+        UNSUPPORTED_SECTION_CHECKER,
+        TYPE_VALUE_CHECKER,
+        SECTION_DEPRECATION_CHECKER
+    );
+
+    private static ProjectViewProblem.Severity toSeverity(ProjectViewSection.Deprecation.Level receiver) {
+        return switch (receiver) {
+            case Warning -> ProjectViewProblem.Severity.WeakWarning;
+            case Error -> ProjectViewProblem.Severity.Error;
+        };
+    }
+
+    private static ProjectViewChecker.Sink withElement(ProjectViewChecker.Sink receiver, PsiElement element) {
+        ProjectViewChecker.Sink delegate = receiver;
+        return it -> {
+            ProjectViewProblem problem = it.element() == null
+                ? new ProjectViewProblem(it.message(), it.severity(), it.type(), it.quickFixes(), element)
+                : it;
+            delegate.report(problem);
+        };
+    }
 }
