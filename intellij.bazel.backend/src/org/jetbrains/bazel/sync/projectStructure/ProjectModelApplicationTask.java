@@ -1,46 +1,46 @@
-package org.jetbrains.bazel.sync.projectStructure
+package org.jetbrains.bazel.sync.projectStructure;
 
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.diagnostic.telemetry.helpers.use
-import com.intellij.platform.diagnostic.telemetry.helpers.useWithScope
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.workspaceModel.ide.impl.WorkspaceModelImpl
-import org.jetbrains.bazel.config.BazelBackendBundle
-import org.jetbrains.bazel.performance.bspTracer
-import org.jetbrains.bazel.progress.syncConsole
-import org.jetbrains.bazel.progress.withSubtask
-import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.application.Application;
+import consulo.application.WriteAction;
+import consulo.bazel.backend.localize.BazelBackendLocalize;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.project.Project;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bsp.protocol.TaskId;
 
-internal class ProjectModelApplicationTask(
-  private val project: Project,
-  private val taskId: TaskId
-) {
-  companion object {
-    private const val MAX_REPLACE_WSM_ATTEMPTS = 3
-  }
+import java.util.concurrent.CompletableFuture;
 
-  suspend fun apply(storage: MutableEntityStorage) {
-    project.syncConsole.withSubtask(
-      subtaskId = taskId.subTask("apply-changes-on-workspace-model"),
-      message = BazelBackendBundle.message("console.task.model.apply.changes"),
-    ) {
-      bspTracer.spanBuilder("apply.changes.on.workspace.model.ms").useWithScope {
-        val workspaceModel = project.serviceAsync<WorkspaceModel>() as WorkspaceModelImpl
-        workspaceModel.updateWithRetry(
-          BazelBackendBundle.message("console.task.model.apply.changes.attempt.0.1.wsm", 0, 0),
-          MAX_REPLACE_WSM_ATTEMPTS,
-        ) { builder ->
-          bspTracer.spanBuilder("replaceprojectmodel.in.apply.on.workspace.model.ms").use {
-            builder.replaceBySource(
-              sourceFilter = { entitySource -> entitySource is BazelEntitySource },
-              replaceWith = storage,
-            )
-          }
-        }
-      }
+// consulo: the classic project model is applied instead of the workspace model. Upstream replaces the Bazel-sourced
+// entities (replaceBySource) with up to MAX_REPLACE_WSM_ATTEMPTS retries; BazelModelBuilder.commit() replaces the
+// Bazel-owned modules and libraries in one write action.
+public class ProjectModelApplicationTask {
+    private final Project myProject;
+    private final TaskId myTaskId;
+
+    public ProjectModelApplicationTask(Project project, TaskId taskId) {
+        myProject = project;
+        myTaskId = taskId;
     }
-  }
+
+    public CompletableFuture<Void> apply(BazelModelBuilder storage) {
+        return util.withSubtask(
+            util.getSyncConsole(myProject),
+            myTaskId.subTask("apply-changes-on-workspace-model"),
+            BazelBackendLocalize.consoleTaskModelApplyChanges(),
+            taskId -> {
+                CompletableFuture<Void> result = new CompletableFuture<>();
+                Application.get().invokeLater(() -> {
+                    try {
+                        WriteAction.run(storage::commit);
+                        result.complete(null);
+                    }
+                    catch (Throwable e) {
+                        storage.dispose();
+                        result.completeExceptionally(e);
+                    }
+                });
+                return result;
+            }
+        );
+    }
 }

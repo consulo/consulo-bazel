@@ -1,9 +1,10 @@
 package org.jetbrains.bazel.label;
 
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
 import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
 import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.Dependency.DependencyType;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelper;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 
 // TODO: move to backend-only entity and use WorkspaceConfigurationId
 public record DependencyLabel(

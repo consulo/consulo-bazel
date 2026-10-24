@@ -1,93 +1,138 @@
-package org.jetbrains.bazel.server.diagnostics
+package org.jetbrains.bazel.server.diagnostics;
 
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.server.diagnostics.Parser.Companion.PATH_PART
-import org.jetbrains.bsp.protocol.DiagnosticSeverity
-import org.jetbrains.bsp.protocol.Position
-import java.nio.file.InvalidPathException
-import java.nio.file.Paths
-import kotlin.io.path.exists
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bsp.protocol.DiagnosticSeverity;
+import org.jetbrains.bsp.protocol.Position;
+import org.jspecify.annotations.Nullable;
 
-internal object BazelOutputMessageParser : Parser {
-  private val COLOR = "\\u001B\\[[0-9]+(;[0-9]+)*m".toRegex()
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-  override fun tryParse(output: Output): List<Diagnostic> = findErrorInOutput(output)
+import static org.jetbrains.bazel.server.diagnostics.Parser.PATH_PART;
 
-  private val ErrorInOutput =
-    """
-      ^               # start of line
-      ERROR:\s*       # error indicator
-      (.*)            # error message
-      $               # end of line
-      """.toRegex(RegexOption.COMMENTS)
+final class BazelOutputMessageParser implements Parser {
+    public static final BazelOutputMessageParser INSTANCE = new BazelOutputMessageParser();
 
-  private val FileInOutput =
-    """
-      ^\s*                        # start of line
-      File\s*"(?<file>[^"]*)",    # file path
-      \s*line\s*(?<line>\d+),     # line number
-      \s*column\s*(?<char>\d+)    # caret position
-      .*$                         # the rest
-    """.toRegex(RegexOption.COMMENTS)
+    private static final Pattern COLOR = Pattern.compile("\\u001B\\[[0-9]+(;[0-9]+)*m");
 
-  private val FileBasedError =
-    """
-      ^                           # start of line
-      ?(?<file>$PATH_PART)        # file path
-      :(?<line>\d+)               # line number
-      :(?<char>\d+)               # caret position
-      :\s*(?<message>.+?)\s*$     # error message
-      """.toRegex(RegexOption.COMMENTS)
-
-  private fun findErrorInOutput(output: Output): List<Diagnostic> =
-    generateSequence { output.tryTake() }
-      .mapNotNull { line ->
-        val strippedLine = line.replace(COLOR, "")
-        ErrorInOutput.matchEntire(strippedLine)?.let { match ->
-          val lines = listOf (match.groups[1]!!.value) + generateSequence {
-            output.peek()
-              ?.replace(COLOR, "")
-              ?.takeUnless { ErrorInOutput.matchEntire(it) != null }
-              ?.also { output.take() }
-          }.filter { it.isNotBlank() }
-          createError(lines, output.targetLabel)
-        }
-      }.toList()
-
-  private fun createError(lines: List<String>, targetLabel: Label): Diagnostic {
-    var fileMatch : MatchResult? = null
-    val message = mutableListOf<String>()
-    lines.forEach { line ->
-      FileBasedError.matchEntire(line)?.let { match ->
-        fileMatch = match
-        message.add(match.groups["message"]!!.value)
-      } ?: message.add(line).also {
-        FileInOutput.matchEntire(line)?.let { match ->
-          fileMatch = match
-        }
-      }
+    private BazelOutputMessageParser() {
     }
-    fileMatch?.let { fileMatch ->
-      val file = try {
-        fileMatch.groups["file"]!!.let { Paths.get(it.value) }
-      } catch (_: InvalidPathException) {
-        null
-      }
-      if (file != null) {
-        val position = Position.fromHumanReadable(
-          fileMatch.groups["line"]!!.value.toInt(),
-          fileMatch.groups["char"]!!.value.toInt(),
-        )
-        val message = message.joinToString("\n").trim()
-        return Diagnostic(position, message, file, targetLabel, DiagnosticSeverity.ERROR)
-      }
+
+    @Override
+    public List<Diagnostic> tryParse(Output output) {
+        return findErrorInOutput(output);
     }
-    return Diagnostic(
-      position = Position.NONE,
-      message = message.joinToString("\n").trim(),
-      fileLocation = null,
-      targetLabel = targetLabel,
-      level = DiagnosticSeverity.ERROR,
-    )
-  }
+
+    private static final Pattern ERROR_IN_OUTPUT = Pattern.compile(
+        """
+          ^               # start of line
+          ERROR:\\s*       # error indicator
+          (.*)            # error message
+          $               # end of line
+          """,
+        Pattern.COMMENTS
+    );
+
+    private static final Pattern FILE_IN_OUTPUT = Pattern.compile(
+        """
+          ^\\s*                        # start of line
+          File\\s*"(?<file>[^"]*)",    # file path
+          \\s*line\\s*(?<line>\\d+),     # line number
+          \\s*column\\s*(?<char>\\d+)    # caret position
+          .*$                         # the rest
+        """,
+        Pattern.COMMENTS
+    );
+
+    private static final Pattern FILE_BASED_ERROR = Pattern.compile(
+        """
+          ^                           # start of line
+          ?(?<file>%s)        # file path
+          :(?<line>\\d+)               # line number
+          :(?<char>\\d+)               # caret position
+          :\\s*(?<message>.+?)\\s*$     # error message
+          """.formatted(PATH_PART),
+        Pattern.COMMENTS
+    );
+
+    private List<Diagnostic> findErrorInOutput(Output output) {
+        List<Diagnostic> result = new ArrayList<>();
+        while (true) {
+            String line = output.tryTake();
+            if (line == null) {
+                break;
+            }
+            String strippedLine = COLOR.matcher(line).replaceAll("");
+            Matcher match = ERROR_IN_OUTPUT.matcher(strippedLine);
+            if (!match.matches()) {
+                continue;
+            }
+            List<String> lines = new ArrayList<>();
+            lines.add(match.group(1));
+            while (true) {
+                String peeked = output.peek();
+                if (peeked == null) {
+                    break;
+                }
+                String nextLine = COLOR.matcher(peeked).replaceAll("");
+                if (ERROR_IN_OUTPUT.matcher(nextLine).matches()) {
+                    break;
+                }
+                output.take();
+                if (!nextLine.isBlank()) {
+                    lines.add(nextLine);
+                }
+            }
+            result.add(createError(lines, output.getTargetLabel()));
+        }
+        return result;
+    }
+
+    private Diagnostic createError(List<String> lines, Label targetLabel) {
+        @Nullable Matcher fileMatch = null;
+        List<String> message = new ArrayList<>();
+        for (String line : lines) {
+            Matcher match = FILE_BASED_ERROR.matcher(line);
+            if (match.matches()) {
+                fileMatch = match;
+                message.add(match.group("message"));
+            }
+            else {
+                message.add(line);
+                Matcher fileInOutputMatch = FILE_IN_OUTPUT.matcher(line);
+                if (fileInOutputMatch.matches()) {
+                    fileMatch = fileInOutputMatch;
+                }
+            }
+        }
+        if (fileMatch != null) {
+            @Nullable Path file;
+            try {
+                file = Paths.get(fileMatch.group("file"));
+            }
+            catch (InvalidPathException e) {
+                file = null;
+            }
+            if (file != null) {
+                Position position = Position.fromHumanReadable(
+                    Integer.parseInt(fileMatch.group("line")),
+                    Integer.parseInt(fileMatch.group("char"))
+                );
+                String joinedMessage = String.join("\n", message).trim();
+                return new Diagnostic(position, joinedMessage, file, targetLabel, DiagnosticSeverity.ERROR);
+            }
+        }
+        return new Diagnostic(
+            Position.NONE,
+            String.join("\n", message).trim(),
+            null,
+            targetLabel,
+            DiagnosticSeverity.ERROR
+        );
+    }
 }

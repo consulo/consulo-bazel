@@ -1,33 +1,43 @@
-package org.jetbrains.bazel.sync.workspace.persistence
+package org.jetbrains.bazel.sync.workspace.persistence;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import kotlin.reflect.KClass
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import consulo.project.Project;
 
-@ApiStatus.Internal
-interface WorkspaceTypeContributor {
-  fun contribute(project: Project): List<WorkspaceTypeEntry>
+import java.util.List;
 
-  companion object {
-    val EP_NAME: ExtensionPointName<WorkspaceTypeContributor> = ExtensionPointName("org.jetbrains.bazel.workspaceTypeContributor")
-  }
-}
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface WorkspaceTypeContributor {
+    List<WorkspaceTypeEntry> contribute(Project project);
 
-@ApiStatus.Internal
-data class WorkspaceTypeEntry(val fqn: String, val type: Class<*>)
+    // consulo: upstream EP_NAME, served by the Consulo extension point
+    static ExtensionPoint<WorkspaceTypeContributor> getEpName() {
+        return Application.get().getExtensionPoint(WorkspaceTypeContributor.class);
+    }
 
-@ApiStatus.Internal
-fun <T : Any> MutableList<WorkspaceTypeEntry>.type(type: KClass<T>) {
-  this += WorkspaceTypeEntry(fqn = type.qualifiedName ?: error("`${type}` have no valid qualified name"), type.java)
-}
+    record WorkspaceTypeEntry(String fqn, Class<?> type) {
+    }
 
-@ApiStatus.Internal
-inline fun <reified T : Any> MutableList<WorkspaceTypeEntry>.type(): Unit = this.type(T::class)
+    // consulo: upstream `fun <T : Any> MutableList<WorkspaceTypeEntry>.type(type: KClass<T>)` and
+    // `inline fun <reified T : Any> MutableList<WorkspaceTypeEntry>.type()`, the type is passed explicitly
+    static <T> void type(List<WorkspaceTypeEntry> receiver, Class<T> type) {
+        // consulo: KClass.qualifiedName is the canonical name of the class
+        String fqn = type.getCanonicalName();
+        if (fqn == null) {
+            throw new IllegalStateException("`" + type + "` have no valid qualified name");
+        }
+        receiver.add(new WorkspaceTypeEntry(fqn, type));
+    }
 
-@ApiStatus.Internal
-inline fun <reified T : Any> MutableList<WorkspaceTypeEntry>.sealed() {
-  require(T::class.isSealed) { "type ${T::class} must be sealed" }
-  type<T>()
-  T::class.sealedSubclasses.forEach { type(it) }
+    static <T> void sealed(List<WorkspaceTypeEntry> receiver, Class<T> type) {
+        if (!type.isSealed()) {
+            throw new IllegalArgumentException("type " + type + " must be sealed");
+        }
+        type(receiver, type);
+        for (Class<?> it : type.getPermittedSubclasses()) {
+            type(receiver, it);
+        }
+    }
 }

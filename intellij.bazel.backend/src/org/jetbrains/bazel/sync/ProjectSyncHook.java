@@ -1,67 +1,79 @@
-package org.jetbrains.bazel.sync
+package org.jetbrains.bazel.sync;
 
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.TargetIdeInfo
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import com.intellij.platform.util.progress.SequentialProgressReporter
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.progress.syncConsole
-import org.jetbrains.bazel.progress.withSubtask
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.application.progress.ProgressIndicator;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.component.extension.ExtensionPoint;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bsp.protocol.TaskId;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 /**
  * Represents a sync hook which will be executed on each sync (if `isEnabled` returns true).
- *
+ * <p>
  * It should be used to perform sync actions, e.g., to add a language support.
  */
-interface ProjectSyncHook {
-  /**
-   * Tells the sync mechanism whatever this hook should be executed during sync.
-   * It will always be called before each `onSync` call.
-   */
-  fun isEnabled(project: Project): Boolean = true
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface ProjectSyncHook {
+    /**
+     * Tells the sync mechanism whatever this hook should be executed during sync.
+     * It will always be called before each `onSync` call.
+     */
+    default boolean isEnabled(Project project) {
+        return true;
+    }
 
-  /**
-   * Method which will be called during sync. It can perform any type of activity that is part of sync.
-   */
-  suspend fun onSync(environment: ProjectSyncHookEnvironment)
+    /**
+     * Method which will be called during sync. It can perform any type of activity that is part of sync.
+     */
+    CompletableFuture<Void> onSync(ProjectSyncHookEnvironment environment);
 
-  companion object {
-    @ApiStatus.Internal
-    val ep = ExtensionPointName.create<ProjectSyncHook>("org.jetbrains.bazel.projectSyncHook")
-  }
+    static ExtensionPoint<ProjectSyncHook> getEp() {
+        return Application.get().getExtensionPoint(ProjectSyncHook.class);
+    }
 
-  /**
-   * @param project project on which sync is executed
-   * @param syncScope scope the sync is effectively running with
-   * @param server BSP server which is used during sync
-   * @param snapshot workspace snapshot published by this sync
-   * @param diff diff which was prepared before sync and which should be updated in the hook
-   * @param taskId task id which should be used in the sync console as root
-   * @param progressReporter should be used to report the progress of the hook
-   */
-  @ConsistentCopyVisibility
-  data class ProjectSyncHookEnvironment @ApiStatus.Internal constructor(
-    val project: Project,
-    val syncScope: ProjectSyncScope,
-    val server: BazelServerFacade,
-    val snapshot: WorkspaceSnapshot,
-    val taskId: TaskId,
-    val diff: MutableEntityStorage,
-    val progressReporter: SequentialProgressReporter,
-  )
+    /**
+     * consulo: {@code diff} is the classic project model builder instead of the workspace model {@code MutableEntityStorage}.
+     *
+     * @param project          project on which sync is executed
+     * @param syncScope        scope the sync is effectively running with
+     * @param server           BSP server which is used during sync
+     * @param snapshot         workspace snapshot published by this sync
+     * @param diff             diff which was prepared before sync and which should be updated in the hook
+     * @param taskId           task id which should be used in the sync console as root
+     * @param progressReporter should be used to report the progress of the hook
+     */
+    record ProjectSyncHookEnvironment(
+        Project project,
+        ProjectSyncScope syncScope,
+        BazelServerFacade server,
+        WorkspaceSnapshot snapshot,
+        TaskId taskId,
+        BazelModelBuilder diff,
+        ProgressIndicator progressReporter
+    ) {
+        public <T> CompletableFuture<T> withSubtask(LocalizeValue text, Function<TaskId, CompletableFuture<T>> block) {
+            return util.withSubtask(util.getSyncConsole(project), progressReporter, taskId.subTask(text.get()), text, block);
+        }
+    }
+
+    static List<ProjectSyncHook> getProjectSyncHooks(Project receiver) {
+        List<ProjectSyncHook> result = new ArrayList<>();
+        for (ProjectSyncHook it : getEp().getExtensionList()) {
+            if (it.isEnabled(receiver)) {
+                result.add(it);
+            }
+        }
+        return result;
+    }
 }
-
-val Project.projectSyncHooks: List<ProjectSyncHook>
-  @ApiStatus.Internal
-  get() =
-    ProjectSyncHook.ep
-      .extensionList
-      .filter { it.isEnabled(this) }
-
-@ApiStatus.Internal
-suspend fun <T> ProjectSyncHook.ProjectSyncHookEnvironment.withSubtask(text: String, block: suspend (subtaskId: TaskId) -> T) =
-  project.syncConsole.withSubtask(progressReporter, taskId.subTask(text), text, block)

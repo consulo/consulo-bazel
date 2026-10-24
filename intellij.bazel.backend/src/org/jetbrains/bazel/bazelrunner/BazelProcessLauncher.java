@@ -1,25 +1,32 @@
-package org.jetbrains.bazel.bazelrunner
+package org.jetbrains.bazel.bazelrunner;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
-import java.nio.file.Path
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import org.jetbrains.bazel.bazelrunner.BazelCommand.BazelCommandExecutionDescriptor;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelProcessLauncher {
-  fun launchProcess(executionDescriptor: BazelCommandExecutionDescriptor): Process
-}
+import java.nio.file.Path;
+import java.util.Map;
 
-@ApiStatus.Internal
-interface BazelProcessLauncherProvider {
-  fun createBazelProcessLauncher(
-    workspaceRoot: Path,
-    parentEnvironment: Map<String, String>,
-  ): BazelProcessLauncher
+public interface BazelProcessLauncher {
+    Process launchProcess(BazelCommandExecutionDescriptor executionDescriptor);
 
-  companion object {
-    val ep = ExtensionPointName.create<BazelProcessLauncherProvider>("org.jetbrains.bazel.bazelProcessLauncherProvider")
+    @ExtensionAPI(ComponentScope.APPLICATION)
+    interface BazelProcessLauncherProvider {
+        BazelProcessLauncher createBazelProcessLauncher(
+            Path workspaceRoot,
+            Map<String, String> parentEnvironment
+        );
 
-    fun getInstance(): BazelProcessLauncherProvider =
-      ep.extensionList.firstOrNull() ?: DefaultBazelProcessLauncherProvider
-  }
+        static ExtensionPoint<BazelProcessLauncherProvider> getEp() {
+            return Application.get().getExtensionPoint(BazelProcessLauncherProvider.class);
+        }
+
+        static BazelProcessLauncherProvider getInstance() {
+            @Nullable BazelProcessLauncherProvider provider = getEp().findFirstSafe(it -> true);
+            return provider != null ? provider : DefaultBazelProcessLauncherProvider.INSTANCE;
+        }
+    }
 }

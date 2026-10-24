@@ -1,73 +1,80 @@
-package org.jetbrains.bazel.workspacemodel.entities
+package org.jetbrains.bazel.workspacemodel.entities;
 
-import com.intellij.platform.workspace.jps.entities.LibraryEntity
-import com.intellij.platform.workspace.jps.entities.ModuleEntity
-import com.intellij.platform.workspace.jps.entities.SourceRootTypeId
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.annotations.Parent
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bsp.protocol.StrictDependencyCheckedType
+import consulo.bazel.workspace.BazelProjectModelService;
+import consulo.content.library.Library;
+import consulo.module.Module;
+import consulo.project.Project;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.BuildTarget.StrictDependencyCheckedType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelModuleExtensionEntity : WorkspaceEntity {
-  @Parent
-  val module: ModuleEntity
+import java.util.List;
 
-  val _targetKey: WorkspaceModelTargetKey
-  val rootTypeId: WorkspaceModelTargetSourceRootTypeId
-  val strictDependencies: WorkspaceModelTargetLabelList
+// consulo: classic data instead of workspace entities. Module and library extensions are attached with
+// BazelModelBuilder.putModuleData / putLibraryData and read through BazelProjectModelService.
+public final class extensions {
+    private extensions() {
+    }
+
+    public record BazelModuleExtensionEntity(
+        WorkspaceModelTargetKey _targetKey,
+        WorkspaceModelTargetSourceRootTypeId rootTypeId,
+        WorkspaceModelTargetLabelList strictDependencies
+    ) {
+        public WorkspaceTargetKey getTargetKey() {
+            return _targetKey.toWorkspaceTarget();
+        }
+    }
+
+    public record BazelLibraryExtensionEntity(
+        WorkspaceModelTargetKey _targetKey,
+        boolean isSynthetic
+    ) {
+        public WorkspaceTargetKey getTargetKey() {
+            return _targetKey.toWorkspaceTarget();
+        }
+    }
+
+    public static @Nullable BazelModuleExtensionEntity getBazelModuleExtension(Module module) {
+        return BazelProjectModelService.getInstance(module.getProject()).getModuleData(module, BazelModuleExtensionEntity.class);
+    }
+
+    public static @Nullable BazelLibraryExtensionEntity getBazelLibraryExtension(Project project, Library library) {
+        return BazelProjectModelService.getInstance(project).getLibraryData(library, BazelLibraryExtensionEntity.class);
+    }
+
+    public record WorkspaceModelTargetKey(
+        String label,
+        @Nullable String configuration,
+        List<String> aspectIds
+    ) {
+        public WorkspaceTargetKey toWorkspaceTarget() {
+            return new WorkspaceTargetKey(
+                Label.parse(label),
+                WorkspaceConfigurationId.of(configuration),
+                WorkspaceAspectIds.of(aspectIds)
+            );
+        }
+
+        public static WorkspaceModelTargetKey of(WorkspaceTargetKey key) {
+            return new WorkspaceModelTargetKey(
+                key.label().toString(),
+                key.configuration().getShortChecksum(),
+                key.aspectIds().getIds()
+            );
+        }
+    }
+
+    public record WorkspaceModelTargetLabelList(StrictDependencyCheckedType check, List<String> labels) {
+    }
+
+    /**
+     * consulo: upstream {@code SourceRootTypeId} is a workspace model id; here it is the id of the Consulo
+     * {@code ContentFolderTypeProvider}.
+     */
+    public record WorkspaceModelTargetSourceRootTypeId(@Nullable String defaultId) {
+    }
 }
-
-@ApiStatus.Internal
-interface BazelLibraryExtensionEntity : WorkspaceEntity {
-  @Parent
-  val library: LibraryEntity
-
-  val _targetKey: WorkspaceModelTargetKey
-  val isSynthetic: Boolean
-}
-
-@get:ApiStatus.Internal
-val ModuleEntity.bazelModuleExtension: BazelModuleExtensionEntity? by WorkspaceEntity.extension()
-
-@get:ApiStatus.Internal
-val LibraryEntity.bazelLibraryExtension: BazelLibraryExtensionEntity? by WorkspaceEntity.extension()
-
-@ApiStatus.Internal
-data class WorkspaceModelTargetKey(
-  private val label: String,
-  private val configuration: String?,
-  internal val aspectIds: List<String>,
-) {
-  fun toWorkspaceTarget(): WorkspaceTargetKey = WorkspaceTargetKey(
-    label = Label.parse(label),
-    configuration = WorkspaceConfigurationId.of(configuration),
-    aspectIds = WorkspaceAspectIds.of(aspectIds),
-  )
-
-  companion object {
-    fun of(key: WorkspaceTargetKey): WorkspaceModelTargetKey = WorkspaceModelTargetKey(
-      label = key.label.toString(),
-      configuration = key.configuration.shortChecksum,
-      aspectIds = key.aspectIds.ids,
-    )
-  }
-}
-
-@get:ApiStatus.Internal
-val BazelModuleExtensionEntity.targetKey: WorkspaceTargetKey
-  get() = _targetKey.toWorkspaceTarget()
-
-@get:ApiStatus.Internal
-val BazelLibraryExtensionEntity.targetKey: WorkspaceTargetKey
-  get() = _targetKey.toWorkspaceTarget()
-
-@ApiStatus.Internal
-class WorkspaceModelTargetLabelList(val check: StrictDependencyCheckedType, val labels: List<String>)
-
-@ApiStatus.Internal
-class WorkspaceModelTargetSourceRootTypeId(val default: SourceRootTypeId?)

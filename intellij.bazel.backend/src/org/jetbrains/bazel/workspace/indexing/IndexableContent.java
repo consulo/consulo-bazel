@@ -1,49 +1,65 @@
-package org.jetbrains.bazel.workspace.indexing
+package org.jetbrains.bazel.workspace.indexing;
 
-import com.intellij.platform.workspace.storage.url.VirtualFileUrl
-import org.jetbrains.annotations.ApiStatus
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Consumer;
 
-@ApiStatus.Internal
-interface IndexableContent {
-  val recursiveRoots: Set<VirtualFileUrl>
-  val nonRecursiveRoots: Set<VirtualFileUrl>
-}
+// consulo: roots are VFS urls (String) instead of workspace model VirtualFileUrl
+public interface IndexableContent {
+    Set<String> getRecursiveRoots();
 
-@ApiStatus.Internal
-interface MutableIndexableContent : IndexableContent {
-  override val recursiveRoots: MutableSet<VirtualFileUrl>
-  override val nonRecursiveRoots: MutableSet<VirtualFileUrl>
+    Set<String> getNonRecursiveRoots();
 
-  fun addAll(content: IndexableContent)
-}
+    interface MutableIndexableContent extends IndexableContent {
+        @Override
+        Set<String> getRecursiveRoots();
 
-@ApiStatus.Internal
-fun IndexableContent(
-  recursiveRoots: Set<VirtualFileUrl> = emptySet(),
-  nonRecursiveRoots: Set<VirtualFileUrl> = emptySet(),
-): IndexableContent = MutableIndexableContent(recursiveRoots, nonRecursiveRoots)
+        @Override
+        Set<String> getNonRecursiveRoots();
 
-@ApiStatus.Internal
-fun MutableIndexableContent(
-  recursiveRoots: Set<VirtualFileUrl> = emptySet(),
-  nonRecursiveRoots: Set<VirtualFileUrl> = emptySet(),
-): MutableIndexableContent = IndexableContentImpl(recursiveRoots.toMutableSet(), nonRecursiveRoots.toMutableSet())
+        void addAll(IndexableContent content);
+    }
 
-@ApiStatus.Internal
-fun buildIndexableContent(block: MutableIndexableContent.() -> Unit): IndexableContent = MutableIndexableContent().apply(block)
+    static IndexableContent of(Set<String> recursiveRoots, Set<String> nonRecursiveRoots) {
+        return mutable(recursiveRoots, nonRecursiveRoots);
+    }
 
-@ApiStatus.Internal
-operator fun MutableIndexableContent.plusAssign(other: IndexableContent) {
-  addAll(other)
-}
+    static IndexableContent of() {
+        return of(Set.of(), Set.of());
+    }
 
-private data class IndexableContentImpl(
-  override val recursiveRoots: MutableSet<VirtualFileUrl>,
-  override val nonRecursiveRoots: MutableSet<VirtualFileUrl>,
-) : MutableIndexableContent {
+    static MutableIndexableContent mutable(Set<String> recursiveRoots, Set<String> nonRecursiveRoots) {
+        return new IndexableContentImpl(new HashSet<>(recursiveRoots), new HashSet<>(nonRecursiveRoots));
+    }
 
-  override fun addAll(content: IndexableContent) {
-    recursiveRoots.addAll(content.recursiveRoots)
-    nonRecursiveRoots.addAll(content.nonRecursiveRoots)
-  }
+    static MutableIndexableContent mutable() {
+        return mutable(Set.of(), Set.of());
+    }
+
+    static IndexableContent buildIndexableContent(Consumer<MutableIndexableContent> block) {
+        MutableIndexableContent content = mutable();
+        block.accept(content);
+        return content;
+    }
+
+    record IndexableContentImpl(
+        Set<String> recursiveRoots,
+        Set<String> nonRecursiveRoots
+    ) implements MutableIndexableContent {
+        @Override
+        public Set<String> getRecursiveRoots() {
+            return recursiveRoots;
+        }
+
+        @Override
+        public Set<String> getNonRecursiveRoots() {
+            return nonRecursiveRoots;
+        }
+
+        @Override
+        public void addAll(IndexableContent content) {
+            recursiveRoots.addAll(content.getRecursiveRoots());
+            nonRecursiveRoots.addAll(content.getNonRecursiveRoots());
+        }
+    }
 }

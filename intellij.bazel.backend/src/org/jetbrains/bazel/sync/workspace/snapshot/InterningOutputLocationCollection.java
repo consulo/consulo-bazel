@@ -1,51 +1,85 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import com.google.devtools.intellij.aspect.Common
-import com.intellij.util.containers.Interner
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bsp.protocol.OutputLocationParser
-import org.jetbrains.bsp.protocol.contentHash
+import com.dynatrace.hash4j.hashing.HashValue128;
+import com.google.devtools.intellij.aspect.Common;
+import consulo.util.interner.Interner;
+import consulo.util.lang.lazy.LazyValue;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jetbrains.bsp.protocol.OutputLocationParser;
+import org.jspecify.annotations.Nullable;
 
-internal class InterningOutputLocationCollection private constructor(
-  internal val locations: List<OutputLocation>,
-) : OutputLocationCollection {
-  private val contentHash by lazy(LazyThreadSafetyMode.PUBLICATION) { contentHash(locations) }
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 
-  override fun isEmpty(): Boolean = locations.isEmpty()
+// consulo: internal upstream, public because the snapshot serializers use it
+public final class InterningOutputLocationCollection implements OutputLocationCollection {
+    private final List<OutputLocation> myLocations;
 
-  override fun getOutputLocations(): Sequence<OutputLocation> = locations.asSequence()
+    // consulo: lazy(LazyThreadSafetyMode.PUBLICATION)
+    private final LazyValue<HashValue128> myContentHash;
 
-  override fun equals(other: Any?): Boolean {
-    if (this === other) {
-      return true
+    private InterningOutputLocationCollection(List<OutputLocation> locations) {
+        myLocations = locations;
+        myContentHash = LazyValue.notNull(() -> OutputLocation.contentHash(myLocations));
     }
-    if (other is InterningOutputLocationCollection) {
-      return locations.size == other.locations.size && contentHash == other.contentHash
+
+    public List<OutputLocation> getLocations() {
+        return myLocations;
     }
-    return false
-  }
 
-  override fun hashCode(): Int = contentHash.asInt
+    @Override
+    public boolean isEmpty() {
+        return myLocations.isEmpty();
+    }
 
-  companion object {
-    private val interner = Interner.createWeakInterner<OutputLocation>()
+    @Override
+    public Stream<OutputLocation> getOutputLocations() {
+        return myLocations.stream();
+    }
 
-    fun create(locations: Iterable<OutputLocation>): InterningOutputLocationCollection =
-      InterningOutputLocationCollection(locations.map { interner.intern(it) })
-  }
-}
+    @Override
+    public boolean equals(@Nullable Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (other instanceof InterningOutputLocationCollection that) {
+            return myLocations.size() == that.myLocations.size() && myContentHash.get().equals(that.myContentHash.get());
+        }
+        return false;
+    }
 
-@ApiStatus.Internal
-object OutputLocationCollectionBuilder {
+    @Override
+    public int hashCode() {
+        return myContentHash.get().getAsInt();
+    }
 
-  suspend fun build(locations: List<Common.ArtifactLocation>, parser: OutputLocationParser): OutputLocationCollection =
-    ofLocations(parser.parse(locations))
+    private static final Interner<OutputLocation> INTERNER = Interner.createWeakInterner();
 
-  suspend fun buildExecroot(locations: List<String>, parser: OutputLocationParser): OutputLocationCollection =
-    ofLocations(parser.parseExecrootPath(locations))
+    public static InterningOutputLocationCollection create(Iterable<OutputLocation> locations) {
+        List<OutputLocation> interned = new ArrayList<>();
+        for (OutputLocation it : locations) {
+            interned.add(INTERNER.intern(it));
+        }
+        return new InterningOutputLocationCollection(interned);
+    }
 
-  fun ofLocations(locations: List<OutputLocation>): OutputLocationCollection =
-    if (locations.isEmpty()) OutputLocationCollection.EMPTY else InterningOutputLocationCollection.create(locations)
+    public static final class OutputLocationCollectionBuilder {
+        private OutputLocationCollectionBuilder() {
+        }
+
+        public static CompletableFuture<OutputLocationCollection> build(List<Common.ArtifactLocation> locations, OutputLocationParser parser) {
+            return parser.parse(locations).thenApply(OutputLocationCollectionBuilder::ofLocations);
+        }
+
+        public static CompletableFuture<OutputLocationCollection> buildExecroot(List<String> locations, OutputLocationParser parser) {
+            return CompletableFuture.completedFuture(ofLocations(parser.parseExecrootPath(locations)));
+        }
+
+        public static OutputLocationCollection ofLocations(List<OutputLocation> locations) {
+            return locations.isEmpty() ? OutputLocationCollection.EMPTY : InterningOutputLocationCollection.create(locations);
+        }
+    }
 }

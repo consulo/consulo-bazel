@@ -1,38 +1,64 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.BuildTargetData
+import consulo.project.Project;
+import consulo.util.lang.Pair;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-inline fun <reified T : BuildTargetData> BuildTarget.findBuildData(): T? = data.filterIsInstance<T>().firstOrNull()
+import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 
-@ApiStatus.Internal
-inline fun <reified T : BuildTargetData> BuildTarget.hasBuildData(): Boolean = findBuildData<T>() != null
+// consulo: upstream Kotlin top-level (extension) functions and properties
+public final class WorkspaceHelpers {
+    private WorkspaceHelpers() {
+    }
 
-@ApiStatus.Internal
-inline fun <reified T : BuildTargetData> Sequence<BuildTarget>.filterBuildTarget(): Sequence<Pair<BuildTarget, T>> =
-  mapNotNull { target -> target.findBuildData<T>()?.let { data -> target to data } }
+    // consulo: upstream is `inline fun <reified T>`, the type is passed explicitly
+    public static <T extends BuildTargetData> @Nullable T findBuildData(BuildTarget receiver, Class<T> type) {
+        return receiver.getData().stream().filter(type::isInstance).map(type::cast).findFirst().orElse(null);
+    }
 
-@get:ApiStatus.Internal
-val WorkspaceSnapshot.allTargets: Sequence<BuildTarget>
-  get(): Sequence<BuildTarget> = targetGraph.allTargets.mapNotNull { targets.findTargetByKey(it, TargetLoadOptions.ALL) }
+    public static <T extends BuildTargetData> boolean hasBuildData(BuildTarget receiver, Class<T> type) {
+        return findBuildData(receiver, type) != null;
+    }
 
-@get:ApiStatus.Internal
-val WorkspaceSnapshot.commonSyncConfig: CommonWorkspaceSyncConfig
-  get() = syncConfigs.filterIsInstance<CommonWorkspaceSyncConfig>().first()
+    public static <T extends BuildTargetData> Stream<Pair<BuildTarget, T>> filterBuildTarget(Stream<BuildTarget> receiver, Class<T> type) {
+        return receiver.map(target -> {
+            T data = findBuildData(target, type);
+            return data != null ? Pair.create(target, data) : null;
+        }).filter(Objects::nonNull);
+    }
 
-@get:ApiStatus.Internal
-val Project.workspaceSnapshotOrNull: WorkspaceSnapshot?
-  get() = service<WorkspaceSnapshotService>().snapshot.value.takeIf { it !== WorkspaceSnapshot.EMPTY }
+    public static Stream<BuildTarget> getAllTargets(WorkspaceSnapshot receiver) {
+        return receiver.targetGraph().getAllTargets()
+            .map(it -> receiver.targets().findTargetByKey(it, TargetLoadOptions.ALL))
+            .filter(Objects::nonNull);
+    }
 
-/**
- * Await initial workspace snapshot load, return `null` when snapshot is [WorkspaceSnapshot.EMPTY]`
- */
-@ApiStatus.Internal
-suspend fun Project.currentWorkspaceSnapshotOrNull(): WorkspaceSnapshot? =
-  service<WorkspaceSnapshotService>().currentSnapshot().takeIf { it !== WorkspaceSnapshot.EMPTY }
+    public static CommonWorkspaceSyncConfig getCommonSyncConfig(WorkspaceSnapshot receiver) {
+        return receiver.syncConfigs().stream()
+            .filter(CommonWorkspaceSyncConfig.class::isInstance)
+            .map(CommonWorkspaceSyncConfig.class::cast)
+            .findFirst()
+            .orElseThrow(() -> new NoSuchElementException("Collection contains no element matching the predicate."));
+    }
+
+    public static @Nullable WorkspaceSnapshot getWorkspaceSnapshotOrNull(Project receiver) {
+        WorkspaceSnapshot snapshot = receiver.getInstance(WorkspaceSnapshotService.class).getSnapshot().get();
+        return snapshot != WorkspaceSnapshot.EMPTY ? snapshot : null;
+    }
+
+    /**
+     * Await initial workspace snapshot load, return {@code null} when snapshot is {@link WorkspaceSnapshot#EMPTY}`
+     */
+    public static CompletableFuture<@Nullable WorkspaceSnapshot> currentWorkspaceSnapshotOrNull(Project receiver) {
+        return receiver.getInstance(WorkspaceSnapshotService.class).currentSnapshot()
+            .thenApply(snapshot -> snapshot != WorkspaceSnapshot.EMPTY ? snapshot : null);
+    }
+}

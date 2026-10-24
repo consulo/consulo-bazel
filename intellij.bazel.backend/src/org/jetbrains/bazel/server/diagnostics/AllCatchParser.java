@@ -1,8 +1,16 @@
-package org.jetbrains.bazel.server.diagnostics
+package org.jetbrains.bazel.server.diagnostics;
 
-internal object AllCatchParser : Parser {
-  override fun tryParse(output: Output): List<Diagnostic> {
-    output.tryTake()
-    return emptyList()
-  }
+import java.util.List;
+
+final class AllCatchParser implements Parser {
+    public static final AllCatchParser INSTANCE = new AllCatchParser();
+
+    private AllCatchParser() {
+    }
+
+    @Override
+    public List<Diagnostic> tryParse(Output output) {
+        output.tryTake();
+        return List.of();
+    }
 }

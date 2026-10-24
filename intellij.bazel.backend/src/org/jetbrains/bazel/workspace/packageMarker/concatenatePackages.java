@@ -1,10 +1,17 @@
-package org.jetbrains.bazel.workspace.packageMarker
+package org.jetbrains.bazel.workspace.packageMarker;
 
-import org.jetbrains.annotations.ApiStatus
+// consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name
+public final class concatenatePackages {
+    private concatenatePackages() {
+    }
 
-@ApiStatus.Internal
-fun concatenatePackages(first: String, second: String): String {
-  if (first.isEmpty()) return second
-  if (second.isEmpty()) return first
-  return "$first.$second"
+    public static String concatenatePackages(String first, String second) {
+        if (first.isEmpty()) {
+            return second;
+        }
+        if (second.isEmpty()) {
+            return first;
+        }
+        return first + "." + second;
+    }
 }

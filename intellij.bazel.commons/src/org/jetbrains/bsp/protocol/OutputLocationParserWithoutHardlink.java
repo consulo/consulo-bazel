@@ -37,7 +37,7 @@ public final class OutputLocationParserWithoutHardlink {
         else {
             path = raw;
         }
-        // consulo: OSAgnosticPathUtil.isAbsolute -> FileUtil.isAbsolutePlatformIndependent
+        // TODO consulo: switch to consulo.util.io.OSAgnosticPathUtil.isAbsolute (ported to the platform, not yet in the published snapshot)
         if (FileUtil.isAbsolutePlatformIndependent(path)) {
             return new Host(path);
         }

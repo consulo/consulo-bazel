@@ -1,22 +1,21 @@
-package org.jetbrains.bazel.workspacemodel.entities
+package org.jetbrains.bazel.workspacemodel.entities;
 
-import com.intellij.platform.workspace.jps.entities.ModuleEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.annotations.IndexVfu
-import com.intellij.platform.workspace.storage.annotations.Parent
-import com.intellij.platform.workspace.storage.url.VirtualFileUrl
-import org.jetbrains.annotations.ApiStatus
+import consulo.bazel.workspace.BazelProjectModelService;
+import consulo.module.Module;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface ScalaAddendumEntity : WorkspaceEntity {
-  val compilerVersion: String
-  val scalacOptions: List<String>
-  @IndexVfu
-  val sdkClasspaths: List<VirtualFileUrl>
+import java.util.List;
 
-  @Parent
-  val module: ModuleEntity
+/**
+ * consulo: classic data instead of a workspace entity, attached to its module with
+ * {@code BazelModelBuilder.putModuleData}; {@code sdkClasspaths} are VFS urls.
+ */
+public record ScalaAddendumEntity(
+    String compilerVersion,
+    List<String> scalacOptions,
+    List<String> sdkClasspaths
+) {
+    public static @Nullable ScalaAddendumEntity getScalaAddendumEntity(Module module) {
+        return BazelProjectModelService.getInstance(module.getProject()).getModuleData(module, ScalaAddendumEntity.class);
+    }
 }
-
-@get:ApiStatus.Internal
-val ModuleEntity.scalaAddendumEntity: ScalaAddendumEntity? by WorkspaceEntity.extension()

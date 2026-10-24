@@ -4,7 +4,7 @@ import org.jetbrains.bazel.commons.TargetKind;
 import org.jetbrains.bazel.label.DependencyLabel;
 import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
 import org.jspecify.annotations.Nullable;
 

@@ -1,7 +1,6 @@
-package org.jetbrains.bazel.server.bep
+package org.jetbrains.bazel.server.bep;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.bazelrunner.BazelProcessResult
+import org.jetbrains.bazel.bazelrunner.BazelProcessResult;
 
-@ApiStatus.Internal
-data class BepBuildResult(val processResult: BazelProcessResult, val bepOutput: BepOutput)
+public record BepBuildResult(BazelProcessResult processResult, BepOutput bepOutput) {
+}

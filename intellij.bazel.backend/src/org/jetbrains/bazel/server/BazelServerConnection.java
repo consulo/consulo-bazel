@@ -1,27 +1,40 @@
-package org.jetbrains.bazel.server
+package org.jetbrains.bazel.server;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.project.Project;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 /**
  * The BSP connection, implementation should keep all the information
  * needed to establish and keep the connection with the server.
  */
-@ApiStatus.Internal
-interface BazelServerConnection {
-  suspend fun <T> runWithServer(taskId: TaskId? = null, task: suspend (server: BazelServerFacade) -> T): T
-}
+public interface BazelServerConnection {
+    <T extends @Nullable Object> CompletableFuture<T> runWithServer(
+        @Nullable TaskId taskId,
+        Function<BazelServerFacade, CompletableFuture<T>> task
+    );
 
-val Project.connection: BazelServerConnection
-  @ApiStatus.Internal
-  get() = BazelServerService.getInstance(this).connection
+    // consulo: upstream default value of taskId
+    default <T extends @Nullable Object> CompletableFuture<T> runWithServer(Function<BazelServerFacade, CompletableFuture<T>> task) {
+        return runWithServer(null, task);
+    }
 
-@ApiStatus.Internal
-interface BazelServerService {
-  val connection: BazelServerConnection
+    // consulo: upstream Kotlin extension property Project.connection
+    static BazelServerConnection getConnection(Project receiver) {
+        return BazelServerService.getInstance(receiver).getConnection();
+    }
 
-  companion object {
-    fun getInstance(project: Project): BazelServerService = project.getService(BazelServerService::class.java)
-  }
+    @ServiceAPI(ComponentScope.PROJECT)
+    interface BazelServerService {
+        BazelServerConnection getConnection();
+
+        static BazelServerService getInstance(Project project) {
+            return project.getInstance(BazelServerService.class);
+        }
+    }
 }

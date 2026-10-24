@@ -1,24 +1,54 @@
-package org.jetbrains.bazel.bazelrunner
+package org.jetbrains.bazel.bazelrunner;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.bazelrunner.outputs.OutputCollector
-import org.jetbrains.bazel.commons.BazelStatus
+import org.jetbrains.bazel.bazelrunner.outputs.OutputCollector;
+import org.jetbrains.bazel.commons.BazelStatus;
 
-@ApiStatus.Internal
-class BazelProcessResult(
-  private val stdoutCollector: OutputCollector,
-  private val stderrCollector: OutputCollector,
-  val exitCode: Int,
-) {
-  val bazelStatus: BazelStatus
-    get() = BazelStatus.fromExitCode(exitCode)
+import java.util.List;
 
-  val isSuccess: Boolean get() = bazelStatus == BazelStatus.SUCCESS
-  val isNotSuccess: Boolean get() = !isSuccess
+public class BazelProcessResult {
+    private final OutputCollector myStdoutCollector;
+    private final OutputCollector myStderrCollector;
+    private final int myExitCode;
 
-  val stdoutLines: List<String> get() = stdoutCollector.lines()
-  val stdout: ByteArray get() = stdoutCollector.raw()
+    public BazelProcessResult(
+        OutputCollector stdoutCollector,
+        OutputCollector stderrCollector,
+        int exitCode
+    ) {
+        myStdoutCollector = stdoutCollector;
+        myStderrCollector = stderrCollector;
+        myExitCode = exitCode;
+    }
 
-  val stderrLines: List<String> get() = stderrCollector.lines()
-  val stderr: ByteArray get() = stderrCollector.raw()
+    public int getExitCode() {
+        return myExitCode;
+    }
+
+    public BazelStatus getBazelStatus() {
+        return BazelStatus.fromExitCode(myExitCode);
+    }
+
+    public boolean isSuccess() {
+        return getBazelStatus() == BazelStatus.SUCCESS;
+    }
+
+    public boolean isNotSuccess() {
+        return !isSuccess();
+    }
+
+    public List<String> getStdoutLines() {
+        return myStdoutCollector.lines();
+    }
+
+    public byte[] getStdout() {
+        return myStdoutCollector.raw();
+    }
+
+    public List<String> getStderrLines() {
+        return myStderrCollector.lines();
+    }
+
+    public byte[] getStderr() {
+        return myStderrCollector.raw();
+    }
 }

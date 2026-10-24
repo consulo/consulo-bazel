@@ -1,60 +1,92 @@
-package org.jetbrains.bazel.sync.workspace.languages
+package org.jetbrains.bazel.sync.workspace.languages;
 
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import com.intellij.util.IncorrectOperationException
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSyncConfig
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bsp.protocol.BuildTargetData
-import kotlin.reflect.KClass
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import consulo.language.util.IncorrectOperationException;
+import consulo.project.Project;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceSyncConfig;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
 
-@ApiStatus.Internal
-interface LanguagePlugin {
-  val providedBuildTargetTypes: Set<KClass<out BuildTargetData>>
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
-  fun getSupportedLanguages(): Set<LanguageClass>
-  fun collectUsedLanguages(target: IntellijIdeInfo.TargetIdeInfo): List<LanguageClass> = emptyList()
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface LanguagePlugin {
+    Set<Class<? extends BuildTargetData>> getProvidedBuildTargetTypes();
 
-  /**
-   * Create a set of sync configurations that shall be later consumed by [BazelWorkspaceImporter].
-   * This is the only time when [BazelWorkspaceImporter] can indirectly access [ProjectView].
-   * Or any other external data outside [ProjectView]
-   *
-   * @param project [Project] that can be used as a data source
-   * @param projectView current project view
-   */
-  suspend fun createSyncConfigs(project: Project, projectView: ProjectView): List<WorkspaceSyncConfig> = listOf()
+    Set<LanguageClass> getSupportedLanguages();
 
-  suspend fun mapBuildTargetData(
-    server: BazelServerFacade,
-    target: IntellijIdeInfo.TargetIdeInfo,
-  ): List<BuildTargetData>
-
-  companion object {
-    val EP_NAME = ExtensionPointName<LanguagePlugin>("org.jetbrains.bazel.languagePlugin")
-  }
-}
-
-@ApiStatus.Internal
-class LanguageProjectMappers(val registry: Map<LanguageClass, LanguagePlugin>) {
-  fun all(): Collection<LanguagePlugin> = registry.values.distinct()
-  fun get(lang: LanguageClass): LanguagePlugin = registry.getValue(lang)
-}
-
-@ApiStatus.Internal
-fun createLanguageProjectMappers(): LanguageProjectMappers {
-  val result = HashMap<LanguageClass, LanguagePlugin>()
-  LanguagePlugin.EP_NAME.forEachExtensionSafe { plugin ->
-    plugin.getSupportedLanguages().forEach { languageClass ->
-      if (result.containsKey(languageClass))
-        throw IncorrectOperationException("Language class $languageClass is already mapped by another plugin")
-      result[languageClass] = plugin
+    default List<LanguageClass> collectUsedLanguages(IntellijIdeInfo.TargetIdeInfo target) {
+        return List.of();
     }
-  }
-  return LanguageProjectMappers(result)
+
+    /**
+     * Create a set of sync configurations that shall be later consumed by {@link BazelWorkspaceImporter}.
+     * This is the only time when {@link BazelWorkspaceImporter} can indirectly access {@link ProjectView}.
+     * Or any other external data outside {@link ProjectView}
+     *
+     * @param project {@link Project} that can be used as a data source
+     * @param projectView current project view
+     */
+    default CompletableFuture<List<WorkspaceSyncConfig>> createSyncConfigs(Project project, ProjectView projectView) {
+        return CompletableFuture.completedFuture(List.of());
+    }
+
+    CompletableFuture<List<BuildTargetData>> mapBuildTargetData(
+        BazelServerFacade server,
+        IntellijIdeInfo.TargetIdeInfo target
+    );
+
+    static ExtensionPoint<LanguagePlugin> getEpName() {
+        return Application.get().getExtensionPoint(LanguagePlugin.class);
+    }
+
+    class LanguageProjectMappers {
+        private final Map<LanguageClass, LanguagePlugin> myRegistry;
+
+        public LanguageProjectMappers(Map<LanguageClass, LanguagePlugin> registry) {
+            myRegistry = registry;
+        }
+
+        public Map<LanguageClass, LanguagePlugin> getRegistry() {
+            return myRegistry;
+        }
+
+        public Collection<LanguagePlugin> all() {
+            return new LinkedHashSet<>(myRegistry.values());
+        }
+
+        public LanguagePlugin get(LanguageClass lang) {
+            LanguagePlugin plugin = myRegistry.get(lang);
+            if (plugin == null) {
+                throw new java.util.NoSuchElementException("Key " + lang + " is missing in the map.");
+            }
+            return plugin;
+        }
+    }
+
+    static LanguageProjectMappers createLanguageProjectMappers() {
+        Map<LanguageClass, LanguagePlugin> result = new HashMap<>();
+        getEpName().forEachExtensionSafe(plugin -> {
+            for (LanguageClass languageClass : plugin.getSupportedLanguages()) {
+                if (result.containsKey(languageClass)) {
+                    throw new IncorrectOperationException("Language class " + languageClass + " is already mapped by another plugin");
+                }
+                result.put(languageClass, plugin);
+            }
+        });
+        return new LanguageProjectMappers(result);
+    }
 }

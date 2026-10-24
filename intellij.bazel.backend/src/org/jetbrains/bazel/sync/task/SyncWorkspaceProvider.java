@@ -1,30 +1,40 @@
-package org.jetbrains.bazel.sync.task
+package org.jetbrains.bazel.sync.task;
 
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bsp.protocol.TaskId
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-internal enum class SyncPhase {
-  FIRST,
-  SECOND,
-}
+import java.util.List;
 
-internal data class SyncWorkspaceContext(
-  val phase: SyncPhase,
-  val buildProject: Boolean,
-  val allKnownTargets: List<Label>?,
-  val knownRepoMapping: RepoMapping?,
-  val server: BazelServerFacade,
-  val taskId: TaskId,
-)
+// consulo: holder class for the top-level declarations of upstream SyncWorkspaceProvider.kt
+public final class SyncWorkspaceProvider {
+    private SyncWorkspaceProvider() {
+    }
 
-internal enum class SyncWorkspaceStatus {
-  SUCCESS,
+    public enum SyncPhase {
+        FIRST,
+        SECOND,
+    }
 
-  // partial error
-  PARTIAL,
+    public record SyncWorkspaceContext(
+        SyncPhase phase,
+        boolean buildProject,
+        @Nullable List<Label> allKnownTargets,
+        @Nullable RepoMapping knownRepoMapping,
+        BazelServerFacade server,
+        TaskId taskId
+    ) {
+    }
 
-  // error and no targets
-  FATAL,
+    public enum SyncWorkspaceStatus {
+        SUCCESS,
+
+        // partial error
+        PARTIAL,
+
+        // error and no targets
+        FATAL,
+    }
 }

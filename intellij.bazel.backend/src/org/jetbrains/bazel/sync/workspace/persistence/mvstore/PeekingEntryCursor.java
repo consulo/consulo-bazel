@@ -1,31 +1,46 @@
-package org.jetbrains.bazel.sync.workspace.persistence.mvstore
+package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
-import org.h2.mvstore.MVMap
+import org.h2.mvstore.MVMap;
+import org.jspecify.annotations.Nullable;
 
-internal class PeekingEntryCursor<K, V>(map: MVMap<K, V>, private val keyToLong: (K) -> Long) {
-  private val iterator = map.entries.iterator()
-  private var peeked: Map.Entry<K, V>? = null
+import java.util.Iterator;
+import java.util.Map;
+import java.util.function.ToLongFunction;
 
-  private fun peek(): Map.Entry<K, V>? {
-    if (peeked == null && iterator.hasNext()) {
-      peeked = iterator.next()
+final class PeekingEntryCursor<K, V> {
+    private final ToLongFunction<K> myKeyToLong;
+    private final Iterator<Map.Entry<K, V>> myIterator;
+    private Map.@Nullable Entry<K, V> myPeeked;
+
+    PeekingEntryCursor(MVMap<K, V> map, ToLongFunction<K> keyToLong) {
+        myKeyToLong = keyToLong;
+        myIterator = map.entrySet().iterator();
     }
-    return peeked
-  }
 
-  fun advanceTo(target: Long): V? {
-    while (true) {
-      val entry = peek() ?: return null
-      val entryKey = keyToLong(entry.key)
-      when {
-        entryKey < target -> peeked = null
-        entryKey == target -> {
-          peeked = null
-          return entry.value
+    private Map.@Nullable Entry<K, V> peek() {
+        if (myPeeked == null && myIterator.hasNext()) {
+            myPeeked = myIterator.next();
         }
-
-        else -> return null
-      }
+        return myPeeked;
     }
-  }
+
+    @Nullable V advanceTo(long target) {
+        while (true) {
+            Map.Entry<K, V> entry = peek();
+            if (entry == null) {
+                return null;
+            }
+            long entryKey = myKeyToLong.applyAsLong(entry.getKey());
+            if (entryKey < target) {
+                myPeeked = null;
+            }
+            else if (entryKey == target) {
+                myPeeked = null;
+                return entry.getValue();
+            }
+            else {
+                return null;
+            }
+        }
+    }
 }

@@ -2,11 +2,9 @@ package org.jetbrains.bazel.server.bep;
 
 import com.google.devtools.build.v1.PublishBuildToolEventStreamRequest;
 import com.google.devtools.build.v1.PublishBuildToolEventStreamResponse;
-import com.intellij.openapi.diagnostic.Logger;
+import consulo.logging.Logger;
 import io.grpc.stub.StreamObserver;
-import org.jetbrains.annotations.ApiStatus;
 
-@ApiStatus.Internal
 public class BepStreamObserver implements StreamObserver<PublishBuildToolEventStreamRequest> {
 
   private static final Logger LOGGER = Logger.getInstance(BepStreamObserver.class);

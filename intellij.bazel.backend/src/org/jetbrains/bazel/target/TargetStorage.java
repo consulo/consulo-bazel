@@ -1,208 +1,367 @@
-@file:Suppress("ReplacePutWithAssignment", "ReplaceGetOrSet")
+package org.jetbrains.bazel.target;
 
-package org.jetbrains.bazel.target
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.project.Project;
+import consulo.util.concurrent.coroutine.ObservableValue;
+import consulo.util.lang.Pair;
+import consulo.util.lang.lazy.LazyValue;
+import consulo.virtualFileSystem.VirtualFile;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RuleType;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions.BuildTargetLoadHint;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions.TargetSection;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jspecify.annotations.Nullable;
 
-import com.github.benmanes.caffeine.cache.Caffeine
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import com.intellij.platform.util.coroutines.flow.mapStateIn
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.commons.getLocalRepositories
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.repomapping.toCanonicalLabelOrThis
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
-import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver
-import org.jetbrains.bazel.sync.workspace.persistence.BuildTargetLoadHint
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions
-import org.jetbrains.bazel.sync.workspace.persistence.TargetSection
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService
-import org.jetbrains.bazel.sync.workspace.snapshot.CommonWorkspaceSyncConfig
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.BuildTargetData
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.OutputLocationResolver
-import org.jetbrains.bsp.protocol.data
-import org.jetbrains.bsp.protocol.id
-import org.jetbrains.bsp.protocol.isManual
-import java.nio.file.Path
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-private data object EmptyBuildTargetData : BuildTargetData
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class TargetStorage {
+    // consulo: upstream public top-level class CachedSnapshotView of TargetStorage.kt is nested here
+    public static class CachedSnapshotView {
+        private final WorkspaceSnapshot mySnapshot;
+        private final Set<WorkspaceTargetKey> myImportKeys;
+        private final Map<Label, WorkspaceTargetKey> myLabel2Key;
+        private final OutputLocationResolver myOutputLocationResolver;
 
-@ApiStatus.Internal
-class CachedSnapshotView(val snapshot: WorkspaceSnapshot) {
-  val importKeys: Set<WorkspaceTargetKey>
-  val label2Key: Map<Label, WorkspaceTargetKey>
-  val outputLocationResolver: OutputLocationResolver
+        public CachedSnapshotView(WorkspaceSnapshot snapshot) {
+            mySnapshot = snapshot;
 
-  init {
-    val config = snapshot.syncConfigs.filterIsInstance<CommonWorkspaceSyncConfig>().firstOrNull()
-    if (config == null) {
-      importKeys = emptySet()
-      label2Key = emptyMap()
-    }
-    else {
-      // keep previous behavior, only targets at specific depth (from root targets) are imported
-      importKeys = snapshot.targetGraph
-        .findAllTargetsAtDepth(maxDepth = config.importDepth, useRelaxedDependencyExpansion = true)
-        .toHashSet()
+            @Nullable CommonWorkspaceSyncConfig config = snapshot.syncConfigs().stream()
+                .filter(CommonWorkspaceSyncConfig.class::isInstance)
+                .map(CommonWorkspaceSyncConfig.class::cast)
+                .findFirst()
+                .orElse(null);
+            if (config == null) {
+                myImportKeys = Set.of();
+                myLabel2Key = Map.of();
+            }
+            else {
+                // keep previous behavior, only targets at specific depth (from root targets) are imported
+                // consulo: the upstream default arguments runtimeDependencies = maxDepth < 0, condition = { true } are passed explicitly
+                myImportKeys = snapshot.targetGraph()
+                    .findAllTargetsAtDepth(config.importDepth(), config.importDepth() < 0, true, key -> true)
+                    .collect(Collectors.toCollection(HashSet::new));
 
-      // precompute label -> key map for compatibility purposes
-      val label2Key = HashMap<Label, WorkspaceTargetKey>(importKeys.size)
-      for (key in importKeys) {
-        // TODO: keep this heuristic until UX features are aware of full target key
-        val keyIsPlain = key.aspectIds == WorkspaceAspectIds.EMPTY
-        if (label2Key[key.label] == null || keyIsPlain) {
-          label2Key[key.label] = key
+                // precompute label -> key map for compatibility purposes
+                Map<Label, WorkspaceTargetKey> label2Key = new HashMap<>(myImportKeys.size());
+                for (WorkspaceTargetKey key : myImportKeys) {
+                    // TODO: keep this heuristic until UX features are aware of full target key
+                    boolean keyIsPlain = key.aspectIds().equals(WorkspaceAspectIds.EMPTY);
+                    if (label2Key.get(key.label()) == null || keyIsPlain) {
+                        label2Key.put(key.label(), key);
+                    }
+                }
+                this.myLabel2Key = label2Key;
+            }
+            myOutputLocationResolver = DefaultOutputLocationResolver.createExecrootResolving(snapshot.bazelInfo());
+
+            myTarget2Summary = snapshot.targets().allTargets(TargetLoadOptions.SUMMARY)
+                .filter(it -> myImportKeys.contains(it.getKey()))
+                .collect(Collectors.toMap(BuildTarget::getKey, it -> it, (first, second) -> second, LinkedHashMap::new));
+
+            mySummaries = new ArrayList<>(myTarget2Summary.values());
+
+            Map<Label, BuildTarget> label2Summary = new LinkedHashMap<>();
+            myLabel2Key.forEach((label, key) -> {
+                @Nullable BuildTarget summary = myTarget2Summary.get(key);
+                if (summary != null) {
+                    label2Summary.put(label, summary);
+                }
+            });
+            myLabel2Summary = label2Summary;
         }
-      }
-      this.label2Key = label2Key
+
+        public WorkspaceSnapshot getSnapshot() {
+            return mySnapshot;
+        }
+
+        public Set<WorkspaceTargetKey> getImportKeys() {
+            return myImportKeys;
+        }
+
+        public Map<Label, WorkspaceTargetKey> getLabel2Key() {
+            return myLabel2Key;
+        }
+
+        public OutputLocationResolver getOutputLocationResolver() {
+            return myOutputLocationResolver;
+        }
+
+        private final Map<WorkspaceTargetKey, BuildTarget> myTarget2Summary;
+
+        private final List<BuildTarget> mySummaries;
+
+        public List<BuildTarget> getSummaries() {
+            return mySummaries;
+        }
+
+        private final Map<Label, BuildTarget> myLabel2Summary;
+
+        public Map<Label, BuildTarget> getLabel2Summary() {
+            return myLabel2Summary;
+        }
+
+        private final LazyValue<List<String>> myShortLabels = LazyValue.notNull(() ->
+            getSummaries().stream()
+                .map(it -> BazelRepoMappingUtils.toShortString(BuildTarget.getId(it), getSnapshot().repoMapping()))
+                .toList()
+        );
+
+        public List<String> getShortLabels() {
+            return myShortLabels.get();
+        }
+
+        private final LazyValue<List<String>> myExecutableShortLabels = LazyValue.notNull(() ->
+            getSummaries().stream()
+                .filter(it -> it.getKind().isExecutable())
+                .map(it -> BazelRepoMappingUtils.toShortString(BuildTarget.getId(it), getSnapshot().repoMapping()))
+                .toList()
+        );
+
+        public List<String> getExecutableShortLabels() {
+            return myExecutableShortLabels.get();
+        }
+
+        private final LazyValue<List<BuildTarget>> myAllTestableSummaries = LazyValue.notNull(() ->
+            getSummaries().stream().filter(it -> it.getKind().ruleType() == RuleType.TEST && !BuildTarget.isManual(it)).toList()
+        );
+
+        public List<BuildTarget> getAllTestableSummaries() {
+            return myAllTestableSummaries.get();
+        }
+
+        public List<Label> targetsForPath(Path path) {
+            return mySnapshot.fileToTarget().getTargetsByFile(path).stream()
+                .filter(myImportKeys::contains)
+                .map(WorkspaceTargetKey::label)
+                .distinct()
+                .toList();
+        }
+
+        public List<Label> executableTargetsFor(Label label) {
+            @Nullable ResolvedLabel canonicalLabel = BazelRepoMappingUtils.toCanonicalLabelOrThis(label, mySnapshot.repoMapping());
+            return canonicalLabel != null ? mySnapshot.executableTargets().executableTargetsFor(canonicalLabel) : List.of();
+        }
+
+        // small data cache to accelerate repeated bulk reads of the same target data
+        // consulo: Caffeine is not available in Consulo, the Guava cache is used instead
+        private final Cache<Pair<Label, Class<?>>, BuildTargetData> myDataCache = CacheBuilder.newBuilder()
+            .maximumSize(64)
+            .build();
+
+        public <T extends BuildTargetData> @Nullable T data(Label label, Class<T> type) {
+            BuildTargetData cached;
+            try {
+                cached = myDataCache.get(Pair.<Label, Class<?>>create(label, type), () -> {
+                    @Nullable WorkspaceTargetKey key = myLabel2Key.get(label);
+                    if (key == null) {
+                        return EmptyBuildTargetData.INSTANCE;
+                    }
+                    TargetLoadOptions options = new TargetLoadOptions(
+                        Set.of(TargetSection.INFO),
+                        new BuildTargetLoadHint.Subset(Set.<Class<? extends BuildTargetData>>of(type))
+                    );
+                    @Nullable BuildTarget target = mySnapshot.targets().findTargetByKey(key, options);
+                    @Nullable T data = target != null ? BuildTarget.data(target, type) : null;
+                    return data != null ? data : EmptyBuildTargetData.INSTANCE;
+                });
+            }
+            catch (ExecutionException e) {
+                throw new IllegalStateException(e.getCause());
+            }
+            if (cached == EmptyBuildTargetData.INSTANCE) {
+                return null;
+            }
+            else {
+                return type.cast(cached);
+            }
+        }
     }
-    outputLocationResolver = DefaultOutputLocationResolver.createExecrootResolving(snapshot.bazelInfo)
-  }
 
-  private val target2Summary: Map<WorkspaceTargetKey, BuildTarget> =
-    snapshot.targets.allTargets(TargetLoadOptions.SUMMARY)
-      .filter { it.key in importKeys }
-      .associateBy { it.key }
+    private final Project myProject;
+    private final WorkspaceSnapshotService mySnapshotService;
 
-  val summaries: List<BuildTarget> = target2Summary.values.toList()
+    private final ObservableValue<CachedSnapshotView> myViews;
 
-  val label2Summary: Map<Label, BuildTarget> =
-    label2Key.mapNotNull { (label, key) -> target2Summary[key]?.let { label to it } }.toMap()
-
-  val shortLabels: List<String> by lazy {
-    summaries.map { it.id.toShortString(snapshot.repoMapping) }
-  }
-
-  val executableShortLabels: List<String> by lazy {
-    summaries.filter { it.kind.isExecutable }
-      .map { it.id.toShortString(snapshot.repoMapping) }
-  }
-
-  val allTestableSummaries: List<BuildTarget> by lazy {
-    summaries.filter { it.kind.ruleType == RuleType.TEST && !it.isManual }
-  }
-
-  fun targetsForPath(path: Path): List<Label> =
-    snapshot.fileToTarget.getTargetsByFile(path)
-      .filter { it in importKeys }
-      .map { it.label }
-      .distinct()
-
-  fun executableTargetsFor(label: Label): List<Label> =
-    label.toCanonicalLabelOrThis(snapshot.repoMapping)?.let { snapshot.executableTargets.executableTargetsFor(it) }.orEmpty()
-
-  // small data cache to accelerate repeated bulk reads of the same target data
-  private val dataCache = Caffeine.newBuilder()
-    .maximumSize(64)
-    .build<Pair<Label, Class<*>>, BuildTargetData>()
-
-  fun <T : BuildTargetData> data(label: Label, type: Class<T>): T? {
-    val cached = dataCache.get(label to type) {
-      val key = label2Key[label] ?: return@get EmptyBuildTargetData
-      val options = TargetLoadOptions(
-        sections = setOf(TargetSection.INFO),
-        targetData = BuildTargetLoadHint.Subset(setOf(type)),
-      )
-      snapshot.targets.findTargetByKey(key, options)?.data(type) ?: EmptyBuildTargetData
+    @Inject
+    public TargetStorage(Project project) {
+        myProject = project;
+        mySnapshotService = project.getInstance(WorkspaceSnapshotService.class);
+        // consulo: StateFlow.mapStateIn(coroutineScope) is ObservableValue.map, the service coroutine scope is not needed
+        myViews = mySnapshotService.getSnapshot().map(CachedSnapshotView::new);
     }
-    return if (cached === EmptyBuildTargetData) {
-      null
+
+    public ObservableValue<CachedSnapshotView> getViews() {
+        return myViews;
     }
-    else {
-      type.cast(cached)
+
+    public CompletableFuture<?> awaitLoaded() {
+        return mySnapshotService.currentSnapshot() // force load
+            // compare with the latest snapshot: `views` is conflated and can skip the one that `currentSnapshot()` returned
+            // consulo: ObservableValue.map updates `views` synchronously on every snapshot change, so after currentSnapshot()
+            // `views` already holds the view of the latest snapshot (upstream: views.first { it.snapshot === snapshot.value })
+            .thenApply(ignored -> myViews.get());
     }
-  }
+
+    private CachedSnapshotView view() {
+        return myViews.get();
+    }
+
+    public List<String> getAllTargetShortLabels() {
+        return view().getShortLabels();
+    }
+
+    public List<String> getAllExecutableTargetLabels() {
+        return view().getExecutableShortLabels();
+    }
+
+    public void addFileToTargetIdEntry(Path file, Collection<Label> targets) {
+        CachedSnapshotView view = view();
+        view.getSnapshot().fileToTarget().addMapping(
+            file,
+            targets.stream().map(it -> view.getLabel2Key().get(it)).filter(Objects::nonNull).toList()
+        );
+    }
+
+    public void removeFileToTargetIdEntry(Path file) {
+        view().getSnapshot().fileToTarget().removeMapping(file);
+    }
+
+    public Stream<Label> allTargets() {
+        return allTargetSummaries().stream().map(BuildTarget::getId);
+    }
+
+    public List<BuildTarget> allTargetSummaries() {
+        return view().getSummaries();
+    }
+
+    public List<BuildTarget> allTestableSummaries() {
+        return view().getAllTestableSummaries();
+    }
+
+    public @Nullable BuildTarget getTargetSummary(Label label) {
+        @Nullable ResolvedLabel canonicalLabel = BazelRepoMappingUtils.toCanonicalLabelOrThis(label, myProject);
+        return canonicalLabel != null ? view().getLabel2Summary().get(canonicalLabel) : null;
+    }
+
+    public int getTotalTargetCount() {
+        return view().getSummaries().size();
+    }
+
+    public List<Label> getTargetsForPath(Path path) {
+        return view().targetsForPath(path);
+    }
+
+    public List<Label> getTargetsForFile(VirtualFile file) {
+        @Nullable Path path = toNioPathOrNull(file);
+        return path != null ? getTargetsForPath(path) : List.of();
+    }
+
+    public List<Label> getExecutableTargetsForFile(VirtualFile file) {
+        @Nullable Path path = toNioPathOrNull(file);
+        if (path == null) {
+            return List.of();
+        }
+        CachedSnapshotView view = view();
+        List<Label> targetsForFile = view.targetsForPath(path);
+        List<Label> executableDirectTargets = targetsForFile.stream().filter(label -> {
+            @Nullable BuildTarget summary = view.getLabel2Summary().get(label);
+            return summary != null && summary.getKind().isExecutable();
+        }).toList();
+        if (executableDirectTargets.isEmpty()) {
+            return targetsForFile.stream().flatMap(it -> view.executableTargetsFor(it).stream()).distinct().toList();
+        }
+        return executableDirectTargets;
+    }
+
+    public List<Label> getExecutableTargetsForTarget(Label target) {
+        return view().executableTargetsFor(target);
+    }
+
+    public boolean isLibrary(Label target) {
+        @Nullable BuildTarget summary = getTargetSummary(target);
+        return summary != null && summary.getKind().ruleType() == RuleType.LIBRARY;
+    }
+
+    public <T extends BuildTargetData> @Nullable T getTargetDataForLabel(Label label, Class<T> type) {
+        @Nullable ResolvedLabel canonicalLabel = BazelRepoMappingUtils.toCanonicalLabelOrThis(label, myProject);
+        return canonicalLabel != null ? view().data(canonicalLabel, type) : null;
+    }
+
+    public int getTotalFileCount() {
+        return view().getSnapshot().fileToTarget().getSize();
+    }
+
+    public RepoMapping repoMapping() {
+        return view().getSnapshot().repoMapping();
+    }
+
+    public @Nullable Path resolveExecrootOutputLocation(OutputLocation location) {
+        CachedSnapshotView view = view();
+        return view.getOutputLocationResolver().resolve(location, RepoMapping.getLocalRepositories(view.getSnapshot().repoMapping()));
+    }
+
+    // consulo: the upstream reified extension `TargetStorage.getTargetDataForLabel<T>(label)` is the member
+    // getTargetDataForLabel(label, type)
+
+    public static TargetStorage getTargetStorage(Project receiver) {
+        return receiver.getInstance(TargetStorage.class);
+    }
+
+    // consulo: IntelliJ VirtualFile.toNioPathOrNull()
+    private static @Nullable Path toNioPathOrNull(VirtualFile file) {
+        try {
+            return file.toNioPath();
+        }
+        catch (UnsupportedOperationException e) {
+            return null;
+        }
+    }
 }
 
-@Service(Service.Level.PROJECT)
-@ApiStatus.Internal
-class TargetStorage(private val project: Project, private val coroutineScope: CoroutineScope) {
-  private val snapshotService = project.service<WorkspaceSnapshotService>()
+final class EmptyBuildTargetData implements BuildTargetData {
+    static final EmptyBuildTargetData INSTANCE = new EmptyBuildTargetData();
 
-  val views: StateFlow<CachedSnapshotView> = snapshotService.snapshot.mapStateIn(coroutineScope) {
-    CachedSnapshotView(it)
-  }
-
-  suspend fun awaitLoaded() {
-    snapshotService.currentSnapshot() // force load
-    // compare with the latest snapshot: `views` is conflated and can skip the one that `currentSnapshot()` returned
-    views.first { it.snapshot === snapshotService.snapshot.value }
-  }
-
-  private fun view(): CachedSnapshotView = views.value
-
-  val allTargetShortLabels: List<String>
-    get() = view().shortLabels
-
-  val allExecutableTargetLabels: List<String>
-    get() = view().executableShortLabels
-
-  fun addFileToTargetIdEntry(file: Path, targets: Collection<Label>) {
-    val view = view()
-    view.snapshot.fileToTarget.addMapping(file, targets.mapNotNull { view.label2Key[it] })
-  }
-
-  fun removeFileToTargetIdEntry(file: Path) {
-    view().snapshot.fileToTarget.removeMapping(file)
-  }
-
-  fun allTargets(): Sequence<Label> = allTargetSummaries().asSequence().map { it.id }
-
-  fun allTargetSummaries(): List<BuildTarget> = view().summaries
-
-  fun allTestableSummaries(): List<BuildTarget> = view().allTestableSummaries
-
-  fun getTargetSummary(label: Label): BuildTarget? =
-    label.toCanonicalLabelOrThis(project)?.let { view().label2Summary[it] }
-
-  fun getTotalTargetCount(): Int = view().summaries.size
-
-  fun getTargetsForPath(path: Path): List<Label> = view().targetsForPath(path)
-
-  fun getTargetsForFile(file: VirtualFile): List<Label> = file.toNioPathOrNull()?.let { getTargetsForPath(it) } ?: emptyList()
-
-  fun getExecutableTargetsForFile(file: VirtualFile): List<Label> {
-    val path = file.toNioPathOrNull() ?: return emptyList()
-    val view = view()
-    val targetsForFile = view.targetsForPath(path)
-    val executableDirectTargets = targetsForFile.filter { label -> view.label2Summary[label]?.kind?.isExecutable == true }
-    if (executableDirectTargets.isEmpty()) {
-      return targetsForFile.flatMap { view.executableTargetsFor(it) }.distinct()
+    private EmptyBuildTargetData() {
     }
-    return executableDirectTargets
-  }
 
-  fun getExecutableTargetsForTarget(target: Label): List<Label> = view().executableTargetsFor(target)
-
-  fun isLibrary(target: Label): Boolean = getTargetSummary(target)?.kind?.ruleType == RuleType.LIBRARY
-
-  fun <T : BuildTargetData> getTargetDataForLabel(label: Label, type: Class<T>): T? =
-    label.toCanonicalLabelOrThis(project)?.let { view().data(it, type) }
-
-  fun getTotalFileCount(): Int = view().snapshot.fileToTarget.size
-
-  fun repoMapping(): RepoMapping = view().snapshot.repoMapping
-
-  fun resolveExecrootOutputLocation(location: OutputLocation): Path? =
-    view().let { view -> view.outputLocationResolver.resolve(location, view.snapshot.repoMapping.getLocalRepositories()) }
+    @Override
+    public String toString() {
+        return "EmptyBuildTargetData";
+    }
 }
-
-@ApiStatus.Internal
-inline fun <reified T : BuildTargetData> TargetStorage.getTargetDataForLabel(label: Label): T? = getTargetDataForLabel(label, T::class.java)
-
-val Project.targetStorage: TargetStorage
-  @ApiStatus.Internal
-  get() = service<TargetStorage>()

@@ -1,81 +1,114 @@
-package org.jetbrains.bazel.server.bep
+package org.jetbrains.bazel.server.bep;
 
-import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos
-import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.NamedSetOfFiles
-import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.OutputGroup
-import com.intellij.aspect.lib.OutputGroups
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.BazelRelease
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import java.io.File
-import java.nio.file.Path
-import kotlin.io.path.Path
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.NamedSetOfFiles;
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.OutputGroup;
+import com.intellij.aspect.lib.OutputGroups;
+import org.jetbrains.bazel.commons.BazelInfo.BazelRelease;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 
-@ApiStatus.Internal
-data class TextProtoDepSet(val files: Collection<Path>, val children: Collection<String>)
+import java.io.File;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-internal class BepOutputBuilder(private val bazelPathsResolver: BazelPathsResolver) {
-  private val infoOutputGroupFileSets: MutableSet<String> = HashSet()
-  private val textProtoFileSets: MutableMap<String, TextProtoDepSet> = HashMap()
-  private val rootTargets: MutableSet<WorkspaceTargetKey> = HashSet()
-  private val options: MutableList<String> = mutableListOf()
-  val configurations: MutableMap<WorkspaceConfigurationId, WorkspaceConfiguration> = mutableMapOf()
-  var buildToolVersion: BazelRelease = BazelRelease.FALLBACK_VERSION
+final class BepOutputBuilder {
+    public record TextProtoDepSet(Collection<Path> files, Collection<String> children) {
+    }
 
-  fun storeNamedSet(id: String, namedSetOfFiles: NamedSetOfFiles) {
-    val textProtoDepSet =
-      TextProtoDepSet(
-        files =
-          namedSetOfFiles
-            .filesList
-            .filter { it.name.endsWith(Constants.ASPECT_INFO_OUTPUT_EXTENSION) }
-            .map { it.toLocalPath() },
-        children = namedSetOfFiles.fileSetsList.map { it.id },
-      )
+    private final BazelPathsResolver myBazelPathsResolver;
+    private final Set<String> myInfoOutputGroupFileSets = new HashSet<>();
+    private final Map<String, TextProtoDepSet> myTextProtoFileSets = new HashMap<>();
+    private final Set<WorkspaceTargetKey> myRootTargets = new HashSet<>();
+    private final List<String> myOptions = new ArrayList<>();
+    private final Map<WorkspaceConfigurationId, WorkspaceConfiguration> myConfigurations = new LinkedHashMap<>();
+    private BazelRelease myBuildToolVersion = BazelRelease.FALLBACK_VERSION;
 
-    textProtoFileSets[id] = textProtoDepSet
-  }
+    BepOutputBuilder(BazelPathsResolver bazelPathsResolver) {
+        myBazelPathsResolver = bazelPathsResolver;
+    }
 
-  private fun BuildEventStreamProtos.File.toLocalPath(): Path {
-    val mergedPathPrefix = Path(pathPrefixList.joinToString(File.separator))
-    val bazelOutputRelativePath = mergedPathPrefix.resolve(name)
+    public Map<WorkspaceConfigurationId, WorkspaceConfiguration> getConfigurations() {
+        return myConfigurations;
+    }
 
-    return bazelPathsResolver.resolveOutput(bazelOutputRelativePath)
-  }
+    public BazelRelease getBuildToolVersion() {
+        return myBuildToolVersion;
+    }
 
-  fun storeTargetOutputGroups(target: WorkspaceTargetKey, outputGroups: List<OutputGroup>) {
-    rootTargets.add(target)
-    val infoGroup = outputGroups.firstOrNull { it.name == OutputGroups.INFO.groupName } ?: return
-    val fileSets = infoGroup.fileSetsList.map { it.id }
-    infoOutputGroupFileSets.addAll(fileSets)
-  }
+    public void setBuildToolVersion(BazelRelease buildToolVersion) {
+        myBuildToolVersion = buildToolVersion;
+    }
 
-  fun storeOptions(cmdline: List<String>) {
-    options.addAll(cmdline)
-  }
+    public void storeNamedSet(String id, NamedSetOfFiles namedSetOfFiles) {
+        TextProtoDepSet textProtoDepSet =
+            new TextProtoDepSet(
+                namedSetOfFiles
+                    .getFilesList()
+                    .stream()
+                    .filter(it -> it.getName().endsWith(Constants.ASPECT_INFO_OUTPUT_EXTENSION))
+                    .map(this::toLocalPath)
+                    .toList(),
+                namedSetOfFiles.getFileSetsList().stream().map(it -> it.getId()).toList()
+            );
 
-  fun storeConfiguration(configuration: WorkspaceConfiguration) {
-    configurations[configuration.id] = configuration
-  }
+        myTextProtoFileSets.put(id, textProtoDepSet);
+    }
 
-  fun clear() {
-    infoOutputGroupFileSets.clear()
-    textProtoFileSets.clear()
-    rootTargets.clear()
-    options.clear()
-    buildToolVersion = BazelRelease.FALLBACK_VERSION
-  }
+    private Path toLocalPath(BuildEventStreamProtos.File receiver) {
+        Path mergedPathPrefix = Path.of(String.join(File.separator, receiver.getPathPrefixList()));
+        Path bazelOutputRelativePath = mergedPathPrefix.resolve(receiver.getName());
 
-  fun build(): BepOutput = BepOutput(
-    infoOutputGroupFileSets,
-    textProtoFileSets,
-    rootTargets,
-    options,
-    configurations,
-    buildToolVersion,
-  )
+        return myBazelPathsResolver.resolveOutput(bazelOutputRelativePath);
+    }
+
+    public void storeTargetOutputGroups(WorkspaceTargetKey target, List<OutputGroup> outputGroups) {
+        myRootTargets.add(target);
+        OutputGroup infoGroup = outputGroups.stream()
+            .filter(it -> it.getName().equals(OutputGroups.INFO.getGroupName()))
+            .findFirst()
+            .orElse(null);
+        if (infoGroup == null) {
+            return;
+        }
+        List<String> fileSets = infoGroup.getFileSetsList().stream().map(it -> it.getId()).toList();
+        myInfoOutputGroupFileSets.addAll(fileSets);
+    }
+
+    public void storeOptions(List<String> cmdline) {
+        myOptions.addAll(cmdline);
+    }
+
+    public void storeConfiguration(WorkspaceConfiguration configuration) {
+        myConfigurations.put(configuration.id(), configuration);
+    }
+
+    public void clear() {
+        myInfoOutputGroupFileSets.clear();
+        myTextProtoFileSets.clear();
+        myRootTargets.clear();
+        myOptions.clear();
+        myBuildToolVersion = BazelRelease.FALLBACK_VERSION;
+    }
+
+    public BepOutput build() {
+        return new BepOutput(
+            myInfoOutputGroupFileSets,
+            myTextProtoFileSets,
+            myRootTargets,
+            myOptions,
+            myConfigurations,
+            myBuildToolVersion
+        );
+    }
 }

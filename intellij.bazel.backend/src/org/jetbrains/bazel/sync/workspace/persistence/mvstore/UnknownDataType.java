@@ -1,26 +1,41 @@
-package org.jetbrains.bazel.sync.workspace.persistence.mvstore
+package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
-import org.h2.mvstore.WriteBuffer
-import org.h2.mvstore.type.BasicDataType
-import org.jetbrains.annotations.ApiStatus
-import java.nio.ByteBuffer
+import org.h2.mvstore.WriteBuffer;
+import org.h2.mvstore.type.BasicDataType;
+
+import java.nio.ByteBuffer;
 
 // used only for unopened MVMap pruning
-@ApiStatus.Internal
-object UnknownDataType : BasicDataType<ByteArray>() {
-  override fun isMemoryEstimationAllowed(): Boolean = false
+public final class UnknownDataType extends BasicDataType<byte[]> {
+    public static final UnknownDataType INSTANCE = new UnknownDataType();
 
-  override fun getMemory(obj: ByteArray): Int = obj.size
+    private UnknownDataType() {
+    }
 
-  override fun createStorage(size: Int): Array<ByteArray?> = arrayOfNulls(size)
+    @Override
+    public boolean isMemoryEstimationAllowed() {
+        return false;
+    }
 
-  override fun write(buff: WriteBuffer, obj: ByteArray) {
-    buff.put(obj)
-  }
+    @Override
+    public int getMemory(byte[] obj) {
+        return obj.length;
+    }
 
-  override fun read(buff: ByteBuffer): ByteArray {
-    val data = ByteArray(buff.remaining())
-    buff.get(data)
-    return data
-  }
+    @Override
+    public byte[][] createStorage(int size) {
+        return new byte[size][];
+    }
+
+    @Override
+    public void write(WriteBuffer buff, byte[] obj) {
+        buff.put(obj);
+    }
+
+    @Override
+    public byte[] read(ByteBuffer buff) {
+        byte[] data = new byte[buff.remaining()];
+        buff.get(data);
+        return data;
+    }
 }

@@ -1,170 +1,240 @@
-package org.jetbrains.bazel.sync.workspace.persistence.mvstore
+package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
-import com.esotericsoftware.kryo.kryo5.io.Input
-import com.esotericsoftware.kryo.kryo5.io.Output
-import org.jetbrains.annotations.ApiStatus
-import java.io.OutputStream
-import java.security.DigestOutputStream
-import java.security.MessageDigest
-import java.util.SortedSet
+import com.esotericsoftware.kryo.kryo5.io.Input;
+import com.esotericsoftware.kryo.kryo5.io.Output;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-sealed interface SnapshotTypeSchema {
-  data class Fields(val fields: List<Field>) : SnapshotTypeSchema {
-    data class Field(val name: String, val typeFqn: String)
-  }
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
-  data class Enum(val constants: List<String>) : SnapshotTypeSchema
-
-  data object Singleton : SnapshotTypeSchema
-}
-
-@ApiStatus.Internal
-data class SnapshotManifestEntry(
-  val registrationId: Int,
-  val fqn: String,
-  val schema: SnapshotTypeSchema,
-) {
-  companion object {
-    internal val COMPARATOR = compareBy<SnapshotManifestEntry> { it.registrationId }
-      .thenComparing { it.fqn }
-  }
-}
-
-@ApiStatus.Internal
-data class SnapshotManifest(val entries: SortedSet<SnapshotManifestEntry>) {
-
-  // compute sha-256 fingerprint of serialization schema
-  fun fingerprint(): ByteArray {
-    val digest = MessageDigest.getInstance("SHA-256")
-    DigestOutputStream(OutputStream.nullOutputStream(), digest)
-      .let { stream ->
-        Output(stream, DIGEST_BUFFER_SIZE)
-          .use { output -> writeTo(output) }
-      }
-    return digest.digest()
-  }
-
-  fun writeTo(output: Output) {
-    output.writeVarInt(entries.size, true)
-    for ((registrationId, fqn, schema) in entries) {
-      output.writeVarInt(registrationId, true)
-      output.writeString(fqn)
-      when (schema) {
-        is SnapshotTypeSchema.Fields -> {
-          output.writeByte(KIND_FIELDS)
-          output.writeVarInt(schema.fields.size, true)
-          for ((name, typeFqn) in schema.fields) {
-            output.writeString(name)
-            output.writeString(typeFqn)
-          }
+public record SnapshotManifest(SortedSet<SnapshotManifest.SnapshotManifestEntry> entries) {
+    public sealed interface SnapshotTypeSchema {
+        record Fields(List<Field> fields) implements SnapshotTypeSchema {
+            public record Field(String name, String typeFqn) {
+            }
         }
 
-        is SnapshotTypeSchema.Enum -> {
-          output.writeByte(KIND_ENUM)
-          output.writeVarInt(schema.constants.size, true)
-          schema.constants.forEach(output::writeString)
+        record Enum(List<String> constants) implements SnapshotTypeSchema {
         }
 
-        SnapshotTypeSchema.Singleton -> {
-          output.writeByte(KIND_SINGLETON)
+        final class Singleton implements SnapshotTypeSchema {
+            public static final Singleton INSTANCE = new Singleton();
+
+            private Singleton() {
+            }
+
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof Singleton;
+            }
+
+            @Override
+            public int hashCode() {
+                return Singleton.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "Singleton";
+            }
         }
-      }
     }
-  }
 
-  companion object {
-    private const val KIND_FIELDS = 0
-    private const val KIND_ENUM = 1
-    private const val KIND_SINGLETON = 2
-    private const val DIGEST_BUFFER_SIZE = 4096
+    public record SnapshotManifestEntry(
+        int registrationId,
+        String fqn,
+        SnapshotTypeSchema schema
+    ) {
+        static final Comparator<SnapshotManifestEntry> COMPARATOR = Comparator.comparingInt(SnapshotManifestEntry::registrationId)
+            .thenComparing(SnapshotManifestEntry::fqn);
+    }
 
-    fun readFrom(input: Input): SnapshotManifest {
-      val count = input.readVarInt(true)
-      val entries = ArrayList<SnapshotManifestEntry>(count)
-      repeat(count) {
-        val registrationId = input.readVarInt(true)
-        val fqn = checkNotNull(input.readString())
-        val schema = when (val kind = input.readByte().toInt()) {
-          KIND_FIELDS -> {
-            val fieldCount = input.readVarInt(true)
-            SnapshotTypeSchema.Fields(
-              List(fieldCount) {
-                SnapshotTypeSchema.Fields.Field(
-                  name = checkNotNull(input.readString()),
-                  typeFqn = checkNotNull(input.readString()),
-                )
-              },
-            )
-          }
+    private static final int KIND_FIELDS = 0;
+    private static final int KIND_ENUM = 1;
+    private static final int KIND_SINGLETON = 2;
+    private static final int DIGEST_BUFFER_SIZE = 4096;
 
-          KIND_ENUM -> {
-            val constantCount = input.readVarInt(true)
-            SnapshotTypeSchema.Enum(List(constantCount) { checkNotNull(input.readString()) })
-          }
-
-          KIND_SINGLETON -> SnapshotTypeSchema.Singleton
-
-          else -> error("Unknown manifest schema kind: $kind")
+    // compute sha-256 fingerprint of serialization schema
+    public byte[] fingerprint() {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
         }
-        entries += SnapshotManifestEntry(registrationId, fqn, schema)
-      }
-      return SnapshotManifest(entries.toSortedSet(SnapshotManifestEntry.COMPARATOR))
-    }
-  }
-}
-
-internal fun SnapshotManifest.describeChangesAgainst(current: SnapshotManifest): List<String> {
-  val reasons = mutableListOf<String>()
-  val storedByFqn = entries.associateBy { it.fqn }
-  val currentByFqn = current.entries.associateBy { it.fqn }
-
-  (storedByFqn.keys - currentByFqn.keys).forEach { reasons += "type removed: $it" }
-  (currentByFqn.keys - storedByFqn.keys).forEach { reasons += "type added: $it" }
-
-  for ((storedId, fqn, storedSchema) in entries) {
-    val currentEntry = currentByFqn[fqn] ?: continue
-    if (storedId != currentEntry.registrationId) {
-      reasons += "registration id of $fqn changed: $storedId -> ${currentEntry.registrationId}"
-      continue
-    }
-    if (storedSchema != currentEntry.schema) {
-      reasons += describeSchemaChange(fqn, storedSchema, currentEntry.schema)
-    }
-  }
-  return reasons
-}
-
-private fun describeSchemaChange(fqn: String, stored: SnapshotTypeSchema, current: SnapshotTypeSchema): String {
-  if (stored::class != current::class) {
-    return "$fqn: kind changed ${stored.kindName()} -> ${current.kindName()}"
-  }
-  return when (stored) {
-    is SnapshotTypeSchema.Fields -> {
-      val storedByName = stored.fields.associateBy { it.name }
-      val currentByName = (current as SnapshotTypeSchema.Fields).fields.associateBy { it.name }
-      val details = buildList {
-        (storedByName.keys - currentByName.keys).forEach { add("field removed: $it") }
-        (currentByName.keys - storedByName.keys).forEach { add("field added: $it") }
-        for ((name, storedField) in storedByName) {
-          val currentField = currentByName[name] ?: continue
-          if (storedField.typeFqn != currentField.typeFqn) {
-            add("field $name type changed: ${storedField.typeFqn} -> ${currentField.typeFqn}")
-          }
+        catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
-      }
-      "$fqn: ${details.joinToString(", ")}"
+        DigestOutputStream stream = new DigestOutputStream(OutputStream.nullOutputStream(), digest);
+        try (Output output = new Output(stream, DIGEST_BUFFER_SIZE)) {
+            writeTo(output);
+        }
+        return digest.digest();
     }
 
-    is SnapshotTypeSchema.Enum ->
-      "$fqn: enum constants changed ${stored.constants} -> ${(current as SnapshotTypeSchema.Enum).constants}"
+    public void writeTo(Output output) {
+        output.writeVarInt(entries.size(), true);
+        for (SnapshotManifestEntry entry : entries) {
+            output.writeVarInt(entry.registrationId(), true);
+            output.writeString(entry.fqn());
+            SnapshotTypeSchema schema = entry.schema();
+            if (schema instanceof SnapshotTypeSchema.Fields fields) {
+                output.writeByte(KIND_FIELDS);
+                output.writeVarInt(fields.fields().size(), true);
+                for (SnapshotTypeSchema.Fields.Field field : fields.fields()) {
+                    output.writeString(field.name());
+                    output.writeString(field.typeFqn());
+                }
+            }
+            else if (schema instanceof SnapshotTypeSchema.Enum enumSchema) {
+                output.writeByte(KIND_ENUM);
+                output.writeVarInt(enumSchema.constants().size(), true);
+                enumSchema.constants().forEach(output::writeString);
+            }
+            else if (schema instanceof SnapshotTypeSchema.Singleton) {
+                output.writeByte(KIND_SINGLETON);
+            }
+        }
+    }
 
-    SnapshotTypeSchema.Singleton -> "$fqn: schema changed"
-  }
-}
+    public static SnapshotManifest readFrom(Input input) {
+        int count = input.readVarInt(true);
+        List<SnapshotManifestEntry> entries = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            int registrationId = input.readVarInt(true);
+            String fqn = Objects.requireNonNull(input.readString());
+            int kind = input.readByte();
+            SnapshotTypeSchema schema = switch (kind) {
+                case KIND_FIELDS -> {
+                    int fieldCount = input.readVarInt(true);
+                    List<SnapshotTypeSchema.Fields.Field> fields = new ArrayList<>(fieldCount);
+                    for (int j = 0; j < fieldCount; j++) {
+                        fields.add(new SnapshotTypeSchema.Fields.Field(
+                            Objects.requireNonNull(input.readString()),
+                            Objects.requireNonNull(input.readString())
+                        ));
+                    }
+                    yield new SnapshotTypeSchema.Fields(fields);
+                }
 
-private fun SnapshotTypeSchema.kindName(): String = when (this) {
-  is SnapshotTypeSchema.Fields -> "FIELDS"
-  is SnapshotTypeSchema.Enum -> "ENUM"
-  SnapshotTypeSchema.Singleton -> "SINGLETON"
+                case KIND_ENUM -> {
+                    int constantCount = input.readVarInt(true);
+                    List<String> constants = new ArrayList<>(constantCount);
+                    for (int j = 0; j < constantCount; j++) {
+                        constants.add(Objects.requireNonNull(input.readString()));
+                    }
+                    yield new SnapshotTypeSchema.Enum(constants);
+                }
+
+                case KIND_SINGLETON -> SnapshotTypeSchema.Singleton.INSTANCE;
+
+                default -> throw new IllegalStateException("Unknown manifest schema kind: " + kind);
+            };
+            entries.add(new SnapshotManifestEntry(registrationId, fqn, schema));
+        }
+        SortedSet<SnapshotManifestEntry> sorted = new TreeSet<>(SnapshotManifestEntry.COMPARATOR);
+        sorted.addAll(entries);
+        return new SnapshotManifest(sorted);
+    }
+
+    // consulo: upstream internal extension function
+    static List<String> describeChangesAgainst(SnapshotManifest receiver, SnapshotManifest current) {
+        List<String> reasons = new ArrayList<>();
+        Map<String, SnapshotManifestEntry> storedByFqn = associateByFqn(receiver.entries());
+        Map<String, SnapshotManifestEntry> currentByFqn = associateByFqn(current.entries());
+
+        Set<String> removed = new LinkedHashSet<>(storedByFqn.keySet());
+        removed.removeAll(currentByFqn.keySet());
+        removed.forEach(it -> reasons.add("type removed: " + it));
+        Set<String> added = new LinkedHashSet<>(currentByFqn.keySet());
+        added.removeAll(storedByFqn.keySet());
+        added.forEach(it -> reasons.add("type added: " + it));
+
+        for (SnapshotManifestEntry entry : receiver.entries()) {
+            int storedId = entry.registrationId();
+            String fqn = entry.fqn();
+            SnapshotTypeSchema storedSchema = entry.schema();
+            SnapshotManifestEntry currentEntry = currentByFqn.get(fqn);
+            if (currentEntry == null) {
+                continue;
+            }
+            if (storedId != currentEntry.registrationId()) {
+                reasons.add("registration id of " + fqn + " changed: " + storedId + " -> " + currentEntry.registrationId());
+                continue;
+            }
+            if (!storedSchema.equals(currentEntry.schema())) {
+                reasons.add(describeSchemaChange(fqn, storedSchema, currentEntry.schema()));
+            }
+        }
+        return reasons;
+    }
+
+    private static String describeSchemaChange(String fqn, SnapshotTypeSchema stored, SnapshotTypeSchema current) {
+        if (stored.getClass() != current.getClass()) {
+            return fqn + ": kind changed " + kindName(stored) + " -> " + kindName(current);
+        }
+        if (stored instanceof SnapshotTypeSchema.Fields storedFields) {
+            Map<String, SnapshotTypeSchema.Fields.Field> storedByName = new LinkedHashMap<>();
+            storedFields.fields().forEach(it -> storedByName.put(it.name(), it));
+            Map<String, SnapshotTypeSchema.Fields.Field> currentByName = new LinkedHashMap<>();
+            ((SnapshotTypeSchema.Fields) current).fields().forEach(it -> currentByName.put(it.name(), it));
+            List<String> details = new ArrayList<>();
+            Set<String> removed = new LinkedHashSet<>(storedByName.keySet());
+            removed.removeAll(currentByName.keySet());
+            removed.forEach(it -> details.add("field removed: " + it));
+            Set<String> added = new LinkedHashSet<>(currentByName.keySet());
+            added.removeAll(storedByName.keySet());
+            added.forEach(it -> details.add("field added: " + it));
+            for (Map.Entry<String, SnapshotTypeSchema.Fields.Field> entry : storedByName.entrySet()) {
+                String name = entry.getKey();
+                SnapshotTypeSchema.Fields.Field storedField = entry.getValue();
+                SnapshotTypeSchema.Fields.Field currentField = currentByName.get(name);
+                if (currentField == null) {
+                    continue;
+                }
+                if (!storedField.typeFqn().equals(currentField.typeFqn())) {
+                    details.add("field " + name + " type changed: " + storedField.typeFqn() + " -> " + currentField.typeFqn());
+                }
+            }
+            return fqn + ": " + String.join(", ", details);
+        }
+        else if (stored instanceof SnapshotTypeSchema.Enum storedEnum) {
+            return fqn + ": enum constants changed " + storedEnum.constants() + " -> " + ((SnapshotTypeSchema.Enum) current).constants();
+        }
+        else {
+            return fqn + ": schema changed";
+        }
+    }
+
+    private static String kindName(SnapshotTypeSchema receiver) {
+        if (receiver instanceof SnapshotTypeSchema.Fields) {
+            return "FIELDS";
+        }
+        else if (receiver instanceof SnapshotTypeSchema.Enum) {
+            return "ENUM";
+        }
+        else {
+            return "SINGLETON";
+        }
+    }
+
+    // consulo: Kotlin `entries.associateBy { it.fqn }`
+    private static Map<String, SnapshotManifestEntry> associateByFqn(Set<SnapshotManifestEntry> entries) {
+        Map<String, SnapshotManifestEntry> result = new LinkedHashMap<>();
+        for (SnapshotManifestEntry entry : entries) {
+            result.put(entry.fqn(), entry);
+        }
+        return result;
+    }
 }

@@ -1,172 +1,209 @@
-package org.jetbrains.bazel.sync.workspace.importer
+package org.jetbrains.bazel.sync.workspace.importer;
 
-import com.intellij.build.events.impl.FailureResultImpl
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.externalSystem.autolink.mapExtensionSafe
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.util.progress.SequentialProgressReporter
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.config.BazelBackendBundle
-import org.jetbrains.bazel.progress.TaskConsole
-import org.jetbrains.bazel.progress.syncConsole
-import org.jetbrains.bazel.progress.withSubtask
-import org.jetbrains.bazel.sync.BazelOutFileHardLinks
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bazel.workspacemodel.entities.BazelProjectEntitySource
-import org.jetbrains.bsp.protocol.OutputLocationParser
-import org.jetbrains.bsp.protocol.OutputLocationResolver
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.application.Application;
+import consulo.application.progress.ProgressIndicator;
+import consulo.bazel.backend.localize.BazelBackendLocalize;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.build.ui.event.BuildEventFactory;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.progress.TaskConsole;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.sync.BazelOutFileHardLinks;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter.BazelWorkspaceImporterFactory;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter.WorkspaceImporterContext;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter.WorkspaceImporterPhase;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter.WorkspaceImporterResult;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.GlobalNamingContextBuilder;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jetbrains.bsp.protocol.OutputLocationParser;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class WorkspaceImporterHelper(
-  private val project: Project,
-  private val taskConsole: TaskConsole,
-  private val progressReporter: SequentialProgressReporter,
-  private val builder: MutableEntityStorage,
-  private val outputResolver: OutputLocationResolver,
-  private val outputParser: OutputLocationParser,
-  private val outFileHardLinks: BazelOutFileHardLinks,
-  private val bazelInfo: BazelInfo,
-) {
-  companion object {
-    private val log = logger<WorkspaceImporterHelper>()
-  }
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.function.Function;
 
-  private val workspaceModel = WorkspaceModel.getInstance(project)
-  private val toSkip = mutableSetOf<BazelWorkspaceImporter>()
-  private lateinit var importers: List<BazelWorkspaceImporter>
+// consulo: the workspace model builder (MutableEntityStorage) is the classic BazelModelBuilder;
+// suspend functions return CompletableFuture, importers of a phase run one after another as upstream
+public class WorkspaceImporterHelper {
+    private static final Logger LOG = Logger.getInstance(WorkspaceImporterHelper.class);
 
-  suspend fun invoke(reporter: SequentialProgressReporter, snapshot: WorkspaceSnapshot, taskId: TaskId) {
-    val context = WorkspaceImporterContext(
-      project = project,
-      taskConsole = taskConsole,
-      progressReporter = progressReporter,
-      vfuManager = workspaceModel.getVirtualFileUrlManager(),
-      currentSnapshot = workspaceModel.currentSnapshot,
-      outputResolver = outputResolver,
-      outputParser = outputParser,
-      outFileHardLinks = outFileHardLinks,
-      bazelInfo = bazelInfo,
-    )
-    importers = BazelWorkspaceImporterFactory.EP_NAME.mapExtensionSafe { it.createWorkspaceImporter(context) }
-    val namingBuilder = GlobalNamingContextBuilder.create(snapshot.repoMapping)
+    private final Project myProject;
+    private final TaskConsole myTaskConsole;
+    private final ProgressIndicator myProgressReporter;
+    private final BazelModelBuilder myBuilder;
+    private final OutputLocationResolver myOutputResolver;
+    private final OutputLocationParser myOutputParser;
+    private final BazelOutFileHardLinks myOutFileHardLinks;
+    private final BazelInfo myBazelInfo;
 
-    taskConsole.withSubtask(
-      reporter, taskId.subTask("workspace-importers"),
-      BazelBackendBundle.message("bazel.workspace.importer.task.name"),
-    ) { taskId ->
-      taskConsole.withSubtask(
-        subtaskId = taskId.subTask("workspace-importers-init"),
-        message = BazelBackendBundle.message("workspace.importer.phase.initialization.progress"),
-      ) { taskId ->
-        importers.forEach { importer ->
-          importer.runContextual(taskId, WorkspaceImporterPhase.Initialize(namingBuilder), snapshot)
-            .onFailure { toSkip += importer }
-            .onSuccess { result ->
-              when (result) {
-                WorkspaceImporterResult.Abort -> toSkip += importer
-                WorkspaceImporterResult.Success -> {
-                  /* noop */
+    private final Set<BazelWorkspaceImporter> myToSkip = new HashSet<>();
+    private List<BazelWorkspaceImporter> myImporters = List.of();
+
+    public WorkspaceImporterHelper(
+        Project project,
+        TaskConsole taskConsole,
+        ProgressIndicator progressReporter,
+        BazelModelBuilder builder,
+        OutputLocationResolver outputResolver,
+        OutputLocationParser outputParser,
+        BazelOutFileHardLinks outFileHardLinks,
+        BazelInfo bazelInfo
+    ) {
+        myProject = project;
+        myTaskConsole = taskConsole;
+        myProgressReporter = progressReporter;
+        myBuilder = builder;
+        myOutputResolver = outputResolver;
+        myOutputParser = outputParser;
+        myOutFileHardLinks = outFileHardLinks;
+        myBazelInfo = bazelInfo;
+    }
+
+    public CompletableFuture<Void> invoke(ProgressIndicator reporter, WorkspaceSnapshot snapshot, TaskId taskId) {
+        WorkspaceImporterContext context = new WorkspaceImporterContext(
+            myProject,
+            myTaskConsole,
+            myProgressReporter,
+            myOutputResolver,
+            myOutputParser,
+            myOutFileHardLinks,
+            myBazelInfo
+        );
+        List<BazelWorkspaceImporter> importers = new ArrayList<>();
+        BazelWorkspaceImporterFactory.getEpName().forEachExtensionSafe(it -> importers.add(it.createWorkspaceImporter(context)));
+        myImporters = importers;
+        GlobalNamingContextBuilder namingBuilder = GlobalNamingContextBuilder.create(snapshot.repoMapping());
+        return util.withSubtask(
+            myTaskConsole, reporter, taskId.subTask("workspace-importers"),
+            BazelBackendLocalize.bazelWorkspaceImporterTaskName(),
+            importersTaskId -> util.<Void>withSubtask(
+                    myTaskConsole,
+                    importersTaskId.subTask("workspace-importers-init"),
+                    BazelBackendLocalize.workspaceImporterPhaseInitializationProgress(),
+                    initTaskId -> forEachImporter(importer ->
+                        runContextual(importer, initTaskId, new WorkspaceImporterPhase.Initialize(namingBuilder), snapshot)
+                            .thenAccept(result -> {
+                                if (result == null || result == WorkspaceImporterResult.Abort) {
+                                    myToSkip.add(importer);
+                                }
+                            })
+                    )
+                )
+                .thenCompose(ignored -> {
+                    GlobalNamingContext naming = namingBuilder.build();
+                    return util.<Void>withSubtask(
+                        myTaskConsole,
+                        importersTaskId.subTask("workspace-importers-wsm-building"),
+                        BazelBackendLocalize.buildWorkspaceModel(),
+                        applyTaskId -> forEachImporter(importer -> {
+                            if (myToSkip.contains(importer)) {
+                                return CompletableFuture.completedFuture(null);
+                            }
+                            WorkspaceImporterPhase phase = new WorkspaceImporterPhase.WorkspaceApply(
+                                myBuilder,
+                                BazelEntitySource.BazelProjectEntitySource.INSTANCE,
+                                naming
+                            );
+                            return runContextual(importer, applyTaskId, phase, snapshot).thenAccept(result -> {
+                                if (result == null || result == WorkspaceImporterResult.Abort) {
+                                    myToSkip.add(importer);
+                                }
+                            });
+                        })
+                    );
+                })
+                .thenCompose(ignored -> util.<Void>withSubtask(
+                    myTaskConsole,
+                    importersTaskId.subTask("workspace-importers-finalize"),
+                    BazelBackendLocalize.workspaceImporterPhaseFinalization(),
+                    finalizeTaskId -> forEachImporter(importer -> {
+                        if (myToSkip.contains(importer)) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        return runContextual(importer, finalizeTaskId, WorkspaceImporterPhase.Finalize.INSTANCE, snapshot)
+                            .thenAccept(result -> {
+                                if (result == WorkspaceImporterResult.Abort) {
+                                    myToSkip.add(importer);
+                                }
+                            });
+                    })
+                ))
+        );
+    }
+
+    public CompletableFuture<Void> invokeLate(ProgressIndicator reporter, WorkspaceSnapshot snapshot, TaskId taskId) {
+        return util.withSubtask(
+            myTaskConsole, reporter, taskId.subTask("workspace-importers-post-apply"),
+            BazelBackendLocalize.bazelWorkspacePostApplyTaskName(),
+            postTaskId -> forEachImporter(importer -> {
+                if (myToSkip.contains(importer)) {
+                    return CompletableFuture.completedFuture(null);
                 }
-              }
+                return runContextual(importer, postTaskId, WorkspaceImporterPhase.PostProcessing.INSTANCE, snapshot)
+                    .thenAccept(result -> {
+                    });
+            })
+        );
+    }
 
+    // consulo: importers.forEach with a suspending body, one importer after another
+    private CompletableFuture<Void> forEachImporter(Function<BazelWorkspaceImporter, CompletableFuture<Void>> action) {
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (BazelWorkspaceImporter importer : myImporters) {
+            chain = chain.thenCompose(ignored -> action.apply(importer));
+        }
+        return chain;
+    }
+
+    private void logExceptionIfNeeded(TaskId taskId, Throwable throwable) {
+        LOG.error(throwable);
+        util.getSyncConsole(myProject).finishSubtask(
+            taskId,
+            null,
+            Application.get().getInstance(BuildEventFactory.class).createFailureResult(throwable)
+        );
+    }
+
+    // MAYBE RC: using context parameters for `TaskId` would be great fit here
+    // consulo: Kotlin Result -> the future completes with null on failure (after logging), like Result.failure
+    private CompletableFuture<@Nullable WorkspaceImporterResult> runContextual(
+        BazelWorkspaceImporter importer,
+        TaskId taskId,
+        WorkspaceImporterPhase phase,
+        WorkspaceSnapshot snapshot
+    ) {
+        CompletableFuture<WorkspaceImporterResult> result;
+        try {
+            if (importer instanceof BazelWorkspaceImporter.Named named) {
+                result = util.withSubtask(
+                    myTaskConsole,
+                    taskId.uniqueSubTask("importer"),
+                    BazelBackendLocalize.workspaceImporterPhaseExecuting(named.getImporterName()),
+                    importerTaskId -> importer.doImport(phase, snapshot, importerTaskId)
+                );
+            }
+            else {
+                result = importer.doImport(phase, snapshot, taskId);
             }
         }
-      }
-
-      val naming = namingBuilder.build()
-
-      taskConsole.withSubtask(
-        subtaskId = taskId.subTask("workspace-importers-wsm-building"),
-        message = BazelBackendBundle.message("build.workspace.model"),
-      ) { taskId ->
-        importers.forEach { importer ->
-          if (importer in toSkip) {
-            return@forEach
-          }
-          importer.runContextual(taskId, WorkspaceImporterPhase.WorkspaceApply(builder, BazelProjectEntitySource, naming), snapshot)
-            .onFailure { toSkip += importer }
-            .onSuccess { result ->
-              when (result) {
-                WorkspaceImporterResult.Abort -> toSkip += importer
-                WorkspaceImporterResult.Success -> { /* noop */
-                }
-              }
+        catch (Throwable e) {
+            result = CompletableFuture.failedFuture(e);
+        }
+        return result.handle((value, error) -> {
+            if (error != null) {
+                logExceptionIfNeeded(taskId, error instanceof CompletionException && error.getCause() != null ? error.getCause() : error);
+                return null;
             }
-        }
-      }
-
-      taskConsole.withSubtask(
-        subtaskId = taskId.subTask("workspace-importers-finalize"),
-        message = BazelBackendBundle.message("workspace.importer.phase.finalization"),
-      ) { taskId ->
-        importers.forEach { importer ->
-          if (importer in toSkip) {
-            return@forEach
-          }
-          importer.runContextual(taskId, WorkspaceImporterPhase.Finalize, snapshot)
-            .onFailure { /* noop */ }
-            .onSuccess { result ->
-              when (result) {
-                WorkspaceImporterResult.Abort -> toSkip += importer
-                WorkspaceImporterResult.Success -> {
-                  /* noop */
-                }
-              }
-            }
-        }
-      }
+            return value;
+        });
     }
-  }
-
-  suspend fun invokeLate(reporter: SequentialProgressReporter, snapshot: WorkspaceSnapshot, taskId: TaskId) {
-    taskConsole.withSubtask(
-      reporter, taskId.subTask("workspace-importers-post-apply"),
-      BazelBackendBundle.message("bazel.workspace.post.apply.task.name"),
-    ) { taskId ->
-      importers.forEach { importer ->
-        if (importer in toSkip) {
-          return@forEach
-        }
-        importer.runContextual(taskId, WorkspaceImporterPhase.PostProcessing, snapshot)
-      }
-    }
-  }
-
-  private fun <T> Result<T>.logExceptionIfNeeded(taskId: TaskId): Result<T> =
-    this.onFailure { throwable ->
-      log.error(throwable)
-      project.syncConsole.finishSubtask(
-        taskId,
-        null,
-        FailureResultImpl(throwable),
-      )
-    }
-
-  // MAYBE RC: using context parameters for `TaskId` would be great fit here
-  private suspend fun BazelWorkspaceImporter.runContextual(
-    taskId: TaskId,
-    phase: WorkspaceImporterPhase,
-    snapshot: WorkspaceSnapshot,
-  ): Result<WorkspaceImporterResult> = runCatching {
-    if (this is BazelWorkspaceImporter.Named) {
-      taskConsole.withSubtask(
-        taskId.uniqueSubTask("importer"),
-        BazelBackendBundle.message("workspace.importer.phase.executing", this.importerName),
-      ) { importerTaskId ->
-        this.import(phase, snapshot, importerTaskId)
-      }
-    }
-    else {
-      this.import(phase, snapshot, taskId)
-    }
-  }
-    .fold(
-      onSuccess = { it },
-      onFailure = { Result.failure(it) },
-    )
-    .logExceptionIfNeeded(taskId)
 }

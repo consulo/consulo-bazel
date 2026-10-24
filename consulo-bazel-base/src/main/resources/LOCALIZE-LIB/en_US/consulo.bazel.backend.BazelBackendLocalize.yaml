@@ -1,0 +1,68 @@
+bazel.workspace.importer.task.name:
+    text: "Import workspace"
+bazel.workspace.post.apply.task.name:
+    text: "Execute post apply actions"
+build.workspace.model:
+    text: "Build workspace model"
+workspace.importer.phase.executing:
+    text: "Execute: {0}"
+workspace.importer.phase.finalization:
+    text: "Finalize workspace importers"
+workspace.importer.phase.initialization.progress:
+    text: "Initialize workspace importers"
+bazel.import.noide.targets:
+    text: "Included {0} {1} targets as dependencies"
+bazel.import.ignored.bazelbsp:
+    text: "{0} mentions {1} which is needed for sync by the Bazel plugin"
+background.progress.syncing.project:
+    text: "Syncing project..."
+console.task.apply.changes:
+    text: "Apply changes to the project models"
+console.task.base.sync:
+    text: "Collect project targets"
+console.task.base.build.sync:
+    text: "Build and collect project targets"
+console.task.execute.post.sync.hooks:
+    text: "Execute post-sync hooks"
+console.task.execute.pre.sync.hooks:
+    text: "Execute pre-sync hooks"
+console.task.execute.sync.hooks:
+    text: "Execute sync hooks"
+console.task.model.apply.changes.attempt.0.1.wsm:
+    text: "[Bazel] Apply changes to the workspace model (attempt {0}/{1})"
+console.task.model.apply.changes:
+    text: "Apply changes to the workspace model"
+console.task.sync.activity.name:
+    text: "{0} sync"
+console.task.sync.cancelled:
+    text: "Sync cancelled."
+console.task.sync.failed:
+    text: "Sync failed."
+console.task.sync.fatalfailure:
+    text: "Sync failed. No targets imported successfully."
+console.task.sync.in.progress:
+    text: "Syncing..."
+console.task.sync.partialsuccess:
+    text: "Sync partially succeeded with errors"
+console.task.sync.success:
+    text: "Sync done."
+console.task.sync.title:
+    text: "Sync"
+console.task.sync.configurations.unsupported:
+    text: "Configuration/transition support is not available for current version of bazel. Sync might give incomplete/incorrect results."
+console.task.sync.snapshot.updating:
+    text: "Updating workspace snapshot"
+progress.title.querying.targets.for.sources:
+    text: "Querying targets for sources"
+progress.text.no.targets.found.for.requested.files.to.sync:
+    text: "No targets found for requested files to sync"
+progress.text.file.query.found.no.targets.for:
+    text: "File query found no targets for {0}"
+progress.title.querying.build.files:
+    text: "Querying BUILD files"
+progress.text.sync.might.give.incomplete.results:
+    text: "{0} Sync might give incomplete results."
+progress.text.resyncing.targets:
+    text: "Resyncing {0,plural,one{# target}other{# targets}}"
+progress.title.process.workspace.targets:
+    text: "Process workspace targets"

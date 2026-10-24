@@ -1,152 +1,343 @@
-package org.jetbrains.bazel.sync
+package org.jetbrains.bazel.sync;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.commons.BzlmodRepoMapping
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.RepoMappingDisabled
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.label.AllPackagesBeneath
-import org.jetbrains.bazel.label.AllRuleTargets
-import org.jetbrains.bazel.label.Canonical
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.label.Package
-import org.jetbrains.bazel.label.PackageType
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bazel.label.SingleTarget
-import org.jetbrains.bazel.label.TargetType
-import java.nio.file.Path
-import kotlin.io.path.extension
-import kotlin.io.path.invariantSeparatorsPathString
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.name
-import kotlin.io.path.relativeToOrNull
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RepoMapping.BzlmodRepoMapping;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.label.Label.AllPackagesBeneath;
+import org.jetbrains.bazel.label.Label.AllRuleTargets;
+import org.jetbrains.bazel.label.Label.Canonical;
+import org.jetbrains.bazel.label.Label.Package;
+import org.jetbrains.bazel.label.Label.PackageType;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.label.Label.SingleTarget;
+import org.jetbrains.bazel.label.Label.TargetType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class SyncFile(
-  val path: Path,
-  val kind: SyncFileKind,
-  val isWorkspaceFile: Boolean = true,
-)
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
-@ApiStatus.Internal
-sealed interface SyncFileKind {
-  data class Build(val pattern: Label) : SyncFileKind
-
-  // `pattern` matches every rule target of every package under the directory
-  data class Folder(val pattern: Label) : SyncFileKind
-
-  data class Module(val canonicalRepoName: String) : SyncFileKind
-  data object Workspace : SyncFileKind
-  data object ProjectView : SyncFileKind
-
-  // `label` is file label, NOT owning target label - you need query for that
-  data class Source(val label: Label) : SyncFileKind
-  data class Starlark(val label: Label?) : SyncFileKind
-
-  data object BazelDotFile : SyncFileKind
-  data object External : SyncFileKind
-}
-
-private const val MAIN_CANONICAL_REPO_NAME = ""
-
-private val WORKSPACE_FILE_NAMES: Set<String> = Constants.WORKSPACE_FILE_NAMES.toSet() - Constants.MODULE_BAZEL_FILE_NAME
-
-private val MODULE_FILE_NAMES: Set<String> =
-  setOf(Constants.MODULE_BAZEL_FILE_NAME, Constants.MODULE_BAZEL_LOCK_FILE_NAME, Constants.REPO_BAZEL_FILE_NAME)
-
-private val BAZEL_DOT_FILE_NAMES: Set<String> =
-  setOf(
-    Constants.BAZEL_RC_FILE_NAME,
-    Constants.BAZEL_IGNORE_FILE_NAME,
-    Constants.BAZEL_VERSION_FILE_NAME,
-    Constants.BAZELISK_RC_FILE_NAME,
-    Constants.BAZELISK_VERSION_FILE_NAME,
-  )
-
-@ApiStatus.Internal
-class SyncFileClassifier(private val repoMapping: RepoMapping, private val bazelInfo: BazelInfo) {
-  private val localRepositories: Map<String, Path> = when (repoMapping) {
-                                                       is BzlmodRepoMapping -> repoMapping.canonicalRepoNameToPath
-                                                         .filterKeys { canonicalRepoName -> canonicalRepoName !in repoMapping.nonLocalCanonicalRepoNames }
-                                                         .mapValues { (_, repoPath) ->
-                                                           bazelInfo.workspaceRoot.resolve(repoPath).normalize()
-                                                         }
-
-                                                       RepoMappingDisabled -> mapOf()
-                                                     } + mapOf(MAIN_CANONICAL_REPO_NAME to bazelInfo.workspaceRoot.normalize())
-
-  fun classify(path: Path): SyncFile {
-    val repo = findEnclosingRepo(path)
-               ?: return SyncFile(path = path, kind = SyncFileKind.External, isWorkspaceFile = false)
-    val name = path.name
-    val kind = when {
-      // directory, every rule target under it is in the scope.
-      path.isDirectory() -> SyncFileKind.Folder(repo.folderLabelOf(path))
-
-      // BUILD, BUILD.bazel. The directory of the file is the package.
-      name in Constants.BUILD_FILE_NAMES -> SyncFileKind.Build(repo.labelOf(path.parent, AllRuleTargets))
-
-      // MODULE.bazel, MODULE.bazel.lock, REPO.bazel
-      name in MODULE_FILE_NAMES -> SyncFileKind.Module(repo.canonicalRepoName)
-
-      // WORKSPACE, WORKSPACE.bazel, WORKSPACE.bzlmod
-      name in WORKSPACE_FILE_NAMES -> SyncFileKind.Workspace
-
-      // .bazelproject
-      path.extension == Constants.PROJECT_VIEW_FILE_EXTENSION -> SyncFileKind.ProjectView
-
-      // .bazelrc, .bazelignore, .bazelversion, .bazeliskrc, .bazeliskversion
-      name in BAZEL_DOT_FILE_NAMES -> SyncFileKind.BazelDotFile
-
-      // .bzl
-      path.extension == "bzl" -> SyncFileKind.Starlark(label = repo.sourceLabelOf(path))
-
-      // normal source file
-      else -> repo.sourceLabelOf(path)?.let { label -> SyncFileKind.Source(label) } ?: SyncFileKind.External
-    }
-    return SyncFile(path = path, kind = kind)
-  }
-
-  private fun findEnclosingRepo(path: Path): EnclosingRepo? {
-    // TODO: profile and optimize, for large number of local repositories can get slow
-    val (canonicalRepoName, repoPath) = localRepositories.asSequence()
-                                          .filter { (_, repoPath) -> path.startsWith(repoPath) }
-                                          // find deepest innermost repository
-                                          .maxByOrNull { (_, repoPath) -> repoPath.nameCount }
-                                        ?: return null
-    return EnclosingRepo(path = repoPath, canonicalRepoName = canonicalRepoName)
-  }
-
-  private class EnclosingRepo(val path: Path, val canonicalRepoName: String) {
-    fun sourceLabelOf(file: Path): ResolvedLabel? {
-      val packageDirectory = findPackageDirectory(file.parent) ?: return null
-      val targetName = file.relativeToOrNull(packageDirectory) ?: return null
-      return labelOf(packageDirectory, SingleTarget(targetName.invariantSeparatorsPathString))
+public class SyncFileClassifier {
+    public record SyncFile(
+        Path path,
+        SyncFileKind kind,
+        boolean isWorkspaceFile
+    ) {
+        // consulo: upstream default argument (isWorkspaceFile = true)
+        public SyncFile(Path path, SyncFileKind kind) {
+            this(path, kind, true);
+        }
     }
 
-    fun labelOf(packageDirectory: Path, target: TargetType): ResolvedLabel =
-      labelOf(Package(relativeSegmentsOf(packageDirectory)), target)
+    public sealed interface SyncFileKind {
+        record Build(Label pattern) implements SyncFileKind {
+        }
 
-    fun folderLabelOf(directory: Path): ResolvedLabel =
-      labelOf(AllPackagesBeneath(relativeSegmentsOf(directory)), AllRuleTargets)
+        // `pattern` matches every rule target of every package under the directory
+        record Folder(Label pattern) implements SyncFileKind {
+        }
 
-    private fun labelOf(packagePath: PackageType, target: TargetType): ResolvedLabel =
-      ResolvedLabel(
-        repo = Canonical.createCanonicalOrMain(canonicalRepoName),
-        packagePath = packagePath,
-        target = target,
-      )
+        record Module(String canonicalRepoName) implements SyncFileKind {
+        }
 
-    private fun relativeSegmentsOf(directory: Path): List<String> = directory.relativeToOrNull(path)?.segments().orEmpty()
+        final class Workspace implements SyncFileKind {
+            public static final Workspace INSTANCE = new Workspace();
 
-    // TODO: cache that?
-    private fun findPackageDirectory(directory: Path?): Path? =
-      generateSequence(directory) { candidate -> candidate.parent }
-        .takeWhile { candidate -> candidate.startsWith(path) }
-        .firstOrNull { candidate -> Constants.BUILD_FILE_NAMES.any { buildFileName -> candidate.resolve(buildFileName).isRegularFile() } }
+            private Workspace() {
+            }
 
-    private fun Path.segments(): List<String> = map { segment -> segment.toString() }.filter { segment -> segment.isNotEmpty() }
-  }
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof Workspace;
+            }
+
+            @Override
+            public int hashCode() {
+                return Workspace.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "Workspace";
+            }
+        }
+
+        final class ProjectView implements SyncFileKind {
+            public static final ProjectView INSTANCE = new ProjectView();
+
+            private ProjectView() {
+            }
+
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof ProjectView;
+            }
+
+            @Override
+            public int hashCode() {
+                return ProjectView.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "ProjectView";
+            }
+        }
+
+        // `label` is file label, NOT owning target label - you need query for that
+        record Source(Label label) implements SyncFileKind {
+        }
+
+        record Starlark(@Nullable Label label) implements SyncFileKind {
+        }
+
+        final class BazelDotFile implements SyncFileKind {
+            public static final BazelDotFile INSTANCE = new BazelDotFile();
+
+            private BazelDotFile() {
+            }
+
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof BazelDotFile;
+            }
+
+            @Override
+            public int hashCode() {
+                return BazelDotFile.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "BazelDotFile";
+            }
+        }
+
+        final class External implements SyncFileKind {
+            public static final External INSTANCE = new External();
+
+            private External() {
+            }
+
+            // consulo: data object equality
+            @Override
+            public boolean equals(@Nullable Object o) {
+                return o instanceof External;
+            }
+
+            @Override
+            public int hashCode() {
+                return External.class.getName().hashCode();
+            }
+
+            @Override
+            public String toString() {
+                return "External";
+            }
+        }
+    }
+
+    private static final String MAIN_CANONICAL_REPO_NAME = "";
+
+    private static final Set<String> WORKSPACE_FILE_NAMES = workspaceFileNames();
+
+    private static final Set<String> MODULE_FILE_NAMES =
+        Set.of(Constants.MODULE_BAZEL_FILE_NAME, Constants.MODULE_BAZEL_LOCK_FILE_NAME, Constants.REPO_BAZEL_FILE_NAME);
+
+    private static final Set<String> BAZEL_DOT_FILE_NAMES =
+        Set.of(
+            Constants.BAZEL_RC_FILE_NAME,
+            Constants.BAZEL_IGNORE_FILE_NAME,
+            Constants.BAZEL_VERSION_FILE_NAME,
+            Constants.BAZELISK_RC_FILE_NAME,
+            Constants.BAZELISK_VERSION_FILE_NAME
+        );
+
+    // consulo: upstream Constants.WORKSPACE_FILE_NAMES.toSet() - Constants.MODULE_BAZEL_FILE_NAME
+    private static Set<String> workspaceFileNames() {
+        Set<String> names = new LinkedHashSet<>(Arrays.asList(Constants.WORKSPACE_FILE_NAMES));
+        names.remove(Constants.MODULE_BAZEL_FILE_NAME);
+        return names;
+    }
+
+    private final RepoMapping myRepoMapping;
+    private final BazelInfo myBazelInfo;
+
+    private final Map<String, Path> myLocalRepositories;
+
+    public SyncFileClassifier(RepoMapping repoMapping, BazelInfo bazelInfo) {
+        myRepoMapping = repoMapping;
+        myBazelInfo = bazelInfo;
+
+        Map<String, Path> localRepositories = new LinkedHashMap<>();
+        if (repoMapping instanceof BzlmodRepoMapping bzlmodRepoMapping) {
+            for (Map.Entry<String, Path> entry : bzlmodRepoMapping.getCanonicalRepoNameToPath().entrySet()) {
+                String canonicalRepoName = entry.getKey();
+                if (!bzlmodRepoMapping.getNonLocalCanonicalRepoNames().contains(canonicalRepoName)) {
+                    localRepositories.put(canonicalRepoName, bazelInfo.workspaceRoot().resolve(entry.getValue()).normalize());
+                }
+            }
+        }
+        // consulo: upstream RepoMappingDisabled -> mapOf()
+        localRepositories.put(MAIN_CANONICAL_REPO_NAME, bazelInfo.workspaceRoot().normalize());
+        myLocalRepositories = localRepositories;
+    }
+
+    public SyncFile classify(Path path) {
+        EnclosingRepo repo = findEnclosingRepo(path);
+        if (repo == null) {
+            return new SyncFile(path, SyncFileKind.External.INSTANCE, false);
+        }
+        // consulo: Kotlin Path.name
+        Path fileName = path.getFileName();
+        String name = fileName != null ? fileName.toString() : "";
+        // consulo: Kotlin Path.extension
+        int dotIndex = name.lastIndexOf('.');
+        String extension = dotIndex < 0 ? "" : name.substring(dotIndex + 1);
+        SyncFileKind kind;
+        // directory, every rule target under it is in the scope.
+        if (Files.isDirectory(path)) {
+            kind = new SyncFileKind.Folder(repo.folderLabelOf(path));
+        }
+        // BUILD, BUILD.bazel. The directory of the file is the package.
+        else if (Arrays.asList(Constants.BUILD_FILE_NAMES).contains(name)) {
+            kind = new SyncFileKind.Build(repo.labelOf(Objects.requireNonNull(path.getParent()), AllRuleTargets.INSTANCE));
+        }
+        // MODULE.bazel, MODULE.bazel.lock, REPO.bazel
+        else if (MODULE_FILE_NAMES.contains(name)) {
+            kind = new SyncFileKind.Module(repo.myCanonicalRepoName);
+        }
+        // WORKSPACE, WORKSPACE.bazel, WORKSPACE.bzlmod
+        else if (WORKSPACE_FILE_NAMES.contains(name)) {
+            kind = SyncFileKind.Workspace.INSTANCE;
+        }
+        // .bazelproject
+        else if (extension.equals(Constants.PROJECT_VIEW_FILE_EXTENSION)) {
+            kind = SyncFileKind.ProjectView.INSTANCE;
+        }
+        // .bazelrc, .bazelignore, .bazelversion, .bazeliskrc, .bazeliskversion
+        else if (BAZEL_DOT_FILE_NAMES.contains(name)) {
+            kind = SyncFileKind.BazelDotFile.INSTANCE;
+        }
+        // .bzl
+        else if (extension.equals("bzl")) {
+            kind = new SyncFileKind.Starlark(repo.sourceLabelOf(path));
+        }
+        // normal source file
+        else {
+            ResolvedLabel label = repo.sourceLabelOf(path);
+            kind = label != null ? new SyncFileKind.Source(label) : SyncFileKind.External.INSTANCE;
+        }
+        return new SyncFile(path, kind);
+    }
+
+    private @Nullable EnclosingRepo findEnclosingRepo(Path path) {
+        // TODO: profile and optimize, for large number of local repositories can get slow
+        Map.Entry<String, Path> found = null;
+        for (Map.Entry<String, Path> entry : myLocalRepositories.entrySet()) {
+            if (!path.startsWith(entry.getValue())) {
+                continue;
+            }
+            // find deepest innermost repository
+            if (found == null || entry.getValue().getNameCount() > found.getValue().getNameCount()) {
+                found = entry;
+            }
+        }
+        if (found == null) {
+            return null;
+        }
+        return new EnclosingRepo(found.getValue(), found.getKey());
+    }
+
+    private static class EnclosingRepo {
+        private final Path myPath;
+        private final String myCanonicalRepoName;
+
+        EnclosingRepo(Path path, String canonicalRepoName) {
+            myPath = path;
+            myCanonicalRepoName = canonicalRepoName;
+        }
+
+        @Nullable ResolvedLabel sourceLabelOf(Path file) {
+            Path packageDirectory = findPackageDirectory(file.getParent());
+            if (packageDirectory == null) {
+                return null;
+            }
+            Path targetName = relativeToOrNull(file, packageDirectory);
+            if (targetName == null) {
+                return null;
+            }
+            // consulo: Kotlin Path.invariantSeparatorsPathString
+            String invariantTargetName = targetName.toString().replace(targetName.getFileSystem().getSeparator(), "/");
+            return labelOf(packageDirectory, new SingleTarget(invariantTargetName));
+        }
+
+        ResolvedLabel labelOf(Path packageDirectory, TargetType target) {
+            return labelOf(new Package(relativeSegmentsOf(packageDirectory)), target);
+        }
+
+        ResolvedLabel folderLabelOf(Path directory) {
+            return labelOf(new AllPackagesBeneath(relativeSegmentsOf(directory)), AllRuleTargets.INSTANCE);
+        }
+
+        private ResolvedLabel labelOf(PackageType packagePath, TargetType target) {
+            return new ResolvedLabel(
+                Canonical.createCanonicalOrMain(myCanonicalRepoName),
+                packagePath,
+                target
+            );
+        }
+
+        private List<String> relativeSegmentsOf(Path directory) {
+            Path relative = relativeToOrNull(directory, myPath);
+            return relative != null ? segments(relative) : List.of();
+        }
+
+        // TODO: cache that?
+        private @Nullable Path findPackageDirectory(@Nullable Path directory) {
+            Path candidate = directory;
+            while (candidate != null && candidate.startsWith(myPath)) {
+                for (String buildFileName : Constants.BUILD_FILE_NAMES) {
+                    if (Files.isRegularFile(candidate.resolve(buildFileName))) {
+                        return candidate;
+                    }
+                }
+                candidate = candidate.getParent();
+            }
+            return null;
+        }
+
+        private static List<String> segments(Path receiver) {
+            List<String> segments = new ArrayList<>();
+            for (Path segment : receiver) {
+                String value = segment.toString();
+                if (!value.isEmpty()) {
+                    segments.add(value);
+                }
+            }
+            return segments;
+        }
+
+        // consulo: Kotlin Path.relativeToOrNull
+        private static @Nullable Path relativeToOrNull(Path receiver, Path base) {
+            try {
+                return base.normalize().relativize(receiver.normalize());
+            }
+            catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
+    }
 }

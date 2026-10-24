@@ -1,216 +1,326 @@
-package org.jetbrains.bazel.sync.workspace.mapper
+package org.jetbrains.bazel.sync.workspace.mapper;
 
-import com.google.devtools.intellij.aspect.Common.ArtifactLocation
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.TargetIdeInfo
-import com.intellij.aspect.lib.readTargetFromFile
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.text.StringUtil
-import com.intellij.platform.util.coroutines.mapNotNullConcurrent
-import com.intellij.util.containers.Interner
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.commons.NoLocalRepositories
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.label.assumeResolved
-import org.jetbrains.bazel.label.label
-import org.jetbrains.bazel.label.toDependencyLabel
-import org.jetbrains.bazel.performance.measure
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin
-import org.jetbrains.bazel.sync.workspace.languages.createLanguageProjectMappers
-import org.jetbrains.bazel.sync.workspace.snapshot.OutputLocationCollectionBuilder
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTarget
-import org.jetbrains.bazel.sync.workspace.snapshot.toWorkspaceTargetKey
-import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService
-import org.jetbrains.bazel.taskEvents.BazelTaskEventsService
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bsp.protocol.TaskId
-import org.jetbrains.bsp.protocol.asLogger
-import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.extension
+import com.google.devtools.intellij.aspect.Common.ArtifactLocation;
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.TargetIdeInfo;
+import com.intellij.aspect.lib.ReadTarget;
+import consulo.application.util.concurrent.AppExecutorUtil;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.interner.Interner;
+import consulo.util.io.FileUtil;
+import consulo.util.lang.StringUtil;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RuleType;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.label.DependencyLabel;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.performance.BspTracer;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin;
+import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin.LanguageProjectMappers;
+import org.jetbrains.bazel.sync.workspace.snapshot.InterningOutputLocationCollection.OutputLocationCollectionBuilder;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelper;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTarget;
+import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService;
+import org.jetbrains.bazel.taskEvents.BazelTaskEventsService;
+import org.jetbrains.bsp.protocol.BazelTaskEventsHandler;
+import org.jetbrains.bsp.protocol.BazelTaskEventsHandler.BazelTaskLogger;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class AspectBazelProjectMapper(
-  private val project: Project,
-  private val server: BazelServerFacade,
-) {
-  private val bazelPathsResolver = server.bazelPathsResolver
-  private val langMappers = createLanguageProjectMappers()
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
-  suspend fun mapTargets(
-    targetInfoPaths: Collection<Path>,
-    build: Boolean,
-    taskId: TaskId,
-  ): List<BuildTarget> = measure("create raw targets") {
-    val taskLogger = BazelTaskEventsService.getInstance(project).asLogger(taskId)
-    withContext(Dispatchers.Default) {
-      targetInfoPaths
-        .mapNotNullConcurrent { path ->
-          val target = readTargetFromFile(path) { msg -> taskLogger.error("Could not read target info $path: $msg") }
-                       ?: return@mapNotNullConcurrent null
-          val isBazelBsp = target.label().packagePath.pathSegments.firstOrNull() == Constants.DOT_BAZELBSP_DIR_NAME
-          if (isBazelBsp) {
-            return@mapNotNullConcurrent null
-          }
-          createWorkspaceTarget(target = target, build = build, taskId = taskId)
+public class AspectBazelProjectMapper {
+    private final Project myProject;
+    private final BazelServerFacade myServer;
+
+    private final BazelPathsResolver myBazelPathsResolver;
+    private final LanguageProjectMappers myLangMappers;
+
+    public AspectBazelProjectMapper(
+        Project project,
+        BazelServerFacade server
+    ) {
+        myProject = project;
+        myServer = server;
+        myBazelPathsResolver = server.getBazelPathsResolver();
+        myLangMappers = LanguagePlugin.createLanguageProjectMappers();
+    }
+
+    public CompletableFuture<List<BuildTarget>> mapTargets(
+        Collection<Path> targetInfoPaths,
+        boolean build,
+        TaskId taskId
+    ) {
+        return BspTracer.measure("create raw targets", () -> {
+            BazelTaskLogger taskLogger = BazelTaskEventsHandler.asLogger(BazelTaskEventsService.getInstance(myProject), taskId);
+            // consulo: withContext(Dispatchers.Default) + mapNotNullConcurrent -> every path is read on the application pool,
+            // the result keeps the order of targetInfoPaths
+            List<CompletableFuture<@Nullable BuildTarget>> futures = new ArrayList<>();
+            for (Path path : targetInfoPaths) {
+                futures.add(
+                    CompletableFuture.supplyAsync(
+                        () -> ReadTarget.readTargetFromFile(
+                            path,
+                            msg -> taskLogger.error("Could not read target info " + path + ": " + msg)
+                        ),
+                        AppExecutorUtil.getAppExecutorService()
+                    ).thenCompose(target -> {
+                        if (target == null) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        List<String> pathSegments = Label.label(target).packagePath().pathSegments();
+                        boolean isBazelBsp = !pathSegments.isEmpty() && pathSegments.get(0).equals(Constants.DOT_BAZELBSP_DIR_NAME);
+                        if (isBazelBsp) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        return createWorkspaceTarget(target, build, taskId);
+                    })
+                );
+            }
+            return CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0])).thenApply(ignored -> {
+                List<BuildTarget> targets = new ArrayList<>();
+                for (CompletableFuture<@Nullable BuildTarget> future : futures) {
+                    BuildTarget target = future.join();
+                    if (target != null) {
+                        targets.add(target);
+                    }
+                }
+                return targets;
+            });
+        });
+    }
+
+    private CompletableFuture<BuildTarget> createWorkspaceTarget(
+        TargetIdeInfo target,
+        boolean build,
+        TaskId taskId
+    ) {
+        ResolvedLabel label = Label.assumeResolved(Label.label(target));
+        TargetKind targetKind = inferTargetKind(target);
+
+        CompletableFuture<List<BuildTargetData>> buildDataFuture = CompletableFuture.completedFuture(new ArrayList<>());
+        for (LanguagePlugin plugin : myLangMappers.all()) {
+            buildDataFuture = buildDataFuture.thenCompose(buildData -> plugin.mapBuildTargetData(myServer, target).thenApply(data -> {
+                if (!plugin.getProvidedBuildTargetTypes().containsAll(data.stream().map(Object::getClass).toList())) {
+                    throw new IllegalStateException(
+                        "Language plugin " + plugin + " returned unregistered build target data: " +
+                            data.stream().map(String::valueOf).collect(Collectors.joining(", "))
+                    );
+                }
+                buildData.addAll(data);
+                return buildData;
+            }));
         }
-        .toList()
+
+        MissingFilesReporter missingFilesReporter = new MissingFilesReporter(myProject, taskId, label, build);
+
+        // consulo: upstream local suspend fun resolveSourceSet
+        BiFunction<List<ArtifactLocation>, Function<ArtifactLocation, MissingFileCategory>, CompletableFuture<OutputLocationCollection>>
+            resolveSourceSet = (srcs, category) -> {
+                List<ArtifactLocation> existing = new ArrayList<>();
+                for (ArtifactLocation src : srcs) {
+                    Path path = myBazelPathsResolver.resolve(src, RepoMapping.NoLocalRepositories);
+                    if (!Files.exists(path)) {
+                        missingFilesReporter.add(category.apply(src), src, path);
+                        continue;
+                    }
+                    existing.add(src);
+                }
+                return OutputLocationCollectionBuilder.build(existing, myServer.getOutputParser());
+            };
+
+        return buildDataFuture.thenCompose(buildData -> resolveSourceSet.apply(
+            target.getSrcsList(),
+            src -> src.getIsSource() ? MissingFileCategory.SOURCES : MissingFileCategory.GENERATED_SOURCES
+        ).thenCompose(sources -> resolveSourceSet.apply(
+            target.getJvmTargetInfo().getResourcesList(),
+            src -> MissingFileCategory.RESOURCES
+        ).thenApply(resources -> {
+            BuildTarget workspaceTarget = new WorkspaceTarget(
+                WorkspaceHelper.toWorkspaceTargetKey(target.getKey()),
+                target.getDepsList().stream().map(DependencyLabel::toDependencyLabel).toList(),
+                targetKind,
+                sources,
+                resources,
+                buildData,
+                target.getGeneratorName(),
+                target.getTestonly(),
+                List.copyOf(target.getTagsList()),
+                target.getWorkspaceName()
+            );
+            missingFilesReporter.report();
+            return workspaceTarget;
+        })));
     }
-  }
 
-  private suspend fun createWorkspaceTarget(
-    target: TargetIdeInfo,
-    build: Boolean,
-    taskId: TaskId,
-  ): BuildTarget {
-    val label = target.label().assumeResolved()
-    val targetKind = inferTargetKind(target)
+    private enum MissingFileCategory {
+        SOURCES(
+            "Source files",
+            (file, build) -> {
+                return LanguageClass.fromExtension(extension(file.path())) != null;
+            }
+        ),
+        GENERATED_SOURCES(
+            "Generated sources (files that were not materialized during sync, so they cannot be indexed by the IDE)",
+            (file, build) -> {
+                // report missing generated source only if build was requested
+                return build && LanguageClass.fromExtension(extension(file.path())) != null;
+            }
+        ),
+        RESOURCES(
+            "Resources",
+            (file, build) -> {
+                return file.src().getIsSource() || build;
+            }
+        );
 
-    val buildData = langMappers.all().flatMap { plugin ->
-      plugin.mapBuildTargetData(server, target).also { data ->
-        if (!plugin.providedBuildTargetTypes.containsAll(data.map { it::class })) {
-          error("Language plugin $plugin returned unregistered build target data: ${data.joinToString()}")
+        private final String myTitle;
+        private final BiPredicate<MissingFile, Boolean> myCondition;
+
+        MissingFileCategory(String title, BiPredicate<MissingFile, Boolean> condition) {
+            myTitle = title;
+            myCondition = condition;
         }
-      }
-    }
 
-    val missingFilesReporter = MissingFilesReporter(project, taskId, label, build)
-
-    suspend fun resolveSourceSet(
-      srcs: List<ArtifactLocation>,
-      category: (ArtifactLocation) -> MissingFileCategory,
-    ): OutputLocationCollection {
-      val existing = srcs.filter { src ->
-        val path = bazelPathsResolver.resolve(src, NoLocalRepositories)
-        if (!path.exists()) {
-          missingFilesReporter.add(category(src), src, path)
-          return@filter false
+        public String getTitle() {
+            return myTitle;
         }
-        true
-      }
-      return OutputLocationCollectionBuilder.build(existing, server.outputParser)
-    }
 
-    return WorkspaceTarget(
-      key = target.key.toWorkspaceTargetKey(),
-      dependencies = target.depsList.map { it.toDependencyLabel() },
-      kind = targetKind,
-      sources = resolveSourceSet(target.srcsList) { src -> if (src.isSource) MissingFileCategory.SOURCES else MissingFileCategory.GENERATED_SOURCES },
-      resources = resolveSourceSet(target.jvmTargetInfo.resourcesList) { MissingFileCategory.RESOURCES },
-      data = buildData,
-      generatorName = target.generatorName,
-      isTestOnly = target.testonly,
-      tags = target.tagsList.toList(),
-      workspaceName = target.workspaceName,
-    ).also {
-      missingFilesReporter.report()
-    }
-  }
-
-  private enum class MissingFileCategory(val title: String, val condition: (file: MissingFile, build: Boolean) -> Boolean) {
-    SOURCES(
-      "Source files",
-      { file, build ->
-        LanguageClass.fromExtension(file.path.extension) != null
-      },
-    ),
-    GENERATED_SOURCES(
-      "Generated sources (files that were not materialized during sync, so they cannot be indexed by the IDE)",
-      { file, build ->
-        // report missing generated source only if build was requested
-        build && LanguageClass.fromExtension(file.path.extension) != null
-      },
-    ),
-    RESOURCES(
-      "Resources",
-      { file, build ->
-        file.src.isSource || build
-      },
-    ),
-  }
-
-  private class MissingFilesReporter(
-    private val project: Project,
-    private val taskId: TaskId,
-    private val target: Label,
-    private val build: Boolean,
-  ) {
-    private val stored = MissingFileCategory.entries.associateWith { ArrayList<MissingFile>() }
-    private val totals = IntArray(MissingFileCategory.entries.size)
-
-    fun add(category: MissingFileCategory, src: ArtifactLocation, path: Path) {
-      val file = MissingFile(src, path)
-      if (!category.condition(file, build))
-        return
-
-      totals[category.ordinal]++
-      val list = stored.getValue(category)
-      if (list.size < DISPLAY_CAP) list.add(file)
-    }
-
-    fun report() {
-      val grandTotal = totals.sum()
-      if (grandTotal == 0)
-        return
-
-      val description = buildString {
-        for (category in MissingFileCategory.entries) {
-          val total = totals[category.ordinal]
-          if (total == 0)
-            continue
-
-          this.appendLine(category.title)
-          val files = stored.getValue(category)
-          files.forEach { file ->
-            append("  ")
-              .append(file.src.rootPath).append("/").append(file.src.relativePath)
-              .append(" (").append(file.path.toString()).append(")")
-              .append('\n')
-          }
-          if (total > files.size)
-            append("  ... and ").append(total - files.size).append(" more\n")
+        public BiPredicate<MissingFile, Boolean> getCondition() {
+            return myCondition;
         }
-      }
 
-      log.warn("Target ${target} has missing $grandTotal ${StringUtil.pluralize("file", grandTotal)}: " + description)
+        // consulo: Kotlin Path.extension
+        private static String extension(Path path) {
+            Path fileName = path.getFileName();
+            return fileName != null ? FileUtil.getExtension(fileName.toString()) : "";
+        }
     }
 
-    companion object {
-      private const val DISPLAY_CAP = 16
+    private static class MissingFilesReporter {
+        private static final int DISPLAY_CAP = 16;
+
+        private final Project myProject;
+        private final TaskId myTaskId;
+        private final Label myTarget;
+        private final boolean myBuild;
+
+        private final Map<MissingFileCategory, List<MissingFile>> myStored = new EnumMap<>(MissingFileCategory.class);
+        private final int[] myTotals = new int[MissingFileCategory.values().length];
+
+        MissingFilesReporter(
+            Project project,
+            TaskId taskId,
+            Label target,
+            boolean build
+        ) {
+            myProject = project;
+            myTaskId = taskId;
+            myTarget = target;
+            myBuild = build;
+            for (MissingFileCategory category : MissingFileCategory.values()) {
+                myStored.put(category, new ArrayList<>());
+            }
+        }
+
+        void add(MissingFileCategory category, ArtifactLocation src, Path path) {
+            MissingFile file = new MissingFile(src, path);
+            if (!category.getCondition().test(file, myBuild)) {
+                return;
+            }
+
+            myTotals[category.ordinal()]++;
+            List<MissingFile> list = Objects.requireNonNull(myStored.get(category));
+            if (list.size() < DISPLAY_CAP) {
+                list.add(file);
+            }
+        }
+
+        void report() {
+            int grandTotal = 0;
+            for (int total : myTotals) {
+                grandTotal += total;
+            }
+            if (grandTotal == 0) {
+                return;
+            }
+
+            StringBuilder description = new StringBuilder();
+            for (MissingFileCategory category : MissingFileCategory.values()) {
+                int total = myTotals[category.ordinal()];
+                if (total == 0) {
+                    continue;
+                }
+
+                description.append(category.getTitle()).append('\n');
+                List<MissingFile> files = Objects.requireNonNull(myStored.get(category));
+                for (MissingFile file : files) {
+                    description.append("  ")
+                        .append(file.src().getRootPath()).append("/").append(file.src().getRelativePath())
+                        .append(" (").append(file.path().toString()).append(")")
+                        .append('\n');
+                }
+                if (total > files.size()) {
+                    description.append("  ... and ").append(total - files.size()).append(" more\n");
+                }
+            }
+
+            LOG.warn(
+                "Target " + myTarget + " has missing " + grandTotal + " " + StringUtil.pluralize("file", grandTotal) + ": " + description
+            );
+        }
     }
-  }
 
-  private data class MissingFile(val src: ArtifactLocation, val path: Path)
-
-  companion object {
-    private val log = logger<AspectBazelProjectMapper>()
-
-    fun inferTargetKind(target: TargetIdeInfo): TargetKind {
-      val targetKind = TargetKindService.getInstance().guessFromRuleName(target.kind)
-
-      val languages = HashSet<LanguageClass>(targetKind.languageClasses)
-      LanguagePlugin.EP_NAME.forEachExtensionSafe { plugin ->
-        languages.addAll(plugin.collectUsedLanguages(target))
-      }
-
-      val ruleType = when {
-        targetKind.ruleType == RuleType.BINARY -> RuleType.BINARY
-        targetKind.ruleType == RuleType.TEST -> RuleType.TEST
-        !target.hasExecutableInfo() -> RuleType.LIBRARY
-        else -> RuleType.BINARY
-      }
-
-      return interner.intern(TargetKind(kind = targetKind.kind, languageClasses = languages, ruleType = ruleType))
+    private record MissingFile(ArtifactLocation src, Path path) {
     }
 
-    private val interner = Interner.createWeakInterner<TargetKind>()
-  }
+    private static final Logger LOG = Logger.getInstance(AspectBazelProjectMapper.class);
+
+    public static TargetKind inferTargetKind(TargetIdeInfo target) {
+        TargetKind targetKind = TargetKindService.getInstance().guessFromRuleName(target.getKind());
+
+        HashSet<LanguageClass> languages = new HashSet<>(targetKind.languageClasses());
+        LanguagePlugin.getEpName().forEachExtensionSafe(plugin -> {
+            languages.addAll(plugin.collectUsedLanguages(target));
+        });
+
+        RuleType ruleType;
+        if (targetKind.ruleType() == RuleType.BINARY) {
+            ruleType = RuleType.BINARY;
+        }
+        else if (targetKind.ruleType() == RuleType.TEST) {
+            ruleType = RuleType.TEST;
+        }
+        else if (!target.hasExecutableInfo()) {
+            ruleType = RuleType.LIBRARY;
+        }
+        else {
+            ruleType = RuleType.BINARY;
+        }
+
+        return INTERNER.intern(new TargetKind(targetKind.kind(), languages, ruleType));
+    }
+
+    private static final Interner<TargetKind> INTERNER = Interner.createWeakInterner();
 }

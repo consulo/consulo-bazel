@@ -174,7 +174,7 @@ public sealed interface OutputLocation {
         Function<Path, String> toOutputRelativePath = path -> {
             // consulo: Kotlin invariantSeparatorsPathString
             String it = path.toString().replace(path.getFileSystem().getSeparator(), "/");
-            // consulo: OSAgnosticPathUtil.isAbsolute -> FileUtil.isAbsolutePlatformIndependent
+            // TODO consulo: switch to consulo.util.io.OSAgnosticPathUtil.isAbsolute (ported to the platform, not yet in the published snapshot)
             if (FileUtil.isAbsolutePlatformIndependent(it)) {
                 throw new IllegalArgumentException("Failed requirement.");
             }

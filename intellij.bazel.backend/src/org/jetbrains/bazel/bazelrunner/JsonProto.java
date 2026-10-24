@@ -1,12 +1,24 @@
-package org.jetbrains.bazel.bazelrunner
+package org.jetbrains.bazel.bazelrunner;
+
+import org.jspecify.annotations.Nullable;
+
+import java.util.List;
 
 /**
  * Representations of the messages from
  * https://github.com/bazelbuild/bazel/blob/master/src/main/protobuf/build.proto
  * in the JSON form that `--output=streamed_jsonproto` prints.
  */
-internal class JsonProto {
-  data class Attribute(val name: String, val stringValue: String?, val stringListValue: List<String>?)
+// consulo: `internal` upstream, used from other packages of the module
+public final class JsonProto {
+    public record Attribute(String name, @Nullable String stringValue, @Nullable List<String> stringListValue) {
+    }
 
-  data class Repository(val moduleKey: String?, val canonicalName: String?, val repoRuleName: String?, val attribute: List<Attribute>)
+    public record Repository(
+        @Nullable String moduleKey,
+        @Nullable String canonicalName,
+        @Nullable String repoRuleName,
+        List<Attribute> attribute
+    ) {
+    }
 }

@@ -1,77 +1,114 @@
-package org.jetbrains.bazel.sync.workspace.persistence.mvstore
+package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeEntry
-import java.lang.reflect.Modifier
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor.WorkspaceTypeEntry;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.SnapshotManifest.SnapshotManifestEntry;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.SnapshotManifest.SnapshotTypeSchema;
 
-// start from larger registration id to keep room for builtin types
-@ApiStatus.Internal
-const val KRYO_REGISTER_BEGIN_ID: Int = 256
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
-internal class SnapshotUniverseValidationException(problems: List<String>) :
-  IllegalStateException("Workspace snapshot type universe is not serializable:\n${problems.joinToString("\n")}")
+// consulo: internal upstream object, public for the public top-level constant
+public final class SnapshotTypeSchemas {
+    // start from larger registration id to keep room for builtin types
+    public static final int KRYO_REGISTER_BEGIN_ID = 256;
 
-internal object SnapshotTypeSchemas {
-
-  fun buildManifest(contributed: List<WorkspaceTypeEntry>): SnapshotManifest {
-    val problems = mutableListOf<String>()
-    contributed.groupBy { it.fqn }
-      .filterValues { it.size > 1 }
-      .keys.forEach { problems += "duplicate contribution of `$it`" }
-
-    val schemas = mutableMapOf<String, SnapshotTypeSchema>()
-    for ((fqn, type) in contributed) {
-      if (type.isAnonymousClass || type.isLocalClass || type.isSynthetic) {
-        problems += "`$fqn`: anonymous, local and synthetic (lambda) classes cannot be persisted"
-        continue
-      }
-      schemas[fqn] = when {
-        type.isEnum -> SnapshotTypeSchema.Enum(type.enumConstants!!.map { (it as Enum<*>).name })
-        isKotlinObject(type) -> SnapshotTypeSchema.Singleton
-
-        Collection::class.java.isAssignableFrom(type) || Map::class.java.isAssignableFrom(type) -> {
-          problems += "`$fqn`: collection types cannot be contributed"
-          continue
-        }
-
-        else -> SnapshotTypeSchema.Fields(collectSerializedFields(type))
-      }
-    }
-    if (problems.isNotEmpty()) {
-      throw SnapshotUniverseValidationException(problems)
+    private SnapshotTypeSchemas() {
     }
 
-    return SnapshotManifest(
-      entries = contributed
-        .mapIndexed { index, entry ->
-          SnapshotManifestEntry(
-            registrationId = KRYO_REGISTER_BEGIN_ID + index,
-            fqn = entry.fqn,
-            schema = schemas.getValue(entry.fqn),
-          )
+    static SnapshotManifest buildManifest(List<WorkspaceTypeEntry> contributed) {
+        List<String> problems = new ArrayList<>();
+        Map<String, List<WorkspaceTypeEntry>> byFqn = new LinkedHashMap<>();
+        for (WorkspaceTypeEntry entry : contributed) {
+            byFqn.computeIfAbsent(entry.fqn(), it -> new ArrayList<>()).add(entry);
         }
-        .toSortedSet(SnapshotManifestEntry.COMPARATOR),
-    )
-  }
+        byFqn.forEach((fqn, entries) -> {
+            if (entries.size() > 1) {
+                problems.add("duplicate contribution of `" + fqn + "`");
+            }
+        });
 
-  private fun collectSerializedFields(type: Class<*>): List<SnapshotTypeSchema.Fields.Field> {
-    val collected = mutableListOf<SnapshotTypeSchema.Fields.Field>()
-    var current: Class<*>? = type
-    while (current != null && current != Any::class.java) {
-      for (field in current.declaredFields) {
-        val modifiers = field.modifiers
-        if (Modifier.isStatic(modifiers) || field.isSynthetic || Modifier.isTransient(modifiers)) {
-          continue
+        Map<String, SnapshotTypeSchema> schemas = new LinkedHashMap<>();
+        for (WorkspaceTypeEntry entry : contributed) {
+            String fqn = entry.fqn();
+            Class<?> type = entry.type();
+            if (type.isAnonymousClass() || type.isLocalClass() || type.isSynthetic()) {
+                problems.add("`" + fqn + "`: anonymous, local and synthetic (lambda) classes cannot be persisted");
+                continue;
+            }
+            SnapshotTypeSchema schema;
+            if (type.isEnum()) {
+                Object[] constants = Objects.requireNonNull(type.getEnumConstants());
+                schema = new SnapshotTypeSchema.Enum(Arrays.stream(constants).map(it -> ((java.lang.Enum<?>) it).name()).toList());
+            }
+            else if (isKotlinObject(type)) {
+                schema = SnapshotTypeSchema.Singleton.INSTANCE;
+            }
+            else if (Collection.class.isAssignableFrom(type) || Map.class.isAssignableFrom(type)) {
+                problems.add("`" + fqn + "`: collection types cannot be contributed");
+                continue;
+            }
+            else {
+                schema = new SnapshotTypeSchema.Fields(collectSerializedFields(type));
+            }
+            schemas.put(fqn, schema);
         }
-        collected += SnapshotTypeSchema.Fields.Field(name = field.name, typeFqn = field.type.name)
-      }
-      current = current.superclass
+        if (!problems.isEmpty()) {
+            throw new SnapshotUniverseValidationException(problems);
+        }
+
+        SortedSet<SnapshotManifestEntry> entries = new TreeSet<>(SnapshotManifestEntry.COMPARATOR);
+        for (int index = 0; index < contributed.size(); index++) {
+            WorkspaceTypeEntry entry = contributed.get(index);
+            entries.add(new SnapshotManifestEntry(
+                KRYO_REGISTER_BEGIN_ID + index,
+                entry.fqn(),
+                Objects.requireNonNull(schemas.get(entry.fqn()))
+            ));
+        }
+        return new SnapshotManifest(
+            entries
+        );
     }
-    return collected.sortedBy { it.name }
-  }
 
-  private fun isKotlinObject(type: Class<*>): Boolean {
-    val instance = type.declaredFields.firstOrNull { it.name == "INSTANCE" } ?: return false
-    return Modifier.isStatic(instance.modifiers) && Modifier.isFinal(instance.modifiers) && instance.type == type
-  }
+    private static List<SnapshotTypeSchema.Fields.Field> collectSerializedFields(Class<?> type) {
+        List<SnapshotTypeSchema.Fields.Field> collected = new ArrayList<>();
+        Class<?> current = type;
+        while (current != null && current != Object.class) {
+            for (Field field : current.getDeclaredFields()) {
+                int modifiers = field.getModifiers();
+                if (Modifier.isStatic(modifiers) || field.isSynthetic() || Modifier.isTransient(modifiers)) {
+                    continue;
+                }
+                collected.add(new SnapshotTypeSchema.Fields.Field(field.getName(), field.getType().getName()));
+            }
+            current = current.getSuperclass();
+        }
+        collected.sort(Comparator.comparing(SnapshotTypeSchema.Fields.Field::name));
+        return collected;
+    }
+
+    // consulo: matches Java singletons with a `public static final INSTANCE` field too
+    private static boolean isKotlinObject(Class<?> type) {
+        Field instance = Arrays.stream(type.getDeclaredFields()).filter(it -> it.getName().equals("INSTANCE")).findFirst().orElse(null);
+        if (instance == null) {
+            return false;
+        }
+        return Modifier.isStatic(instance.getModifiers()) && Modifier.isFinal(instance.getModifiers()) && instance.getType() == type;
+    }
+}
+
+final class SnapshotUniverseValidationException extends IllegalStateException {
+    SnapshotUniverseValidationException(List<String> problems) {
+        super("Workspace snapshot type universe is not serializable:\n" + String.join("\n", problems));
+    }
 }

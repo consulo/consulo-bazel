@@ -1,66 +1,82 @@
-package org.jetbrains.bazel.run.task
+package org.jetbrains.bazel.run.task;
 
-import com.intellij.build.events.MessageEvent
-import com.intellij.build.events.impl.FailureResultImpl
-import com.intellij.build.events.impl.SkippedResultImpl
-import com.intellij.build.events.impl.SuccessResultImpl
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.progress.TaskConsole
-import org.jetbrains.bazel.taskEvents.BazelTaskListener
-import org.jetbrains.bazel.utils.findCanonicalVirtualFileThatExists
-import org.jetbrains.bsp.protocol.CompileReport
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
+import consulo.application.Application;
+import consulo.build.ui.event.BuildEventFactory;
+import consulo.build.ui.event.MessageEvent;
+import consulo.localize.LocalizeValue;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.progress.TaskConsole;
+import org.jetbrains.bazel.taskEvents.BazelTaskListener;
+import org.jetbrains.bazel.utils.PathUtil;
+import org.jetbrains.bsp.protocol.TaskFinishParams.CompileReport;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelBuildTaskListener(private val taskConsole: TaskConsole) : BazelTaskListener {
-  override fun onTaskFinish(
-    taskId: TaskId,
-    message: String,
-    status: BazelStatus,
-    data: Any?,
-  ) {
-    when (data) {
-      is CompileReport -> {
-        if (data.errors == 0 && status == BazelStatus.SUCCESS) {
-          taskConsole.finishSubtask(taskId, message, SuccessResultImpl())
-        } else if (status == BazelStatus.CANCEL) {
-          taskConsole.finishSubtask(taskId, message, SkippedResultImpl())
-        } else {
-          taskConsole.finishSubtask(taskId, message, FailureResultImpl())
-        }
-      }
+import java.nio.file.Path;
 
-      else -> taskConsole.finishSubtask(taskId, message, SuccessResultImpl())
+public class BazelBuildTaskListener implements BazelTaskListener {
+    private final TaskConsole myTaskConsole;
+
+    public BazelBuildTaskListener(TaskConsole taskConsole) {
+        myTaskConsole = taskConsole;
     }
-  }
 
-  override fun onDiagnostic(
-    taskId: TaskId,
-    textDocument: Path?,
-    buildTarget: Label,
-    line: Int,
-    character: Int,
-    severity: MessageEvent.Kind,
-    message: String,
-  ) {
-    taskConsole.addDiagnosticMessage(
-      taskId = taskId,
-      path = textDocument
-        ?.findCanonicalVirtualFileThatExists()
-        ?.toNioPath()
-        ?: textDocument,
-      line = line,
-      column = character,
-      message = message,
-      description = null,
-      severity = severity,
-    )
-  }
+    @Override
+    public void onTaskFinish(
+        TaskId taskId,
+        String message,
+        BazelStatus status,
+        @Nullable Object data
+    ) {
+        BuildEventFactory buildEventFactory = Application.get().getInstance(BuildEventFactory.class);
+        if (data instanceof CompileReport compileReport) {
+            if (compileReport.errors() == 0 && status == BazelStatus.SUCCESS) {
+                myTaskConsole.finishSubtask(taskId, LocalizeValue.of(message), buildEventFactory.createSuccessResult());
+            }
+            else if (status == BazelStatus.CANCEL) {
+                myTaskConsole.finishSubtask(taskId, LocalizeValue.of(message), buildEventFactory.createSkippedResult());
+            }
+            else {
+                myTaskConsole.finishSubtask(taskId, LocalizeValue.of(message), buildEventFactory.newFailure().createResult());
+            }
+        }
+        else {
+            myTaskConsole.finishSubtask(taskId, LocalizeValue.of(message), buildEventFactory.createSuccessResult());
+        }
+    }
 
-  override fun onLogMessage(taskId: TaskId, message: String) {
-    taskConsole.addMessage(taskId, message)
-  }
+    @Override
+    public void onDiagnostic(
+        TaskId taskId,
+        @Nullable Path textDocument,
+        Label buildTarget,
+        int line,
+        int character,
+        MessageEvent.Kind severity,
+        String message
+    ) {
+        @Nullable Path path = textDocument;
+        if (textDocument != null) {
+            @Nullable VirtualFile virtualFile = PathUtil.findCanonicalVirtualFileThatExists(textDocument);
+            if (virtualFile != null) {
+                path = virtualFile.toNioPath();
+            }
+        }
+        myTaskConsole.addDiagnosticMessage(
+            taskId,
+            path,
+            line,
+            character,
+            LocalizeValue.of(message),
+            null,
+            severity
+        );
+    }
+
+    @Override
+    public void onLogMessage(TaskId taskId, String message) {
+        myTaskConsole.addMessage(taskId, message);
+    }
 }

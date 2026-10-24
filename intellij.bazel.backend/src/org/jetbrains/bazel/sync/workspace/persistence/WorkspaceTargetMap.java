@@ -1,34 +1,63 @@
-package org.jetbrains.bazel.sync.workspace.persistence
+package org.jetbrains.bazel.sync.workspace.persistence;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bsp.protocol.BuildTarget
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface WorkspaceTargetMap {
-  fun findTargetByKey(key: WorkspaceTargetKey, options: TargetLoadOptions = TargetLoadOptions.ALL): BuildTarget?
+import java.util.Map;
+import java.util.stream.Stream;
 
-  fun allTargets(options: TargetLoadOptions = TargetLoadOptions.ALL): Sequence<BuildTarget>
+public interface WorkspaceTargetMap {
+    @Nullable BuildTarget findTargetByKey(WorkspaceTargetKey key, TargetLoadOptions options);
 
-  companion object {
-    val EMPTY: WorkspaceTargetMap = object : WorkspaceTargetMap {
-      override fun findTargetByKey(
-        key: WorkspaceTargetKey,
-        options: TargetLoadOptions,
-      ): BuildTarget? = null
-
-      override fun allTargets(options: TargetLoadOptions): Sequence<BuildTarget> = sequenceOf()
+    default @Nullable BuildTarget findTargetByKey(WorkspaceTargetKey key) {
+        return findTargetByKey(key, TargetLoadOptions.ALL);
     }
-  }
-}
 
-@ApiStatus.Internal
-class InMemoryWorkspaceTargetMap(val targets: Map<WorkspaceTargetKey, BuildTarget>) : WorkspaceTargetMap {
-  override fun findTargetByKey(
-    key: WorkspaceTargetKey,
-    options: TargetLoadOptions,
-  ): BuildTarget? = targets[key]
+    Stream<BuildTarget> allTargets(TargetLoadOptions options);
 
-  override fun allTargets(options: TargetLoadOptions): Sequence<BuildTarget> = targets.values.asSequence()
+    default Stream<BuildTarget> allTargets() {
+        return allTargets(TargetLoadOptions.ALL);
+    }
 
+    WorkspaceTargetMap EMPTY = new WorkspaceTargetMap() {
+        @Override
+        public @Nullable BuildTarget findTargetByKey(
+            WorkspaceTargetKey key,
+            TargetLoadOptions options
+        ) {
+            return null;
+        }
+
+        @Override
+        public Stream<BuildTarget> allTargets(TargetLoadOptions options) {
+            return Stream.of();
+        }
+    };
+
+    class InMemoryWorkspaceTargetMap implements WorkspaceTargetMap {
+        private final Map<WorkspaceTargetKey, BuildTarget> myTargets;
+
+        public InMemoryWorkspaceTargetMap(Map<WorkspaceTargetKey, BuildTarget> targets) {
+            myTargets = targets;
+        }
+
+        public Map<WorkspaceTargetKey, BuildTarget> getTargets() {
+            return myTargets;
+        }
+
+        @Override
+        public @Nullable BuildTarget findTargetByKey(
+            WorkspaceTargetKey key,
+            TargetLoadOptions options
+        ) {
+            return myTargets.get(key);
+        }
+
+        @Override
+        public Stream<BuildTarget> allTargets(TargetLoadOptions options) {
+            return myTargets.values().stream();
+        }
+
+    }
 }

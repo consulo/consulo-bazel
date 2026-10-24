@@ -3,10 +3,10 @@ package org.jetbrains.bazel.sync.workspace.snapshot;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
 import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
 import org.jetbrains.bazel.label.Label;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceAspectIds;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceConfiguration;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceConfigurationId;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;

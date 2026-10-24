@@ -1,45 +1,52 @@
-package org.jetbrains.bazel.taskEvents
+package org.jetbrains.bazel.taskEvents;
 
-import com.intellij.build.events.MessageEvent
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
+import consulo.build.ui.event.MessageEvent;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelTaskListener {
-  fun onDiagnostic(
-    taskId: TaskId,
-    textDocument: Path?,
-    buildTarget: Label,
-    line: Int,
-    character: Int,
-    severity: MessageEvent.Kind,
-    message: String,
-  ) {
-  }
+import java.nio.file.Path;
 
-  fun onOutputStream(taskId: TaskId?, text: String) {}
+public interface BazelTaskListener {
+    default void onDiagnostic(
+        TaskId taskId,
+        @Nullable Path textDocument,
+        Label buildTarget,
+        int line,
+        int character,
+        MessageEvent.Kind severity,
+        String message
+    ) {
+    }
 
-  fun onErrorStream(taskId: TaskId?, text: String) {}
+    default void onOutputStream(@Nullable TaskId taskId, String text) {
+    }
 
-  fun onTaskStart(
-    taskId: TaskId,
-    message: String,
-    data: Any?,
-  ) {
-  }
+    default void onErrorStream(@Nullable TaskId taskId, String text) {
+    }
 
-  fun onTaskFinish(
-    taskId: TaskId,
-    message: String,
-    status: BazelStatus,
-    data: Any?,
-  ) {
-  }
+    default void onTaskStart(
+        TaskId taskId,
+        String message,
+        @Nullable Object data
+    ) {
+    }
 
-  fun onLogMessage(taskId: TaskId, message: String) {}
-  fun onPublishCoverageReport(coverageReport: Path) {}
-  fun onCachedTestLog(testLog: Path) {}
+    default void onTaskFinish(
+        TaskId taskId,
+        String message,
+        BazelStatus status,
+        @Nullable Object data
+    ) {
+    }
+
+    default void onLogMessage(TaskId taskId, String message) {
+    }
+
+    default void onPublishCoverageReport(Path coverageReport) {
+    }
+
+    default void onCachedTestLog(Path testLog) {
+    }
 }

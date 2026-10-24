@@ -1,156 +1,168 @@
-package org.jetbrains.bazel.sync.workspace.importer
+package org.jetbrains.bazel.sync.workspace.importer;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.NlsContexts
-import com.intellij.platform.util.progress.SequentialProgressReporter
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.ImmutableEntityStorage
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.progress.TaskConsole
-import org.jetbrains.bazel.sync.BazelOutFileHardLinks
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bsp.protocol.OutputLocationParser
-import org.jetbrains.bsp.protocol.OutputLocationResolver
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.application.progress.ProgressIndicator;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.component.extension.ExtensionPoint;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.progress.TaskConsole;
+import org.jetbrains.bazel.sync.BazelOutFileHardLinks;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.GlobalNamingContextBuilder;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jetbrains.bsp.protocol.OutputLocationParser;
+import org.jetbrains.bsp.protocol.TaskId;
+
+import java.util.concurrent.CompletableFuture;
 
 /**
- * Extensible workspace importer, main purpose of [BazelWorkspaceImporter]
- * is to act as transform function from [WorkspaceSnapshot] to an actual IDE native
+ * Extensible workspace importer, main purpose of {@link BazelWorkspaceImporter}
+ * is to act as transform function from {@link WorkspaceSnapshot} to an actual IDE native
  * project model.
- *
- * Currently [BazelWorkspaceImporter] support pure transformation to [MutableEntityStorage] aka. Workspace Model.
- * Each importer can inspect full scope of [WorkspaceSnapshot], but shouldn't change its own behavior depending
+ * <p>
+ * Currently {@link BazelWorkspaceImporter} support pure transformation to {@link BazelModelBuilder} aka. the project model.
+ * Each importer can inspect full scope of {@link WorkspaceSnapshot}, but shouldn't change its own behavior depending
  * on external factors like other language data that its own.
- *
- * **NOTE:** Each [BazelWorkspaceImporter] should aim to be a pure function,
- * importers should only realy on [WorkspaceSnapshot] as a source of truth for import input data
- *
- * **RECOMMENDATION:** Each [BazelWorkspaceImporter] should import exactly single language/technology,
+ * <p>
+ * <b>NOTE:</b> Each {@link BazelWorkspaceImporter} should aim to be a pure function,
+ * importers should only realy on {@link WorkspaceSnapshot} as a source of truth for import input data
+ * <p>
+ * <b>RECOMMENDATION:</b> Each {@link BazelWorkspaceImporter} should import exactly single language/technology,
  * in case of importer outputing model being shared among multiple languages/technologies, it's
  * importer responsiblity to provide extensions for extending its own behavior.
+ * <p>
+ * consulo: the IntelliJ workspace model ({@code MutableEntityStorage}) is replaced by the classic project model
+ * through {@link BazelModelBuilder}.
  */
-@ApiStatus.Internal
-interface BazelWorkspaceImporter {
-
-  /**
-   * Mark [BazelWorkspaceImporter] as named
-   */
-  interface Named : BazelWorkspaceImporter {
+public interface BazelWorkspaceImporter {
+    /**
+     * Mark {@link BazelWorkspaceImporter} as named
+     */
+    interface Named extends BazelWorkspaceImporter {
+        /**
+         * Internalized {@link BazelWorkspaceImporter} importer name
+         */
+        LocalizeValue getImporterName();
+    }
 
     /**
-     * Internalized [BazelWorkspaceImporter] importer name
+     * Perform phased workspace import. Adhear to rules found in {@link WorkspaceImporterPhase} documentation.
+     *
+     * @param phase    Current importer phase
+     * @param snapshot Immutable workspace snapshot
+     * @param taskId   Parent {@link TaskId} of the current phase for this importer
      */
-    val importerName: @NlsContexts.ProgressTitle String
-  }
+    CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId);
 
-  /**
-   * Perform phased workspace import. Adhear to rules found in [WorkspaceImporterPhase] documentation.
-   *
-   * @param phase Current importer phase
-   * @param snapshot Immutable workspace snapshot
-   * @param taskId Parent [TaskId] of the current phase for this importer
-   */
-  suspend fun import(phase: WorkspaceImporterPhase, snapshot: WorkspaceSnapshot, taskId: TaskId): Result<WorkspaceImporterResult>
-}
+    /**
+     * Factory for creating {@link BazelWorkspaceImporter},
+     * workspace importer instance is created at start of each sync
+     */
+    @ExtensionAPI(ComponentScope.APPLICATION)
+    interface BazelWorkspaceImporterFactory {
+        BazelWorkspaceImporter createWorkspaceImporter(WorkspaceImporterContext context);
 
-/**
- * Factory for creating [BazelWorkspaceImporter],
- * workspace importer instance is created at start of each sync
- */
-@ApiStatus.Internal
-interface BazelWorkspaceImporterFactory {
-  fun createWorkspaceImporter(context: WorkspaceImporterContext): BazelWorkspaceImporter
+        static ExtensionPoint<BazelWorkspaceImporterFactory> getEpName() {
+            return Application.get().getExtensionPoint(BazelWorkspaceImporterFactory.class);
+        }
+    }
 
-  companion object {
-    val EP_NAME: ExtensionPointName<BazelWorkspaceImporterFactory> = ExtensionPointName("org.jetbrains.bazel.syncWorkspaceImporterFactory")
-  }
-}
+    /**
+     * Success result of {@link BazelWorkspaceImporter#doImport}
+     */
+    enum WorkspaceImporterResult {
+        /**
+         * Success {@link BazelWorkspaceImporter} execution shall be continued
+         */
+        Success,
+        /**
+         * Abort {@link BazelWorkspaceImporter} execution, skip all next phases
+         */
+        Abort
+    }
 
-/**
- * Success result of [BazelWorkspaceImporter.import]
- */
-@ApiStatus.Internal
-sealed interface WorkspaceImporterResult {
+    /**
+     * Common {@link BazelWorkspaceImporter} context
+     * <p>
+     * consulo: upstream {@code vfuManager} and {@code currentSnapshot} are workspace model objects and are not available;
+     * the current project model is read through the classic API.
+     *
+     * @param project          Current project, don't use {@code project} to collect data that can change {@link BazelWorkspaceImporter} behavior
+     * @param taskConsole      Current {@link TaskConsole}
+     * @param progressReporter Current progress indicator
+     */
+    record WorkspaceImporterContext(
+        Project project,
+        TaskConsole taskConsole,
+        ProgressIndicator progressReporter,
+        OutputLocationResolver outputResolver,
+        OutputLocationParser outputParser,
+        BazelOutFileHardLinks outFileHardLinks,
+        BazelInfo bazelInfo
+    ) {
+    }
 
-  /**
-   * Success [BazelWorkspaceImporter] execution shall be continued
-   */
-  data object Success : WorkspaceImporterResult
+    /**
+     * Phases of {@link BazelWorkspaceImporter}
+     * <p>
+     * Phase call order
+     * <pre>
+     * Initialize -> WorkspaceApply -> Finalize -> PostProcessing (After workspace model apply)
+     * </pre>
+     */
+    // RC: for now support only monolithic updates to shared `MutableEntityStorage`
+    sealed interface WorkspaceImporterPhase
+        permits WorkspaceImporterPhase.Initialize, WorkspaceImporterPhase.WorkspaceApply, WorkspaceImporterPhase.Finalize,
+        WorkspaceImporterPhase.PostProcessing {
 
-  /**
-   * Abort [BazelWorkspaceImporter] execution, skip all next phases
-   */
-  data object Abort : WorkspaceImporterResult
-}
+        /**
+         * Called first once per {@link BazelWorkspaceImporter#doImport}
+         *
+         * @param naming The only phase where names can be declared, see {@link GlobalNamingContextBuilder}
+         */
+        record Initialize(GlobalNamingContextBuilder naming) implements WorkspaceImporterPhase {
+        }
 
-/**
- * Common [BazelWorkspaceImporter] context
- *
- * @property project Current project, don't use [project] to collect data that can change [BazelWorkspaceImporter] behavior
- * @property taskConsole Current [TaskConsole]
- * @property progressReporter Current [SequentialProgressReporter]
- * @property vfuManager [VirtualFileUrlManager] that shall be used for workspace model building
- */
-@ApiStatus.Internal
-data class WorkspaceImporterContext(
-  val project: Project,
-  val taskConsole: TaskConsole,
-  val progressReporter: SequentialProgressReporter,
-  val vfuManager: VirtualFileUrlManager,
-  val currentSnapshot: ImmutableEntityStorage,
-  val outputResolver: OutputLocationResolver,
-  val outputParser: OutputLocationParser,
-  val outFileHardLinks: BazelOutFileHardLinks,
-  val bazelInfo: BazelInfo,
-)
+        /**
+         * Apply changes to shared {@link BazelModelBuilder}, remember that {@code builder} is shared among all
+         * {@link BazelWorkspaceImporter} instances.
+         * <p>
+         * Called exactly once for every {@link BazelWorkspaceImporter}.
+         *
+         * @param naming Names declared during {@link Initialize}, resolved across all importers
+         */
+        record WorkspaceApply(
+            BazelModelBuilder builder,
+            BazelEntitySource entitySource,
+            GlobalNamingContext naming
+        ) implements WorkspaceImporterPhase {
+        }
 
-/**
- * Phases of [BazelWorkspaceImporter]
- *
- * Phase call order
- * ```
- * Initialize -> WorkspaceApply -> Finalize -> PostProcessing (After workspace model apply)
- * ```
- */
-// RC: for now support only monolithic updates to shared `MutableEntityStorage`
-@ApiStatus.Internal
-sealed interface WorkspaceImporterPhase {
+        /**
+         * Called last once per {@link BazelWorkspaceImporter#doImport}
+         */
+        final class Finalize implements WorkspaceImporterPhase {
+            public static final Finalize INSTANCE = new Finalize();
 
-  /**
-   * Called first once per [BazelWorkspaceImporter.import]
-   *
-   * @property naming The only phase where names can be declared, see [GlobalNamingContextBuilder]
-   */
-  data class Initialize(val naming: GlobalNamingContextBuilder) : WorkspaceImporterPhase
+            private Finalize() {
+            }
+        }
 
-  /**
-   * Apply changes to shared [MutableEntityStorage], remember that [builder] is shared among all [BazelWorkspaceImporter] instances,
-   * so be careful with [MutableEntityStorage.replaceBySource].
-   *
-   * Called exactly once for every [BazelWorkspaceImporter].
-   *
-   * @property naming Names declared during [Initialize], resolved across all importers
-   */
-  data class WorkspaceApply(
-    val builder: MutableEntityStorage,
-    val entitySource: EntitySource,
-    val naming: GlobalNamingContext,
-  ) : WorkspaceImporterPhase
+        /**
+         * Optional phase called after {@link Finalize}, depending on environment might not be invoked.
+         * {@link PostProcessing} phase will be applied after workspace model
+         * application if concept of workspace model application is present in invocation environment.
+         */
+        final class PostProcessing implements WorkspaceImporterPhase {
+            public static final PostProcessing INSTANCE = new PostProcessing();
 
-  /**
-   * Called last once per [BazelWorkspaceImporter.import]
-   */
-  data object Finalize : WorkspaceImporterPhase
-
-  /**
-   * Optional phase called after [Finalize], depending on environment might not be invoked.
-   * [WorkspaceImporterPhase.PostProcessing] phase will be applied after workspace model
-   * application if concept of workspace model application is present in invocation environment.
-   */
-  data object PostProcessing : WorkspaceImporterPhase
-
+            private PostProcessing() {
+            }
+        }
+    }
 }

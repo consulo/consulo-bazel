@@ -1,30 +1,30 @@
-package org.jetbrains.bazel.util
+package org.jetbrains.bazel.util;
 
-import org.jetbrains.annotations.ApiStatus
-import java.text.DecimalFormat
-import java.text.DecimalFormatSymbols
-import java.time.Duration
-import java.util.Locale
-import kotlin.math.roundToInt
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.time.Duration;
+import java.util.Locale;
 
-@ApiStatus.Internal
-object Format {
-  fun duration(duration: Duration): String {
-    if (duration.toSeconds() == 0L) {
-      return duration.toMillis().toString() + "ms"
-    }
-    if (duration.toMinutes() == 0L) {
-      val df = DecimalFormat("0.#", DecimalFormatSymbols.getInstance(Locale.US))
-      return df.format((duration.toMillis().toDouble()) / 1000) + "s"
-    }
-    val minutes = duration.toMinutes().toString() + "m"
-
-    if (duration.toSecondsPart() > 0 || duration.toMillisPart() > 0) {
-      val millisAsSeconds = (duration.toMillisPart().toDouble()) / 1000
-      val seconds = millisAsSeconds + duration.toSecondsPart()
-      return minutes + " " + (seconds.roundToInt().toString() + "s")
+public final class Format {
+    private Format() {
     }
 
-    return minutes
-  }
+    public static String duration(Duration duration) {
+        if (duration.toSeconds() == 0L) {
+            return duration.toMillis() + "ms";
+        }
+        if (duration.toMinutes() == 0L) {
+            DecimalFormat df = new DecimalFormat("0.#", DecimalFormatSymbols.getInstance(Locale.US));
+            return df.format(((double) duration.toMillis()) / 1000) + "s";
+        }
+        String minutes = duration.toMinutes() + "m";
+
+        if (duration.toSecondsPart() > 0 || duration.toMillisPart() > 0) {
+            double millisAsSeconds = ((double) duration.toMillisPart()) / 1000;
+            double seconds = millisAsSeconds + duration.toSecondsPart();
+            return minutes + " " + (Math.round(seconds) + "s");
+        }
+
+        return minutes;
+    }
 }

@@ -1,36 +1,47 @@
-package org.jetbrains.bazel.util
+package org.jetbrains.bazel.util;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bazel.testing.BazelTestDetails
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.testing.BazelTestDetails;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelTestLocationHintProvider {
-  fun isApplicable(targetKind: TargetKind): Boolean
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelTestLocationHintProvider {
+    boolean isApplicable(TargetKind targetKind);
 
-  fun getLocationHint(testDetails: BazelTestDetails): String?
+    @Nullable String getLocationHint(BazelTestDetails testDetails);
 
-  companion object {
-    val ep =
-      ExtensionPointName.create<BazelTestLocationHintProvider>("org.jetbrains.bazel.testLocationHintProvider")
-
-    fun getLocationHint(testDetails: BazelTestDetails, targetKind: TargetKind?): String? {
-      getTestLocationHintByFileLocation(testDetails)?.let { return it }
-      if (targetKind == null) return null
-      return ep.computeSafeIfAny { provider ->
-        provider.takeIf { it.isApplicable(targetKind) }?.getLocationHint(testDetails)
-      }
+    static ExtensionPoint<BazelTestLocationHintProvider> getEp() {
+        return Application.get().getExtensionPoint(BazelTestLocationHintProvider.class);
     }
 
-    private fun getTestLocationHintByFileLocation(testDetails: BazelTestDetails): String? =
-      testDetails.run {
-        if (oneBasedLine != null) {
-          val forwardSlashFilePath = file?.replace('\\', '/') ?: return null
-          "file://$forwardSlashFilePath:$oneBasedLine"
-        } else {
-          null
+    static @Nullable String getLocationHint(BazelTestDetails testDetails, @Nullable TargetKind targetKind) {
+        @Nullable String locationHint = getTestLocationHintByFileLocation(testDetails);
+        if (locationHint != null) {
+            return locationHint;
+        }
+        if (targetKind == null) {
+            return null;
+        }
+        return getEp().computeSafeIfAny(provider ->
+            provider.isApplicable(targetKind) ? provider.getLocationHint(testDetails) : null
+        );
+    }
+
+    private static @Nullable String getTestLocationHintByFileLocation(BazelTestDetails testDetails) {
+        if (testDetails.oneBasedLine() != null) {
+            @Nullable String file = testDetails.file();
+            if (file == null) {
+                return null;
+            }
+            String forwardSlashFilePath = file.replace('\\', '/');
+            return "file://" + forwardSlashFilePath + ":" + testDetails.oneBasedLine();
+        }
+        else {
+            return null;
         }
     }
-  }
 }

@@ -1,321 +1,416 @@
-package org.jetbrains.bazel.server.sync
+package org.jetbrains.bazel.server.sync;
 
-import com.intellij.aspect.lib.ASPECT_NAME
-import com.intellij.aspect.lib.OutputGroups
-import com.intellij.build.events.MessageEvent
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.platform.diagnostic.telemetry.helpers.useWithScope
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.ensureActive
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.bazelrunner.BazelRunner
-import org.jetbrains.bazel.bazelrunner.ModuleResolver
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.commons.BzlmodRepoMapping
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.TargetCollection
-import org.jetbrains.bazel.commons.dropExcludedPatternsWithoutPackages
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.ignore.BazelIgnoreService
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bazel.languages.projectview.shardSync
-import org.jetbrains.bazel.languages.projectview.targetShardSize
-import org.jetbrains.bazel.languages.projectview.targets
-import org.jetbrains.bazel.performance.bspTracer
-import org.jetbrains.bazel.progress.syncConsole
-import org.jetbrains.bazel.server.bsp.managers.BazelBspAspectsManager
-import org.jetbrains.bazel.server.bsp.managers.BazelBspAspectsManagerResult
-import org.jetbrains.bazel.server.bsp.managers.BazelExternalRulesetsQueryImpl
-import org.jetbrains.bazel.server.model.AspectSyncProject
-import org.jetbrains.bazel.server.sync.sharding.BazelBuildTargetSharder
-import org.jetbrains.bsp.protocol.BazelTaskEventsHandler
-import org.jetbrains.bsp.protocol.TaskId
-import org.jetbrains.bsp.protocol.asLogger
-import java.nio.file.Path
+import com.intellij.aspect.lib.AspectChoice;
+import com.intellij.aspect.lib.OutputGroups;
+import consulo.application.progress.ProgressManager;
+import consulo.build.ui.event.MessageEvent;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import org.jetbrains.bazel.bazelrunner.BazelCommand;
+import org.jetbrains.bazel.bazelrunner.BazelRunner;
+import org.jetbrains.bazel.bazelrunner.ModuleResolver;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RepoMapping.BzlmodRepoMapping;
+import org.jetbrains.bazel.commons.TargetCollection;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.ignore.BazelIgnoreService;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
+import org.jetbrains.bazel.languages.projectview.ProjectViewTargets;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.server.bsp.managers.BazelBspAspectsManager;
+import org.jetbrains.bazel.server.bsp.managers.BazelBspAspectsManager.BazelBspAspectsManagerResult;
+import org.jetbrains.bazel.server.bsp.managers.BazelBspAspectsManager.RulesetInstance;
+import org.jetbrains.bazel.server.bsp.managers.BazelExternalRulesetsQuery.BazelExternalRulesetsQueryImpl;
+import org.jetbrains.bazel.server.model.BazelSyncProject.AspectSyncProject;
+import org.jetbrains.bazel.server.sync.sharding.BazelBuildTargetSharder;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.BazelTaskEventsHandler;
+import org.jetbrains.bsp.protocol.BazelTaskEventsHandler.BazelTaskLogger;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-internal class IllegalTargetsSizeException(message: String) : Exception(message)
-
-private fun TargetCollection.halve(): List<TargetCollection> {
-  if (values.size <= 1) {
-    throw IllegalTargetsSizeException("Cannot split target collection with ${values.size} targets")
-  }
-  val mid = values.size / 2
-  return listOf(
-    TargetCollection(values.subList(0, mid), excludedValues),
-    TargetCollection(values.subList(mid, values.size), excludedValues),
-  )
-}
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Responsible for querying bazel and constructing Project instance  */
-@ApiStatus.Internal
-class ProjectResolver(
-  private val bazelBspAspectsManager: BazelBspAspectsManager,
-  private val projectView: ProjectView,
-  private val bazelInfo: BazelInfo,
-  private val bazelRunner: BazelRunner,
-  private val bazelPathsResolver: BazelPathsResolver,
-  private val taskEventsHandler: BazelTaskEventsHandler,
-  private val project: Project,
-) {
-  private suspend fun <T> measured(description: String, f: suspend () -> T): T = bspTracer.spanBuilder(description).useWithScope { f() }
-
-  internal suspend fun resolve(
-    build: Boolean,
-    requestedTargetsToSync: List<Label>?,
-    allTargets: List<Label>?, /* all known targets, if any, from first phase */
-    repoMapping: RepoMapping,
-    taskId: TaskId,
-  ): AspectSyncProject {
-    return bspTracer.spanBuilder("Resolve project").useWithScope {
-      val aspectResult = buildProjectWithAspectAndSetup(build, requestedTargetsToSync, allTargets, repoMapping, taskId)
-
-      val configurations = fetchConfigurationsFromAnalysisCache(projectView, bazelRunner, taskId)
-        .onFailure { logger.warn("`bazel config` invocation failed, falling back to BEP configurations", it) }
-        .getOrElse { aspectResult.bepOutput.configurations.values } // fallback to BEP configurations
-
-      val aspectOutputs = extractAspectOutputPaths(aspectResult)
-      val rootTargets = aspectResult.bepOutput.rootTargets()
-
-      return@useWithScope AspectSyncProject(
-        workspaceRoot = bazelInfo.workspaceRoot,
-        bazelRelease = bazelInfo.release,
-        hasError = aspectResult.isFailure,
-        rootTargets = rootTargets,
-        configurations = configurations.associateBy { it.id },
-        targetProtoPaths = aspectOutputs,
-      )
-    }
-  }
-
-  private suspend fun buildProjectWithAspectAndSetup(
-    build: Boolean,
-    requestedTargetsToSync: List<Label>?,
-    allTargets: List<Label>?, /* all known targets, if any, from first phase */
-    repoMapping: RepoMapping,
-    taskId: TaskId,
-  ): BazelBspAspectsManagerResult {
-    val bazelExternalRulesetsQuery =
-      BazelExternalRulesetsQueryImpl(
-        taskId,
-        bazelRunner,
-        bazelInfo.isBzlModEnabled,
-        bazelInfo.isWorkspaceEnabled,
-        taskEventsHandler,
-        projectView,
-        repoMapping,
-      )
-
-    val externalRulesetNames =
-      measured(
-        "Discovering supported external rules",
-      ) { bazelExternalRulesetsQuery.fetchExternalRulesetNames() }
-
-    val externalRepos = (repoMapping as? BzlmodRepoMapping)?.apparentRepoNameToCanonicalName?.let { mapping ->
-      externalRulesetNames.mapNotNull { repoName -> mapping[repoName] }.filter { it != "" }.map { "@@" + it }
-    } ?: emptyList()
-
-    val repoDefinitionsWithWarnings =
-      measured("Looking up definitions of external rules") {
-        ModuleResolver(bazelRunner, projectView, taskId).resolveModules(externalRepos, bazelInfo)
-      }
-
-    repoDefinitionsWithWarnings.warnings.forEach {
-      project.syncConsole.addDiagnosticMessage(
-        taskId, null, 0, 0, it, null,
-        MessageEvent.Kind.WARNING,
-      )
-    }
-
-    val repoDefinitions = repoDefinitionsWithWarnings.result
-
-    val ruleSets = measured("Mapping rule names to languages") {
-        bazelBspAspectsManager.calculateRulesets(
-          externalRulesetNames,
-          repoDefinitions,
-          bazelInfo.externalAutoloads,
-        )
-      }
-
-    ruleSets.forEach {
-      it.ruleset.deprecated?.let {
-        project.syncConsole.addDiagnosticMessage(
-          taskId, null, 0, 0, it, null,
-          MessageEvent.Kind.WARNING,
-        )
-      }
-    }
-
-    measured("Realizing language aspect files from templates") {
-      bazelBspAspectsManager.deployIntelliJAspect(
-        ruleSets,
-        bazelInfo.release,
-        repoMapping,
-      )
-    }
-
-    val targetsToSync =
-      requestedTargetsToSync
-        ?.let { TargetCollection(it, emptyList()) } ?: projectViewTargetsToSync()
-
-    val buildAspectResult =
-      measured("Building project with aspect") {
-        buildProjectWithAspect(
-          projectView = projectView,
-          build = build,
-          targetsToSync = targetsToSync,
-          allTargets = allTargets,
-          taskId = taskId,
-        )
-      }
-
-    return buildAspectResult
-  }
-
-  private suspend fun projectViewTargetsToSync(): TargetCollection =
-    measured("Dropping excluded patterns without packages") {
-      TargetCollection
-        .fromExcludableList(projectView.targets)
-        .dropExcludedPatternsWithoutPackages(
-          bazelInfo.workspaceRoot,
-          BazelIgnoreService.getInstance(project),
-        )
-    }
-
-  private suspend fun buildProjectWithAspect(
-    projectView: ProjectView,
-    build: Boolean,
-    targetsToSync: TargetCollection,
-    allTargets: List<Label>?, /* all known targets, if any, from first phase */
-    taskId: TaskId,
-  ): BazelBspAspectsManagerResult =
-    coroutineScope {
-      val aspects = listOf(ASPECT_NAME)
-      val taskLogger = taskEventsHandler.asLogger(taskId)
-      val outputGroups = mutableListOf(OutputGroups.INFO.groupName)
-      if (BazelFeatureFlags.isSyncRequestSourcesEnabled) {
-        outputGroups.add(OutputGroups.SYNC.groupName)
-      }
-      if (build) {
-        outputGroups.add(OutputGroups.BUILD.groupName)
-      }
-      val nonShardBuild =
-        suspend {
-          bazelBspAspectsManager
-            .fetchFilesFromOutputGroups(
-              targetsSpec = targetsToSync,
-              aspects = aspects,
-              outputGroups = outputGroups,
-              projectView = projectView,
-              taskId = taskId,
-            ).also {
-              if (it.status == BazelStatus.OOM_ERROR) {
-                taskLogger.warn("Bazel ran out of memory during sync. To mitigate, consider enabling shard sync in your project view file: `shard_sync: true`")
-                taskLogger.message("---")
-              }
-            }
+public class ProjectResolver {
+    public static class IllegalTargetsSizeException extends Exception {
+        public IllegalTargetsSizeException(String message) {
+            super(message);
         }
+    }
 
-      val res =
-        if (projectView.shardSync) {
-          val shardedResult =
-            BazelBuildTargetSharder.expandAndShardTargets(
-              bazelPathsResolver,
-              targetsToSync,
-              projectView,
-              bazelRunner,
-              taskLogger,
-              taskId,
-              allTargets,
+    private static List<TargetCollection> halve(TargetCollection receiver) throws IllegalTargetsSizeException {
+        List<Label> values = receiver.values();
+        if (values.size() <= 1) {
+            throw new IllegalTargetsSizeException("Cannot split target collection with " + values.size() + " targets");
+        }
+        int mid = values.size() / 2;
+        return List.of(
+            new TargetCollection(values.subList(0, mid), receiver.excludedValues()),
+            new TargetCollection(values.subList(mid, values.size()), receiver.excludedValues())
+        );
+    }
+
+    private final BazelBspAspectsManager myBazelBspAspectsManager;
+    private final ProjectView myProjectView;
+    private final BazelInfo myBazelInfo;
+    private final BazelRunner myBazelRunner;
+    private final BazelPathsResolver myBazelPathsResolver;
+    private final BazelTaskEventsHandler myTaskEventsHandler;
+    private final Project myProject;
+
+    public ProjectResolver(
+        BazelBspAspectsManager bazelBspAspectsManager,
+        ProjectView projectView,
+        BazelInfo bazelInfo,
+        BazelRunner bazelRunner,
+        BazelPathsResolver bazelPathsResolver,
+        BazelTaskEventsHandler taskEventsHandler,
+        Project project
+    ) {
+        myBazelBspAspectsManager = bazelBspAspectsManager;
+        myProjectView = projectView;
+        myBazelInfo = bazelInfo;
+        myBazelRunner = bazelRunner;
+        myBazelPathsResolver = bazelPathsResolver;
+        myTaskEventsHandler = taskEventsHandler;
+        myProject = project;
+    }
+
+    private <T extends @Nullable Object> CompletableFuture<T> measured(String description, Supplier<CompletableFuture<T>> f) {
+        // consulo: telemetry is not ported, upstream ran f() in a bspTracer span named by description
+        return f.get();
+    }
+
+    public CompletableFuture<AspectSyncProject> resolve(
+        boolean build,
+        @Nullable List<Label> requestedTargetsToSync,
+        @Nullable List<Label> allTargets, /* all known targets, if any, from first phase */
+        RepoMapping repoMapping,
+        TaskId taskId
+    ) {
+        // consulo: telemetry is not ported, upstream ran the body in the "Resolve project" bspTracer span
+        return buildProjectWithAspectAndSetup(build, requestedTargetsToSync, allTargets, repoMapping, taskId).thenCompose(aspectResult ->
+            configuration.fetchConfigurationsFromAnalysisCache(myProjectView, myBazelRunner, taskId)
+                .thenApply(fetched -> {
+                    if (fetched.configurations() != null) {
+                        return (Collection<WorkspaceConfiguration>) fetched.configurations();
+                    }
+                    LOG.warn("`bazel config` invocation failed, falling back to BEP configurations", fetched.failure());
+                    return aspectResult.bepOutput().getConfigurations().values(); // fallback to BEP configurations
+                })
+                .thenCompose(configurations ->
+                    extractAspectOutputPaths(aspectResult).thenApply(aspectOutputs -> {
+                        Set<WorkspaceTargetKey> rootTargets = aspectResult.bepOutput().rootTargets();
+
+                        Map<WorkspaceConfigurationId, WorkspaceConfiguration> configurationsById = new LinkedHashMap<>();
+                        for (WorkspaceConfiguration it : configurations) {
+                            configurationsById.put(it.id(), it);
+                        }
+                        return new AspectSyncProject(
+                            myBazelInfo.workspaceRoot(),
+                            myBazelInfo.release(),
+                            aspectResult.isFailure(),
+                            aspectOutputs,
+                            rootTargets,
+                            configurationsById
+                        );
+                    })
+                )
+        );
+    }
+
+    private CompletableFuture<BazelBspAspectsManagerResult> buildProjectWithAspectAndSetup(
+        boolean build,
+        @Nullable List<Label> requestedTargetsToSync,
+        @Nullable List<Label> allTargets, /* all known targets, if any, from first phase */
+        RepoMapping repoMapping,
+        TaskId taskId
+    ) {
+        BazelExternalRulesetsQueryImpl bazelExternalRulesetsQuery =
+            new BazelExternalRulesetsQueryImpl(
+                taskId,
+                myBazelRunner,
+                myBazelInfo.isBzlModEnabled(),
+                myBazelInfo.isWorkspaceEnabled(),
+                myTaskEventsHandler,
+                myProjectView,
+                repoMapping
+            );
+
+        return measured(
+            "Discovering supported external rules",
+            bazelExternalRulesetsQuery::fetchExternalRulesetNames
+        ).thenCompose(externalRulesetNames -> {
+            List<String> externalRepos = new ArrayList<>();
+            if (repoMapping instanceof BzlmodRepoMapping bzlmodRepoMapping) {
+                Map<String, String> mapping = bzlmodRepoMapping.getApparentRepoNameToCanonicalName();
+                for (String repoName : externalRulesetNames) {
+                    String canonicalName = mapping.get(repoName);
+                    if (canonicalName != null && !canonicalName.equals("")) {
+                        externalRepos.add("@@" + canonicalName);
+                    }
+                }
+            }
+
+            return measured("Looking up definitions of external rules", () ->
+                new ModuleResolver(myBazelRunner, myProjectView, taskId).resolveModules(externalRepos, myBazelInfo)
+            ).thenCompose(repoDefinitionsWithWarnings -> {
+                repoDefinitionsWithWarnings.warnings().forEach(it ->
+                    util.getSyncConsole(myProject).addDiagnosticMessage(
+                        taskId, null, 0, 0, LocalizeValue.of(it), null,
+                        MessageEvent.Kind.WARNING
+                    )
+                );
+
+                Map<String, ModuleResolver.@Nullable ShowRepoResult> repoDefinitions = repoDefinitionsWithWarnings.result();
+
+                return measured("Mapping rule names to languages", () ->
+                    CompletableFuture.completedFuture(
+                        myBazelBspAspectsManager.calculateRulesets(
+                            externalRulesetNames,
+                            repoDefinitions,
+                            myBazelInfo.externalAutoloads()
+                        )
+                    )
+                ).thenCompose(ruleSets -> {
+                    for (RulesetInstance it : ruleSets) {
+                        String deprecated = it.ruleset().deprecated();
+                        if (deprecated != null) {
+                            util.getSyncConsole(myProject).addDiagnosticMessage(
+                                taskId, null, 0, 0, LocalizeValue.of(deprecated), null,
+                                MessageEvent.Kind.WARNING
+                            );
+                        }
+                    }
+
+                    return measured("Realizing language aspect files from templates", () -> {
+                        myBazelBspAspectsManager.deployIntelliJAspect(
+                            ruleSets,
+                            myBazelInfo.release(),
+                            repoMapping
+                        );
+                        return CompletableFuture.<@Nullable Void>completedFuture(null);
+                    });
+                }).thenCompose(ignored -> {
+                    CompletableFuture<TargetCollection> targetsToSync =
+                        requestedTargetsToSync != null
+                            ? CompletableFuture.completedFuture(new TargetCollection(requestedTargetsToSync, List.of()))
+                            : projectViewTargetsToSync();
+
+                    return targetsToSync.thenCompose(it ->
+                        measured("Building project with aspect", () ->
+                            buildProjectWithAspect(
+                                myProjectView,
+                                build,
+                                it,
+                                allTargets,
+                                taskId
+                            )
+                        )
+                    );
+                });
+            });
+        });
+    }
+
+    private CompletableFuture<TargetCollection> projectViewTargetsToSync() {
+        return measured("Dropping excluded patterns without packages", () ->
+            TargetCollection.dropExcludedPatternsWithoutPackages(
+                TargetCollection.fromExcludableList(ProjectViewTargets.getTargets(myProjectView)),
+                myBazelInfo.workspaceRoot(),
+                BazelIgnoreService.getInstance(myProject)
             )
-          var remainingShardedTargetsSpecs = shardedResult.targets.toMutableList()
-          var shardNumber = 1
-          var shardedBuildResult: BazelBspAspectsManagerResult = BazelBspAspectsManagerResult.emptyResult()
-          var suggestedTargetShardSize: Int = projectView.targetShardSize
-          while (remainingShardedTargetsSpecs.isNotEmpty()) {
-            ensureActive()
-            if (BazelFeatureFlags.shutDownBeforeShardBuild) {
-              // Prevent memory leak by forcing Bazel to shut down before it builds a shard
-              // This may cause the build to become slower, but it is necessary, at least before this issue is solved
-              // https://github.com/bazelbuild/bazel/issues/19412
-              runBazelShutDown(projectView, taskId)
-            }
-            val shardedTargetsSpec = remainingShardedTargetsSpecs.removeFirst()
-            val shardName = "shard $shardNumber of ${shardNumber + remainingShardedTargetsSpecs.size}"
-            taskLogger.message("\nBuilding $shardName ...")
-            taskLogger.message("Expected remaining shards: ${remainingShardedTargetsSpecs.size}")
-            val result =
-              bazelBspAspectsManager
-                .fetchFilesFromOutputGroups(
-                  targetsSpec = shardedTargetsSpec,
-                  aspects = aspects,
-                  outputGroups = outputGroups,
-                  projectView = projectView,
-                  taskId = taskId,
-                )
-            if (result.isFailure) {
-              taskLogger.warn("Failed to build $shardName")
-            }
-            else {
-              taskLogger.message("Finished building $shardName")
-            }
-            if (result.status == BazelStatus.OOM_ERROR) {
-              taskLogger.warn("Bazel ran out of memory during sync, attempting to halve the target shard size to recover")
-              try {
-                val halvedTargetsSpec = shardedTargetsSpec.halve()
-                suggestedTargetShardSize = halvedTargetsSpec.first().values.size
-                taskLogger.message(
-                  "Retrying with the target shard size of $suggestedTargetShardSize (previously ${shardedTargetsSpec.values.size}) ...",
-                )
-                remainingShardedTargetsSpecs = remainingShardedTargetsSpecs.flatMap { it.halve() }.toMutableList()
-                remainingShardedTargetsSpecs.addAll(0, halvedTargetsSpec)
-              }
-              catch (e: IllegalTargetsSizeException) {
-                taskLogger.error("Cannot split targets further: ${e.message}")
-                throw e
-              }
-            }
-            // As bazel starts the naming of the namedSetOfFiles freshly (starting from "0") on each run, we have to distinguish
-            // them somehow; we do this by encoding the shard number in their names.
-            val runResult = result.renameNamedSets(shardNumber)
-            shardedBuildResult = shardedBuildResult.merge(runResult)
+        );
+    }
 
-            taskLogger.message("---")
-            ++shardNumber
-          }
-          if (suggestedTargetShardSize != projectView.targetShardSize) {
-            taskLogger.message("Bazel ran out of memory during sync. To mitigate, consider setting shard size in your project view file: `target_shard_size: $suggestedTargetShardSize`")
-            taskLogger.message("---")
-          }
-          shardedBuildResult
+    private CompletableFuture<BazelBspAspectsManagerResult> buildProjectWithAspect(
+        ProjectView projectView,
+        boolean build,
+        TargetCollection targetsToSync,
+        @Nullable List<Label> allTargets, /* all known targets, if any, from first phase */
+        TaskId taskId
+    ) {
+        // consulo: upstream coroutineScope
+        List<String> aspects = List.of(AspectChoice.ASPECT_NAME);
+        BazelTaskLogger taskLogger = BazelTaskEventsHandler.asLogger(myTaskEventsHandler, taskId);
+        List<String> outputGroups = new ArrayList<>();
+        outputGroups.add(OutputGroups.INFO.getGroupName());
+        if (BazelFeatureFlags.isSyncRequestSourcesEnabled()) {
+            outputGroups.add(OutputGroups.SYNC.getGroupName());
+        }
+        if (build) {
+            outputGroups.add(OutputGroups.BUILD.getGroupName());
+        }
+        Supplier<CompletableFuture<BazelBspAspectsManagerResult>> nonShardBuild =
+            () ->
+                myBazelBspAspectsManager
+                    .fetchFilesFromOutputGroups(
+                        targetsToSync,
+                        aspects,
+                        outputGroups,
+                        projectView,
+                        taskId
+                    ).thenApply(it -> {
+                        if (it.status() == BazelStatus.OOM_ERROR) {
+                            taskLogger.warn(
+                                "Bazel ran out of memory during sync. To mitigate, consider enabling shard sync in your project view file: `shard_sync: true`"
+                            );
+                            taskLogger.message("---");
+                        }
+                        return it;
+                    });
+
+        CompletableFuture<BazelBspAspectsManagerResult> res;
+        if (ProjectViewExtensions.getShardSync(projectView)) {
+            res = BazelBuildTargetSharder.expandAndShardTargets(
+                myBazelPathsResolver,
+                targetsToSync,
+                projectView,
+                myBazelRunner,
+                taskLogger,
+                taskId,
+                allTargets
+            ).thenCompose(shardedResult -> {
+                // consulo: the vars of upstream are mutated by the asynchronous iterations of the loop below
+                AtomicReference<List<TargetCollection>> remainingShardedTargetsSpecs =
+                    new AtomicReference<>(new ArrayList<>(shardedResult.targets()));
+                AtomicInteger shardNumber = new AtomicInteger(1);
+                AtomicReference<BazelBspAspectsManagerResult> shardedBuildResult =
+                    new AtomicReference<>(BazelBspAspectsManagerResult.emptyResult());
+                AtomicInteger suggestedTargetShardSize = new AtomicInteger(ProjectViewExtensions.getTargetShardSize(projectView));
+                return whileAsync(() -> !remainingShardedTargetsSpecs.get().isEmpty(), () -> {
+                    // consulo: upstream ensureActive()
+                    ProgressManager.checkCanceled();
+                    CompletableFuture<?> shutDown;
+                    if (BazelFeatureFlags.getShutDownBeforeShardBuild()) {
+                        // Prevent memory leak by forcing Bazel to shut down before it builds a shard
+                        // This may cause the build to become slower, but it is necessary, at least before this issue is solved
+                        // https://github.com/bazelbuild/bazel/issues/19412
+                        shutDown = runBazelShutDown(projectView, taskId);
+                    }
+                    else {
+                        shutDown = CompletableFuture.completedFuture(null);
+                    }
+                    return shutDown.thenCompose(ignored -> {
+                        TargetCollection shardedTargetsSpec = remainingShardedTargetsSpecs.get().remove(0);
+                        String shardName =
+                            "shard " + shardNumber.get() + " of " + (shardNumber.get() + remainingShardedTargetsSpecs.get().size());
+                        taskLogger.message("\nBuilding " + shardName + " ...");
+                        taskLogger.message("Expected remaining shards: " + remainingShardedTargetsSpecs.get().size());
+                        return myBazelBspAspectsManager
+                            .fetchFilesFromOutputGroups(
+                                shardedTargetsSpec,
+                                aspects,
+                                outputGroups,
+                                projectView,
+                                taskId
+                            ).<@Nullable Void>thenApply(result -> {
+                                if (result.isFailure()) {
+                                    taskLogger.warn("Failed to build " + shardName);
+                                }
+                                else {
+                                    taskLogger.message("Finished building " + shardName);
+                                }
+                                if (result.status() == BazelStatus.OOM_ERROR) {
+                                    taskLogger.warn("Bazel ran out of memory during sync, attempting to halve the target shard size to recover");
+                                    try {
+                                        List<TargetCollection> halvedTargetsSpec = halve(shardedTargetsSpec);
+                                        suggestedTargetShardSize.set(halvedTargetsSpec.get(0).values().size());
+                                        taskLogger.message(
+                                            "Retrying with the target shard size of " + suggestedTargetShardSize.get()
+                                                + " (previously " + shardedTargetsSpec.values().size() + ") ..."
+                                        );
+                                        List<TargetCollection> halvedRemaining = new ArrayList<>();
+                                        for (TargetCollection it : remainingShardedTargetsSpecs.get()) {
+                                            halvedRemaining.addAll(halve(it));
+                                        }
+                                        remainingShardedTargetsSpecs.set(halvedRemaining);
+                                        remainingShardedTargetsSpecs.get().addAll(0, halvedTargetsSpec);
+                                    }
+                                    catch (IllegalTargetsSizeException e) {
+                                        taskLogger.error("Cannot split targets further: " + e.getMessage());
+                                        throw new CompletionException(e);
+                                    }
+                                }
+                                // As bazel starts the naming of the namedSetOfFiles freshly (starting from "0") on each run, we have to distinguish
+                                // them somehow; we do this by encoding the shard number in their names.
+                                BazelBspAspectsManagerResult runResult = result.renameNamedSets(shardNumber.get());
+                                shardedBuildResult.set(shardedBuildResult.get().merge(runResult));
+
+                                taskLogger.message("---");
+                                shardNumber.incrementAndGet();
+                                return null;
+                            });
+                    });
+                }).thenApply(ignored -> {
+                    if (suggestedTargetShardSize.get() != ProjectViewExtensions.getTargetShardSize(projectView)) {
+                        taskLogger.message(
+                            "Bazel ran out of memory during sync. To mitigate, consider setting shard size in your project view file: `target_shard_size: "
+                                + suggestedTargetShardSize.get() + "`"
+                        );
+                        taskLogger.message("---");
+                    }
+                    return shardedBuildResult.get();
+                });
+            });
         }
         else {
-          nonShardBuild()
+            res = nonShardBuild.get();
         }
 
-      return@coroutineScope res
+        return res;
     }
 
-  private suspend fun runBazelShutDown(projectView: ProjectView, taskId: TaskId) {
-    bazelRunner.run {
-      val command =
-        buildBazelCommand(projectView) {
-          shutDown()
+    // consulo: asynchronous form of the upstream `while (condition) { body }` whose body suspends
+    private static CompletableFuture<@Nullable Void> whileAsync(BooleanSupplier condition, Supplier<CompletableFuture<?>> body) {
+        if (!condition.getAsBoolean()) {
+            return CompletableFuture.completedFuture(null);
         }
-      runBazelCommand(command, taskId)
-        .waitAndGetResult()
+        return body.get().thenCompose(ignored -> whileAsync(condition, body));
     }
-  }
 
-  internal suspend fun extractAspectOutputPaths(buildAspectResult: BazelBspAspectsManagerResult): Set<Path> =
-    measured(
-      "Reading aspect output paths",
-    ) { buildAspectResult.bepOutput.filesByInfoOutputGroup() }
+    private CompletableFuture<?> runBazelShutDown(ProjectView projectView, TaskId taskId) {
+        BazelCommand command =
+            myBazelRunner.buildBazelCommand(projectView, builder ->
+                builder.shutDown()
+            );
+        return myBazelRunner.runBazelCommand(command, taskId)
+            .waitAndGetResult();
+    }
 
-  companion object {
-    private val logger = logger<ProjectResolver>()
-  }
+    public CompletableFuture<Set<Path>> extractAspectOutputPaths(BazelBspAspectsManagerResult buildAspectResult) {
+        return measured(
+            "Reading aspect output paths",
+            () -> CompletableFuture.completedFuture(buildAspectResult.bepOutput().filesByInfoOutputGroup())
+        );
+    }
+
+    private static final Logger LOG = Logger.getInstance(ProjectResolver.class);
+
+    // consulo: the failure of a CompletableFuture stage is wrapped into a CompletionException
+    private static Throwable unwrap(Throwable error) {
+        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+    }
 }

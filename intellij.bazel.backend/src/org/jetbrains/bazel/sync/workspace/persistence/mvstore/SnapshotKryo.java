@@ -1,123 +1,186 @@
-package org.jetbrains.bazel.sync.workspace.persistence.mvstore
+package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
-import com.esotericsoftware.kryo.kryo5.Kryo
-import com.esotericsoftware.kryo.kryo5.Registration
-import com.esotericsoftware.kryo.kryo5.objenesis.strategy.StdInstantiatorStrategy
-import com.esotericsoftware.kryo.kryo5.util.DefaultClassResolver
-import com.esotericsoftware.kryo.kryo5.util.DefaultInstantiatorStrategy
-import com.esotericsoftware.kryo.kryo5.util.MapReferenceResolver
-import com.esotericsoftware.kryo.kryo5.util.Pool
-import com.intellij.openapi.project.Project
-import it.unimi.dsi.fastutil.objects.Reference2IntMap
-import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeEntry
-import java.nio.file.Path
+import com.esotericsoftware.kryo.kryo5.Kryo;
+import com.esotericsoftware.kryo.kryo5.Registration;
+import com.esotericsoftware.kryo.kryo5.objenesis.strategy.StdInstantiatorStrategy;
+import com.esotericsoftware.kryo.kryo5.util.DefaultClassResolver;
+import com.esotericsoftware.kryo.kryo5.util.DefaultInstantiatorStrategy;
+import com.esotericsoftware.kryo.kryo5.util.MapReferenceResolver;
+import com.esotericsoftware.kryo.kryo5.util.Pool;
+import consulo.project.Project;
+import it.unimi.dsi.fastutil.objects.Reference2IntMap;
+import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor.WorkspaceTypeEntry;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.SnapshotManifest.SnapshotManifestEntry;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.SnapshotManifest.SnapshotTypeSchema;
+import org.jspecify.annotations.Nullable;
 
-internal const val KRYO_POOL_INSTANCES: Int = 8
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
-// covers container layout, manifest codec, Kryo configuration, builtin registrations and the
-// binary formats of all handwritten serializers - bump on any change to those
-internal const val SNAPSHOT_FORMAT_VERSION: Int = 8
+public class SnapshotKryo {
+    // consulo: upstream internal top-level constants
+    static final int KRYO_POOL_INSTANCES = 8;
 
-@ApiStatus.Internal
-class SnapshotKryo(val universe: SnapshotTypeUniverse) {
-  val manifest: SnapshotManifest
-    get() = universe.manifest
+    // covers container layout, manifest codec, Kryo configuration, builtin registrations and the
+    // binary formats of all handwritten serializers - bump on any change to those
+    static final int SNAPSHOT_FORMAT_VERSION = 8;
 
-  val pool: Pool<Kryo> = createPool(references = true)
-  val valuePool: Pool<Kryo> = createPool(references = false)
+    private final SnapshotTypeUniverse myUniverse;
 
-  private fun createPool(references: Boolean): Pool<Kryo> =
-    object : Pool<Kryo>(
-      /* threadSafe = */ true,
-      /* softReferences = */ false,
-      /* maximumCapacity = */ KRYO_POOL_INSTANCES,
+    private final Pool<Kryo> myPool;
+    private final Pool<Kryo> myValuePool;
+
+    public SnapshotKryo(SnapshotTypeUniverse universe) {
+        myUniverse = universe;
+        myPool = createPool(true);
+        myValuePool = createPool(false);
+    }
+
+    public SnapshotTypeUniverse getUniverse() {
+        return myUniverse;
+    }
+
+    public SnapshotManifest getManifest() {
+        return myUniverse.getManifest();
+    }
+
+    public Pool<Kryo> getPool() {
+        return myPool;
+    }
+
+    public Pool<Kryo> getValuePool() {
+        return myValuePool;
+    }
+
+    private Pool<Kryo> createPool(boolean references) {
+        return new Pool<>(
+            /* threadSafe = */ true,
+            /* softReferences = */ false,
+            /* maximumCapacity = */ KRYO_POOL_INSTANCES
+        ) {
+            @Override
+            protected Kryo create() {
+                return createKryo(references);
+            }
+        };
+    }
+
+    private Kryo createKryo(boolean references) {
+        Kryo kryo = new Kryo(
+            /* classResolver = */ new SnapshotClassResolver(),
+            /* referenceResolver = */ references ? new MapReferenceResolver() : null
+        );
+        kryo.setReferences(references);
+        kryo.setRegistrationRequired(true);
+        kryo.setInstantiatorStrategy(new DefaultInstantiatorStrategy(new StdInstantiatorStrategy()));
+
+        // register builtins
+        SnapshotSerializers.registerBuiltinTypes(kryo);
+
+        // register open type set
+        for (SnapshotTypeRegistration registration : myUniverse.getRegistrations()) {
+            int registrationId = registration.registrationId();
+            Class<?> type = registration.type();
+            VersionedKryoSerializer<?> serializer = registration.serializer();
+            if (serializer != null) {
+                kryo.register(type, serializer, registrationId);
+            }
+            else {
+                kryo.register(type, registrationId);
+            }
+        }
+        return kryo;
+    }
+
+    public record SnapshotTypeRegistration(
+        int registrationId,
+        Class<?> type,
+        @Nullable VersionedKryoSerializer<?> serializer
     ) {
-      override fun create(): Kryo = createKryo(references)
     }
 
-  private fun createKryo(references: Boolean): Kryo {
-    val kryo = Kryo(
-      /* classResolver = */ SnapshotClassResolver(),
-      /* referenceResolver = */ if (references) MapReferenceResolver() else null,
-    )
-    kryo.references = references
-    kryo.isRegistrationRequired = true
-    kryo.instantiatorStrategy = DefaultInstantiatorStrategy(StdInstantiatorStrategy())
+    public static class SnapshotTypeUniverse {
+        private final List<SnapshotTypeRegistration> myRegistrations;
+        private final SnapshotManifest myManifest;
+        private final Reference2IntMap<Class<?>> myType2Id;
 
-    // register builtins
-    SnapshotSerializers.registerBuiltinTypes(kryo)
+        public SnapshotTypeUniverse(
+            List<SnapshotTypeRegistration> registrations,
+            SnapshotManifest manifest
+        ) {
+            myRegistrations = registrations;
+            myManifest = manifest;
+            Map<Class<?>, Integer> type2Id = new LinkedHashMap<>();
+            for (SnapshotTypeRegistration it : registrations) {
+                type2Id.put(it.type(), it.registrationId());
+            }
+            myType2Id = new Reference2IntOpenHashMap<>(type2Id);
+        }
 
-    // register open type set
-    for ((registrationId, type, serializer) in universe.registrations) {
-      if (serializer != null) {
-        kryo.register(type, serializer, registrationId)
-      }
-      else {
-        kryo.register(type, registrationId)
-      }
+        public List<SnapshotTypeRegistration> getRegistrations() {
+            return myRegistrations;
+        }
+
+        public SnapshotManifest getManifest() {
+            return myManifest;
+        }
+
+        public Reference2IntMap<Class<?>> getType2Id() {
+            return myType2Id;
+        }
+
+        public static SnapshotTypeUniverse buildFromProject(Project project) {
+            List<WorkspaceTypeEntry> contributed = new ArrayList<>();
+            for (WorkspaceTypeContributor it : WorkspaceTypeContributor.getEpName().getExtensionList()) {
+                contributed.addAll(it.contribute(project));
+            }
+            return build(contributed);
+        }
+
+        public static SnapshotTypeUniverse build(List<WorkspaceTypeEntry> contributed) {
+            SnapshotManifest manifest = SnapshotTypeSchemas.buildManifest(contributed);
+            Map<String, Class<?>> typeByFqn = new LinkedHashMap<>();
+            for (WorkspaceTypeEntry it : contributed) {
+                typeByFqn.put(it.fqn(), it.type());
+            }
+            List<SnapshotTypeRegistration> registrations = new ArrayList<>(manifest.entries().size());
+            for (SnapshotManifestEntry entry : manifest.entries()) {
+                Class<?> type = Objects.requireNonNull(typeByFqn.get(entry.fqn()));
+                SnapshotTypeSchema schema = entry.schema();
+                registrations.add(new SnapshotTypeRegistration(
+                    entry.registrationId(),
+                    type,
+                    schema instanceof SnapshotTypeSchema.Singleton ? SnapshotSerializers.singletonSerializerFor(type) : null
+                ));
+            }
+            return new SnapshotTypeUniverse(registrations, manifest);
+        }
     }
-    return kryo
-  }
 }
 
-internal class SnapshotClassResolver : DefaultClassResolver() {
-  companion object {
+final class SnapshotClassResolver extends DefaultClassResolver {
     /**
      * Specify what types should be identified by their interface type ID,
      * it's necessary to avoid explicitly registering specific implementations of type like `Path`.
-     *
-     * **NOTE:** Each type here must register kryo default serializer.
+     * <p>
+     * <b>NOTE:</b> Each type here must register kryo default serializer.
      */
-    private val OPEN_TYPES = arrayOf(Path::class.java, Label::class.java)
-  }
+    private static final Class<?>[] OPEN_TYPES = new Class<?>[]{Path.class, Label.class};
 
-  override fun getRegistration(type: Class<*>): Registration? {
-    for (openType in OPEN_TYPES) {
-      if (openType.isAssignableFrom(type)) {
-        return super.getRegistration(openType)
-      }
+    @Override
+    public @Nullable Registration getRegistration(Class type) {
+        for (Class<?> openType : OPEN_TYPES) {
+            if (openType.isAssignableFrom(type)) {
+                return super.getRegistration(openType);
+            }
+        }
+        return super.getRegistration(type);
     }
-    return super.getRegistration(type)
-  }
-}
-
-@ApiStatus.Internal
-data class SnapshotTypeRegistration(
-  val registrationId: Int,
-  val type: Class<*>,
-  val serializer: VersionedKryoSerializer<*>?,
-)
-
-@ApiStatus.Internal
-class SnapshotTypeUniverse(
-  val registrations: List<SnapshotTypeRegistration>,
-  val manifest: SnapshotManifest,
-) {
-  val type2Id: Reference2IntMap<Class<*>> = Reference2IntOpenHashMap(registrations.associate { it.type to it.registrationId })
-
-  companion object {
-    fun buildFromProject(project: Project): SnapshotTypeUniverse =
-      build(WorkspaceTypeContributor.EP_NAME.extensionList.flatMap { it.contribute(project) })
-
-    fun build(contributed: List<WorkspaceTypeEntry>): SnapshotTypeUniverse {
-      val manifest = SnapshotTypeSchemas.buildManifest(contributed)
-      val typeByFqn = contributed.associateBy({ it.fqn }, { it.type })
-      val registrations = manifest.entries.map { (registrationId, fqn, schema) ->
-        val type = typeByFqn.getValue(fqn)
-        SnapshotTypeRegistration(
-          registrationId = registrationId,
-          type = type,
-          serializer = when (schema) {
-            SnapshotTypeSchema.Singleton -> SnapshotSerializers.singletonSerializerFor(type)
-            is SnapshotTypeSchema.Enum, is SnapshotTypeSchema.Fields -> null
-          },
-        )
-      }
-      return SnapshotTypeUniverse(registrations, manifest)
-    }
-  }
 }

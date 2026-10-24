@@ -1,121 +1,194 @@
-package org.jetbrains.bazel.workspace.indexing
+package org.jetbrains.bazel.workspace.indexing;
 
-import com.intellij.openapi.extensions.forEachExtensionSafeInline
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileVisitor
-import com.intellij.openapi.vfs.toNioPathOrNull
-import com.intellij.platform.backend.workspace.storeAndGet
-import com.intellij.platform.workspace.storage.impl.url.toVirtualFileUrl
-import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.languages.projectview.projectViewPath
-import org.jetbrains.bazel.workspace.ProjectViewGlobSet
+import consulo.application.Application;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import consulo.virtualFileSystem.util.VirtualFileVisitor;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.projectview.ProjectViewService;
+import org.jetbrains.bazel.workspace.ProjectViewGlobSet;
+import org.jetbrains.bazel.workspace.indexing.IndexableContent.MutableIndexableContent;
+import org.jspecify.annotations.Nullable;
 
-private val BAZEL_FILES_PATTERNS = with(Constants) {
-  WORKSPACE_FILE_NAMES + BUILD_FILE_NAMES + MODULE_BAZEL_FILE_NAME + SUPPORTED_EXTENSIONS.map { extension -> "*.$extension" }
-}
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
- * Selects the files that should be indexed but are not under [contentRoots] already.
+ * Selects the files that should be indexed but are not under {@code contentRoots} already.
  * Files to index:
- * 1. All files matched by `index` patterns and the [BAZEL_FILES_PATTERNS] patterns in [includedRoots], where the inner-most root wins.
+ * 1. All files matched by `index` patterns and the {@code BAZEL_FILES_PATTERNS} patterns in {@code includedRoots}, where the
+ * inner-most root wins.
  * 2. The workspace files directly in the project root directory
  * 3. The selected project view file
- * 4. The files from [IndexableContentContributor].
+ * 4. The files from {@link IndexableContentContributor}.
  */
-@ApiStatus.Internal
-class IndexableContentCollector(
-  private val project: Project,
-  indexPatterns: List<String>,
-  private val includedRoots: Set<VirtualFile>,
-  private val excludedRoots: Set<VirtualFile>,
-  private val contentRoots: Set<VirtualFile>,
-) {
+public class IndexableContentCollector {
+    private static final List<String> BAZEL_FILES_PATTERNS;
 
-  private val projectRoot = project.rootDir
-  private val workspaceFileNames = Constants.WORKSPACE_FILE_NAMES
-  private val projectViewPath = project.projectViewPath()
-  private val indexingGlob = ProjectViewGlobSet.of(projectRoot.toNioPath(), indexPatterns + BAZEL_FILES_PATTERNS)
+    static {
+        List<String> patterns = new ArrayList<>();
+        patterns.addAll(Arrays.asList(Constants.WORKSPACE_FILE_NAMES));
+        patterns.addAll(Arrays.asList(Constants.BUILD_FILE_NAMES));
+        patterns.add(Constants.MODULE_BAZEL_FILE_NAME);
+        for (String extension : Constants.SUPPORTED_EXTENSIONS) {
+            patterns.add("*." + extension);
+        }
+        BAZEL_FILES_PATTERNS = List.copyOf(patterns);
+    }
 
-  fun collect(urlManager: VirtualFileUrlManager): IndexableContent = buildIndexableContent {
-    addIncludedIndexableContent(urlManager)
-    addAlwaysIndexableContent(urlManager)
-  }
+    private final Project myProject;
+    private final Set<VirtualFile> myIncludedRoots;
+    private final Set<VirtualFile> myExcludedRoots;
+    private final Set<VirtualFile> myContentRoots;
 
-  /**
-   * Returns true if a given file should be indexed.
-   */
-  fun shouldBeIndexed(file: VirtualFile): Boolean =
-    file.isValid &&
-    !file.isDirectory &&
-    (file.isRootWorkspaceFile() || file.isProjectViewFile() || file.isMatchUnderIncludedRoots())
+    private final VirtualFile myProjectRoot;
+    private final List<String> myWorkspaceFileNames = Arrays.asList(Constants.WORKSPACE_FILE_NAMES);
+    private final @Nullable Path myProjectViewPath;
+    private final ProjectViewGlobSet myIndexingGlob;
 
-  private fun MutableIndexableContent.addIncludedIndexableContent(urlManager: VirtualFileUrlManager) {
-    val visited = mutableSetOf<VirtualFile>()
-    for (includedRoot in includedRoots) {
-      if (!includedRoot.isUnderIndexableIncludedRoot()) continue
-      VfsUtilCore.visitChildrenRecursively(
-        includedRoot,
-        object : VirtualFileVisitor<Unit>() {
-          override fun visitFileEx(file: VirtualFile): Result = when {
-            file in excludedRoots || file in contentRoots || !visited.add(file) -> SKIP_CHILDREN
-            file.isDirectory && file.impliesRecursiveMatch() -> {
-              recursiveRoots.add(urlManager.storeAndGet(file))
-              SKIP_CHILDREN
+    public IndexableContentCollector(
+        Project project,
+        List<String> indexPatterns,
+        Set<VirtualFile> includedRoots,
+        Set<VirtualFile> excludedRoots,
+        Set<VirtualFile> contentRoots
+    ) {
+        myProject = project;
+        myIncludedRoots = includedRoots;
+        myExcludedRoots = excludedRoots;
+        myContentRoots = contentRoots;
+        myProjectRoot = org.jetbrains.bazel.config.project.getRootDir(project);
+        myProjectViewPath = ProjectViewService.projectViewPath(project);
+        List<String> patterns = new ArrayList<>(indexPatterns);
+        patterns.addAll(BAZEL_FILES_PATTERNS);
+        myIndexingGlob = ProjectViewGlobSet.of(myProjectRoot.toNioPath(), patterns);
+    }
+
+    // consulo: no VirtualFileUrlManager, roots are VFS urls
+    public IndexableContent collect() {
+        return IndexableContent.buildIndexableContent(content -> {
+            addIncludedIndexableContent(content);
+            addAlwaysIndexableContent(content);
+        });
+    }
+
+    /**
+     * Returns true if a given file should be indexed.
+     */
+    public boolean shouldBeIndexed(VirtualFile file) {
+        return file.isValid() &&
+            !file.isDirectory() &&
+            (isRootWorkspaceFile(file) || isProjectViewFile(file) || isMatchUnderIncludedRoots(file));
+    }
+
+    private void addIncludedIndexableContent(MutableIndexableContent content) {
+        Set<VirtualFile> visited = new HashSet<>();
+        for (VirtualFile includedRoot : myIncludedRoots) {
+            if (!isUnderIndexableIncludedRoot(includedRoot)) {
+                continue;
             }
-            !file.isDirectory && file.matchesIndexingGlob() -> {
-              nonRecursiveRoots.add(urlManager.storeAndGet(file))
-              CONTINUE
+            VirtualFileUtil.visitChildrenRecursively(
+                includedRoot,
+                new VirtualFileVisitor<Void>() {
+                    @Override
+                    public Result visitFileEx(VirtualFile file) {
+                        if (myExcludedRoots.contains(file) || myContentRoots.contains(file) || !visited.add(file)) {
+                            return SKIP_CHILDREN;
+                        }
+                        else if (file.isDirectory() && impliesRecursiveMatch(file)) {
+                            content.getRecursiveRoots().add(file.getUrl());
+                            return SKIP_CHILDREN;
+                        }
+                        else if (!file.isDirectory() && matchesIndexingGlob(file)) {
+                            content.getNonRecursiveRoots().add(file.getUrl());
+                            return CONTINUE;
+                        }
+                        else {
+                            return CONTINUE;
+                        }
+                    }
+                }
+            );
+        }
+    }
+
+    private void addAlwaysIndexableContent(MutableIndexableContent content) {
+        for (String workspaceFileName : myWorkspaceFileNames) {
+            VirtualFile file = myProjectRoot.findChild(workspaceFileName);
+            if (file != null) {
+                content.getNonRecursiveRoots().add(file.getUrl());
             }
-            else -> CONTINUE
-          }
-        },
-      )
+        }
+        if (myProjectViewPath != null) {
+            content.getNonRecursiveRoots().add(VirtualFileUtil.pathToUrl(myProjectViewPath.toString()));
+        }
+        Application.get().getExtensionPoint(IndexableContentContributor.class).forEachExtensionSafe(contributor ->
+            content.addAll(contributor.getIndexableContent(myProject))
+        );
     }
-  }
 
-  private fun MutableIndexableContent.addAlwaysIndexableContent(urlManager: VirtualFileUrlManager) {
-    workspaceFileNames
-      .mapNotNull(projectRoot::findChild)
-      .mapTo(nonRecursiveRoots, urlManager::storeAndGet)
-    projectViewPath
-      ?.toVirtualFileUrl(urlManager)
-      ?.let(nonRecursiveRoots::add)
-    IndexableContentContributor.ep.forEachExtensionSafeInline { contributor ->
-      this += contributor.getIndexableContent(project)
+    private boolean isRootWorkspaceFile(VirtualFile file) {
+        return Objects.equals(file.getParent(), myProjectRoot) && myWorkspaceFileNames.contains(file.getName());
     }
-  }
 
-  private fun VirtualFile.isRootWorkspaceFile() = parent == projectRoot && name in workspaceFileNames
-
-  private fun VirtualFile.isProjectViewFile() = projectViewPath != null && toNioPathOrNull() == projectViewPath
-
-  private fun VirtualFile.isMatchUnderIncludedRoots() = isUnderIndexableIncludedRoot() && matchesIndexingGlob()
-
-  /**
-   * Returns true if the inner-most root above the file is an included root, and no content root contains that included root.
-   * An excluded root above the included root does not change the result.
-   * The file itself counts as a root, so this also selects the included roots that [addIncludedIndexableContent] walks.
-   */
-  private fun VirtualFile.isUnderIndexableIncludedRoot(): Boolean {
-    var isUnderIncludedRoot = false
-    var current: VirtualFile? = this
-    while (current != null) {
-      when (current) {
-        in contentRoots -> return false
-        in excludedRoots -> return isUnderIncludedRoot
-        in includedRoots -> isUnderIncludedRoot = true
-      }
-      current = current.parent
+    private boolean isProjectViewFile(VirtualFile file) {
+        if (myProjectViewPath == null) {
+            return false;
+        }
+        Path path = toNioPathOrNull(file);
+        return myProjectViewPath.equals(path);
     }
-    return isUnderIncludedRoot
-  }
 
-  private fun VirtualFile.matchesIndexingGlob() = toNioPathOrNull()?.let(indexingGlob::matches) == true
+    private boolean isMatchUnderIncludedRoots(VirtualFile file) {
+        return isUnderIndexableIncludedRoot(file) && matchesIndexingGlob(file);
+    }
 
-  private fun VirtualFile.impliesRecursiveMatch() = toNioPathOrNull()?.let(indexingGlob::impliesRecursiveMatch) == true
+    /**
+     * Returns true if the inner-most root above the file is an included root, and no content root contains that included root.
+     * An excluded root above the included root does not change the result.
+     * The file itself counts as a root, so this also selects the included roots that {@link #addIncludedIndexableContent} walks.
+     */
+    private boolean isUnderIndexableIncludedRoot(VirtualFile file) {
+        boolean isUnderIncludedRoot = false;
+        VirtualFile current = file;
+        while (current != null) {
+            if (myContentRoots.contains(current)) {
+                return false;
+            }
+            else if (myExcludedRoots.contains(current)) {
+                return isUnderIncludedRoot;
+            }
+            else if (myIncludedRoots.contains(current)) {
+                isUnderIncludedRoot = true;
+            }
+            current = current.getParent();
+        }
+        return isUnderIncludedRoot;
+    }
+
+    private boolean matchesIndexingGlob(VirtualFile file) {
+        Path path = toNioPathOrNull(file);
+        return path != null && myIndexingGlob.matches(path);
+    }
+
+    private boolean impliesRecursiveMatch(VirtualFile file) {
+        Path path = toNioPathOrNull(file);
+        return path != null && myIndexingGlob.impliesRecursiveMatch(path);
+    }
+
+    // consulo: Kotlin VirtualFile.toNioPathOrNull()
+    private static @Nullable Path toNioPathOrNull(VirtualFile file) {
+        try {
+            return file.toNioPath();
+        }
+        catch (UnsupportedOperationException e) {
+            return null;
+        }
+    }
 }

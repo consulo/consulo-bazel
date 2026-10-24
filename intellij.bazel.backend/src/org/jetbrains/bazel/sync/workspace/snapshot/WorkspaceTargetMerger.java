@@ -1,106 +1,245 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import com.intellij.openapi.diagnostic.logger
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bazel.label.DependencyLabel
-import org.jetbrains.bsp.protocol.BuildTargetData
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bsp.protocol.isManual
-import kotlin.reflect.KClass
+import consulo.logging.Logger;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.label.DependencyLabel;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jspecify.annotations.Nullable;
 
-typealias MergeFunctionMap = Map<KClass<out BuildTargetData>, MergeFunction<*>>
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Stream;
 
-@ApiStatus.Internal
-fun interface MergeFunction<T : BuildTargetData> {
-  operator fun invoke(left: T, right: T): T
-}
-
-@ApiStatus.Internal
-class WorkspaceTargetMerger(val mergeFunctions: MergeFunctionMap) {
-  companion object {
-    private val log = logger<WorkspaceTargetMerger>()
-  }
-
-  fun mergeByTargetKey(targets: Collection<BuildTarget>): List<BuildTarget> =
-    targets.groupBy { it.key.copy(aspectIds = WorkspaceAspectIds.EMPTY) }
-      .map { (key, group) ->
-        if (group.size == 1) {
-          val target = group.single()
-          object : BuildTarget by target {
-            override val key: WorkspaceTargetKey = key
-          }
-        }
-        else {
-          // keep it deterministic
-          group.sortedBy { it.key.toString() }
-            .reduce { l, r -> merge(key, l, r) }
-        }
-      }
-
-  private fun merge(key: WorkspaceTargetKey, left: BuildTarget, right: BuildTarget): BuildTarget {
-    if (!left.isCompatibleWith(right)) {
-      log.warn("Trying to merge incompatible ${BuildTarget::class}, ${key}, workspace model could be incorrect.")
+// consulo: upstream `typealias MergeFunctionMap = Map<KClass<out BuildTargetData>, MergeFunction<*>>`,
+// it is spelled out as Map<Class<? extends BuildTargetData>, MergeFunction<?>>
+public class WorkspaceTargetMerger {
+    @FunctionalInterface
+    public interface MergeFunction<T extends BuildTargetData> {
+        T invoke(T left, T right);
     }
 
-    return object : BuildTarget by left {
-      override val key: WorkspaceTargetKey = key
+    private static final Logger LOG = Logger.getInstance(WorkspaceTargetMerger.class);
 
-      override val kind: TargetKind = left.kind.copy(languageClasses = left.kind.languageClasses + right.kind.languageClasses)
+    private final Map<Class<? extends BuildTargetData>, MergeFunction<?>> myMergeFunctions;
 
-      override val dependencies: List<DependencyLabel> = (left.dependencies + right.dependencies)
-        .distinctBy { it.copy(targetKey = it.targetKey.copy(aspectIds = WorkspaceAspectIds.EMPTY)) }
-
-      override val sources: OutputLocationCollection = mergeLocationCollections(left.sources, right.sources)
-      override val resources: OutputLocationCollection = mergeLocationCollections(left.resources, right.resources)
-
-      override val data: List<BuildTargetData> = mergeBuildData(left.data.asSequence() + right.data.asSequence())
+    public WorkspaceTargetMerger(Map<Class<? extends BuildTargetData>, MergeFunction<?>> mergeFunctions) {
+        myMergeFunctions = mergeFunctions;
     }
-  }
 
-  private fun BuildTarget.isCompatibleWith(other: BuildTarget): Boolean =
-    kind.kind == other.kind.kind
-    && kind.ruleType == other.kind.ruleType
-    && generatorName == other.generatorName
-    && isManual == other.isManual
-    && isTestOnly == other.isTestOnly
+    public Map<Class<? extends BuildTargetData>, MergeFunction<?>> getMergeFunctions() {
+        return myMergeFunctions;
+    }
 
-  private fun mergeBuildData(input: Sequence<BuildTargetData>): List<BuildTargetData> {
-    // we have to merge them, `BuildTargetData` doesn't correspond to specific provider
-    // BuildTargetData` can overlap relative to source provider
-    return input.groupBy { it::class }
-      .map { (type, data) ->
-        when {
-          data.size == 1 -> data.single()
-          else -> {
-            @Suppress("UNCHECKED_CAST")
-            val fn = mergeFunctions[type] as? MergeFunction<BuildTargetData>?
-            if (fn == null) {
-              // only warn when candidates are indeed different
-              val allEqual = data.all { it == data.first() }
-              if (!allEqual) {
-                log.warn("Trying to merge unsupported ${BuildTargetData::class}, ${type}, workspace model could be incorrect.")
-              }
-              data.first()
+    public List<BuildTarget> mergeByTargetKey(Collection<BuildTarget> targets) {
+        Map<WorkspaceTargetKey, List<BuildTarget>> groups = new LinkedHashMap<>();
+        for (BuildTarget it : targets) {
+            WorkspaceTargetKey groupKey = new WorkspaceTargetKey(it.getKey().label(), it.getKey().configuration(), WorkspaceAspectIds.EMPTY);
+            groups.computeIfAbsent(groupKey, ignored -> new ArrayList<>()).add(it);
+        }
+        List<BuildTarget> result = new ArrayList<>(groups.size());
+        for (Map.Entry<WorkspaceTargetKey, List<BuildTarget>> entry : groups.entrySet()) {
+            WorkspaceTargetKey key = entry.getKey();
+            List<BuildTarget> group = entry.getValue();
+            if (group.size() == 1) {
+                BuildTarget target = group.get(0);
+                result.add(new DelegatingBuildTarget(target, key));
             }
             else {
-              data.reduce { l, r -> fn(l, r) }
+                // keep it deterministic
+                result.add(group.stream()
+                    .sorted(Comparator.comparing(it -> it.getKey().toString()))
+                    .reduce((l, r) -> merge(key, l, r))
+                    .orElseThrow());
             }
-          }
         }
-      }
-  }
-}
+        return result;
+    }
 
-@ApiStatus.Internal
-fun mergeLocationCollections(left: OutputLocationCollection, right: OutputLocationCollection): OutputLocationCollection {
-  if (left == right) {
-    return left
-  }
-  return object : OutputLocationCollection {
-    override fun isEmpty(): Boolean = left.isEmpty() && right.isEmpty()
-    override fun getOutputLocations(): Sequence<OutputLocation> = (left.getOutputLocations() + right.getOutputLocations()).distinct()
-  }
+    private BuildTarget merge(WorkspaceTargetKey key, BuildTarget left, BuildTarget right) {
+        if (!isCompatibleWith(left, right)) {
+            LOG.warn("Trying to merge incompatible " + BuildTarget.class + ", " + key + ", workspace model could be incorrect.");
+        }
+
+        Set<LanguageClass> languageClasses = new LinkedHashSet<>(left.getKind().languageClasses());
+        languageClasses.addAll(right.getKind().languageClasses());
+        TargetKind kind = new TargetKind(left.getKind().kind(), languageClasses, left.getKind().ruleType());
+
+        List<DependencyLabel> allDependencies = new ArrayList<>(left.getDependencies());
+        allDependencies.addAll(right.getDependencies());
+        Map<DependencyLabel, DependencyLabel> distinctDependencies = new LinkedHashMap<>();
+        for (DependencyLabel it : allDependencies) {
+            WorkspaceTargetKey targetKey = it.targetKey();
+            distinctDependencies.putIfAbsent(
+                new DependencyLabel(new WorkspaceTargetKey(targetKey.label(), targetKey.configuration(), WorkspaceAspectIds.EMPTY), it.kind()),
+                it
+            );
+        }
+        List<DependencyLabel> dependencies = new ArrayList<>(distinctDependencies.values());
+
+        OutputLocationCollection sources = mergeLocationCollections(left.getSources(), right.getSources());
+        OutputLocationCollection resources = mergeLocationCollections(left.getResources(), right.getResources());
+
+        List<BuildTargetData> data = mergeBuildData(Stream.concat(left.getData().stream(), right.getData().stream()));
+
+        return new DelegatingBuildTarget(left, key) {
+            @Override
+            public TargetKind getKind() {
+                return kind;
+            }
+
+            @Override
+            public List<DependencyLabel> getDependencies() {
+                return dependencies;
+            }
+
+            @Override
+            public OutputLocationCollection getSources() {
+                return sources;
+            }
+
+            @Override
+            public OutputLocationCollection getResources() {
+                return resources;
+            }
+
+            @Override
+            public List<BuildTargetData> getData() {
+                return data;
+            }
+        };
+    }
+
+    private static boolean isCompatibleWith(BuildTarget receiver, BuildTarget other) {
+        return receiver.getKind().kind().equals(other.getKind().kind())
+            && receiver.getKind().ruleType() == other.getKind().ruleType()
+            && Objects.equals(receiver.getGeneratorName(), other.getGeneratorName())
+            && BuildTarget.isManual(receiver) == BuildTarget.isManual(other)
+            && receiver.isTestOnly() == other.isTestOnly();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<BuildTargetData> mergeBuildData(Stream<BuildTargetData> input) {
+        // we have to merge them, `BuildTargetData` doesn't correspond to specific provider
+        // BuildTargetData` can overlap relative to source provider
+        Map<Class<?>, List<BuildTargetData>> groups = new LinkedHashMap<>();
+        input.forEach(it -> groups.computeIfAbsent(it.getClass(), ignored -> new ArrayList<>()).add(it));
+        List<BuildTargetData> result = new ArrayList<>(groups.size());
+        for (Map.Entry<Class<?>, List<BuildTargetData>> entry : groups.entrySet()) {
+            Class<?> type = entry.getKey();
+            List<BuildTargetData> data = entry.getValue();
+            if (data.size() == 1) {
+                result.add(data.get(0));
+            }
+            else {
+                MergeFunction<BuildTargetData> fn = (MergeFunction<BuildTargetData>) myMergeFunctions.get(type);
+                if (fn == null) {
+                    // only warn when candidates are indeed different
+                    boolean allEqual = data.stream().allMatch(it -> it.equals(data.get(0)));
+                    if (!allEqual) {
+                        LOG.warn("Trying to merge unsupported " + BuildTargetData.class + ", " + type + ", workspace model could be incorrect.");
+                    }
+                    result.add(data.get(0));
+                }
+                else {
+                    result.add(data.stream().reduce(fn::invoke).orElseThrow());
+                }
+            }
+        }
+        return result;
+    }
+
+    public static OutputLocationCollection mergeLocationCollections(OutputLocationCollection left, OutputLocationCollection right) {
+        if (left.equals(right)) {
+            return left;
+        }
+        return new OutputLocationCollection() {
+            @Override
+            public boolean isEmpty() {
+                return left.isEmpty() && right.isEmpty();
+            }
+
+            @Override
+            public Stream<OutputLocation> getOutputLocations() {
+                return Stream.concat(left.getOutputLocations(), right.getOutputLocations()).distinct();
+            }
+        };
+    }
+
+    // consulo: Kotlin interface delegation `object : BuildTarget by target { override val key = key }`
+    private static class DelegatingBuildTarget implements BuildTarget {
+        private final BuildTarget myDelegate;
+        private final WorkspaceTargetKey myKey;
+
+        private DelegatingBuildTarget(BuildTarget delegate, WorkspaceTargetKey key) {
+            myDelegate = delegate;
+            myKey = key;
+        }
+
+        @Override
+        public WorkspaceTargetKey getKey() {
+            return myKey;
+        }
+
+        @Override
+        public TargetKind getKind() {
+            return myDelegate.getKind();
+        }
+
+        @Override
+        public TargetLoadOptions getLoaded() {
+            return myDelegate.getLoaded();
+        }
+
+        @Override
+        public @Nullable String getGeneratorName() {
+            return myDelegate.getGeneratorName();
+        }
+
+        @Override
+        public boolean isTestOnly() {
+            return myDelegate.isTestOnly();
+        }
+
+        @Override
+        public List<String> getTags() {
+            return myDelegate.getTags();
+        }
+
+        @Override
+        public String getWorkspaceName() {
+            return myDelegate.getWorkspaceName();
+        }
+
+        @Override
+        public List<DependencyLabel> getDependencies() {
+            return myDelegate.getDependencies();
+        }
+
+        @Override
+        public OutputLocationCollection getSources() {
+            return myDelegate.getSources();
+        }
+
+        @Override
+        public OutputLocationCollection getResources() {
+            return myDelegate.getResources();
+        }
+
+        @Override
+        public List<BuildTargetData> getData() {
+            return myDelegate.getData();
+        }
+    }
 }

@@ -1,30 +1,49 @@
-package org.jetbrains.bazel.bazelrunner
+package org.jetbrains.bazel.bazelrunner;
 
-import com.intellij.openapi.application.PathManager
-import com.intellij.util.io.outputStream
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import java.io.PrintWriter
-import java.nio.file.Path
-import java.time.Instant
+import consulo.container.boot.ContainerPathManager;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
 
-@ApiStatus.Internal
-object BazelLog {
-  val logPath: Path
-    get() = PathManager.getLogDir().resolve("bazel-logs").resolve("bazel.log")
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.util.function.Consumer;
 
-  fun write(body: PrintWriter.() -> Unit) {
-    if (!BazelFeatureFlags.isLogEnabled) return
-
-    logPath.outputStream(append = true).use { out ->
-      PrintWriter(out).use { writer ->
-        try {
-          writer.appendLine("\n${Instant.now()}")
-          body(writer)
-        } catch (ex: Throwable) {
-          ex.printStackTrace(writer)
-        }
-      }
+public final class BazelLog {
+    private BazelLog() {
     }
-  }
+
+    public static Path getLogPath() {
+        return ContainerPathManager.get().getLogPath().toPath().resolve("bazel-logs").resolve("bazel.log");
+    }
+
+    public static void write(Consumer<PrintWriter> body) {
+        if (!BazelFeatureFlags.isLogEnabled()) {
+            return;
+        }
+
+        Path logPath = getLogPath();
+        // consulo: IntelliJ Path.outputStream(append = true) also creates the parent directories
+        try {
+            Files.createDirectories(logPath.getParent());
+            try (OutputStream out = Files.newOutputStream(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+                try (PrintWriter writer = new PrintWriter(out)) {
+                    try {
+                        writer.append("\n").append(Instant.now().toString()).append('\n');
+                        body.accept(writer);
+                    }
+                    catch (Throwable ex) {
+                        ex.printStackTrace(writer);
+                    }
+                }
+            }
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 }

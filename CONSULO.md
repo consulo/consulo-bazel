@@ -126,11 +126,45 @@ The build may be broken between the two commits; that is fine.
   and `bspScope` do not exist, and code using them drops those lines.
 - **EEL is not ported.** Environment and process access go through Consulo APIs instead of
   `com.intellij.platform.eel`.
+- **Usage statistics (FUS) are not ported**, like telemetry: the `fus/*` collectors are deleted and calls to them
+  are dropped with `// consulo: usage statistics are not ported`.
+- IntelliJ-only sync infrastructure without a Consulo counterpart is dropped with a `// consulo:` comment:
+  trusted projects (every project is synced), `IncompleteDependenciesService` (phased sync runs without the incomplete
+  state), `SaveAndSyncHandler.scheduleProjectSave`. `withBackgroundProgress` -> `Task.Backgroundable.queue`,
+  `suspendScanningAndIndexingThenExecute` -> `DumbService.suspendIndexingAndRun`,
+  `withDisabledAutoSave` -> `SaveAndSyncHandler.block/unblockSaveOnFrameDeactivation`.
+- Kotlin file-level declarations live in a class named after the file, which may be lowercase (`project`, `util`,
+  `configuration`, `extensions`). A local variable with the same name hides the class: write the class fully
+  qualified there (e.g. `org.jetbrains.bazel.config.project.getRootDir(project)`).
 - **OS, environment and system info always go through `consulo.platform.Platform`**
   (`Platform.current().os().isWindows()`, `.environmentVariables()`, `Platform.current().user()`, ...), never
   `SystemInfo`, `SystemInfoRt`, `OS.CURRENT` or `System.getenv()`.
 - Hard-coded user-visible strings that upstream never put in a bundle are still moved to the YAML file
   (no `LocalizeValue.localizeTODO` in committed code).
+
+### Project model: classic API instead of the IntelliJ workspace model
+
+Upstream builds the project structure with the IntelliJ workspace model (entities, `MutableEntityStorage`,
+`WorkspaceFileIndexContributor`). Consulo has no workspace model, so this part is **rewritten on the classic API**
+(decision of the project owner). Code that touches it diverges from upstream on purpose; port upstream changes to it
+by hand.
+
+- `MutableEntityStorage` (the sync "diff") -> Consulo-only `consulo.bazel.workspace.BazelModelBuilder`: wraps
+  `ModifiableModuleModel`, the module `ModifiableRootModel`s and the project `LibraryTable.ModifiableModel`.
+  Modules/libraries created through it are owned by Bazel; `commit()` applies everything with
+  `ModifiableModelCommitter.multiCommit` and removes the Bazel-owned modules/libraries of the previous sync that were not
+  created again (upstream: `replaceBySource(BazelEntitySource)`). `dispose()` discards a failed/cancelled sync.
+- Ownership is persisted by `consulo.bazel.workspace.BazelProjectModelService` (workspace file).
+- Upstream custom entities (`workspacemodel/entities`, `CcToolchainCompilerInfoEntity`, ...) become plain records with
+  the upstream names. Their data is attached with `BazelModelBuilder.putProjectData/putModuleData/putLibraryData` and
+  read through `BazelProjectModelService` (accessors like `extensions.getBazelModuleExtension(module)`). This data is
+  kept in memory, rebuilt by every sync. TODO: persist or rebuild it from the persisted workspace snapshot on startup.
+- `VirtualFileUrl` -> VFS url `String`; `VirtualFileUrlManager` is dropped.
+- `WorkspaceFileIndexContributor` -> `IndexableSetContributor` (indexable roots) + `DirectoryIndexExcludePolicy`
+  (excluded roots). Upstream's "content but not indexable" project root (`CONTENT_NON_INDEXABLE`) has no classic
+  equivalent (TODO).
+- The generated workspace entity code (`intellij.bazel.backend/gen`) is deleted.
+- `BazelWorkspaceImporter.import` is `doImport` (`import` is a Java keyword).
 
 ### Files we never port
 
@@ -203,12 +237,12 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 
 | Upstream module | Consulo plugin / module | Status |
 |---|---|---|
-| `protobuf` (generated) | `consulo.bazel.protobuf` | builds (BES v1 gRPC package excluded) |
+| `protobuf` (generated) | `consulo.bazel.protobuf` | builds (incl. the BES v1 gRPC API) |
 | aspect SDK protos (JetBrains/intellij-aspect) | `consulo.bazel.aspect.sdk` (`consulo-aspect-sdk/`) | builds |
 | `intellij.bazel.languages` (Starlark, `.bazelrc`, query, `.bazelversion`) | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.commons` | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | converted, builds |
-| `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | not started |
+| `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | converted, builds (project model on the classic API) |
 | `intellij.bazel.core` | `consulo.bazel.base` | not started |
 | `java/*`, `kotlin/*` | `bazel` module in consulo-java / consulo-kotlin | not started |
 | `golang/*` | `bazel` module in consulo-google-go | not started |
@@ -239,6 +273,8 @@ classes under other names, the Java file is renamed. Upstream diffs of the left 
 | `intellij.bazel.projectview/.../bazelrc/flags/BazelFlag.kt` | `Flag.java` |
 | `intellij.bazel.projectview/.../projectview/imports/Import.kt` | `ImportFactory.java` |
 | `intellij.bazel.commons/.../commons/LanguageClass.kt` (the `LanguageClassService` part) | `LanguageClass.java` + `LanguageClassService.java` |
+| `intellij.bazel.commons/.../sync/workspace/snapshot/WorkspaceSnapshot.kt` | `WorkspaceTargetKey.java`, `WorkspaceAspectIds.java`, `WorkspaceConfigurationId.java`, `WorkspaceConfiguration.java`, `WorkspaceConfigurationSummary.java`, `WorkspaceConfigurationFragment.java` |
+| `intellij.bazel.backend/.../sync/workspace/snapshot/InMemoryFileToTargetMap.kt` (the `FileToTargetMap` interface) | `InMemoryFileToTargetMap.java` + `FileToTargetMap.java` |
 
 `KnownFlags.kt` is generated upstream and was converted mechanically: re-run the conversion when it changes
 (fields named after Java keywords - `long`, `null`, `short` - get a trailing underscore).

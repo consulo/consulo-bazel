@@ -1,38 +1,42 @@
-package org.jetbrains.bazel.target
+package org.jetbrains.bazel.target;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.getLocalRepositories
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.id
-import java.nio.file.Path
-import kotlin.collections.contains
+import consulo.project.Project;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jspecify.annotations.Nullable;
 
-@get:ApiStatus.Internal
-val BuildTarget.baseDirectoryLocation: OutputLocation
-  get() {
-    val label = id
-    val packagePath = label.packagePath.toString()
-    return if (label is ResolvedLabel && !label.isMainWorkspace) {
-      OutputLocation.External(repoName = label.repoName, relativePath = packagePath)
+import java.nio.file.Path;
+
+// consulo: upstream Kotlin top-level extension declarations; the class keeps the upstream file name
+public final class BuildTargetUtils {
+    private BuildTargetUtils() {
     }
-    else {
-      OutputLocation.Workspace(packagePath)
+
+    public static OutputLocation getBaseDirectoryLocation(BuildTarget receiver) {
+        Label label = BuildTarget.getId(receiver);
+        String packagePath = label.packagePath().toString();
+        if (label instanceof ResolvedLabel resolvedLabel && !label.isMainWorkspace()) {
+            return new OutputLocation.External(resolvedLabel.getRepoName(), packagePath);
+        }
+        else {
+            return new OutputLocation.Workspace(packagePath);
+        }
     }
-  }
 
-@ApiStatus.Internal
-fun BuildTarget.baseDirectory(project: Project): Path? =
-  project.targetStorage.resolveExecrootOutputLocation(baseDirectoryLocation)
+    public static @Nullable Path baseDirectory(BuildTarget receiver, Project project) {
+        return TargetStorage.getTargetStorage(project).resolveExecrootOutputLocation(getBaseDirectoryLocation(receiver));
+    }
 
-@ApiStatus.Internal
-fun BuildTarget.isWorkspace(repoMapping: RepoMapping): Boolean =
-  if (id !is ResolvedLabel || id.isMainWorkspace) {
-    true
-  }
-  else {
-    (id as ResolvedLabel).repoName in repoMapping.getLocalRepositories().localRepositories
-  }
+    public static boolean isWorkspace(BuildTarget receiver, RepoMapping repoMapping) {
+        Label id = BuildTarget.getId(receiver);
+        if (!(id instanceof ResolvedLabel) || id.isMainWorkspace()) {
+            return true;
+        }
+        else {
+            return RepoMapping.getLocalRepositories(repoMapping).localRepositories().containsKey(((ResolvedLabel) id).getRepoName());
+        }
+    }
+}

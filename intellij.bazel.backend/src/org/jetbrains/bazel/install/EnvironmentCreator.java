@@ -1,53 +1,70 @@
-package org.jetbrains.bazel.install
+package org.jetbrains.bazel.install;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.server.bsp.utils.FileUtils.writeIfDifferent
-import java.nio.file.FileAlreadyExistsException
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.io.path.deleteIfExists
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.server.bsp.utils.FileUtils;
 
-@ApiStatus.Internal
-class EnvironmentCreator(private val projectRootDir: Path) {
-  fun create() = createDotBazelBsp()
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
-  private fun createDotBazelBsp(): Path {
-    val bazelBspDir = createDir(projectRootDir, Constants.DOT_BAZELBSP_DIR_NAME)
-    createDotBazelBspFiles(bazelBspDir)
-    return bazelBspDir
-  }
+public class EnvironmentCreator {
+    private final Path myProjectRootDir;
 
-  private fun createDotBazelBspFiles(dotBazelBspDir: Path) {
-    createGitIgnoreFile(dotBazelBspDir)
-    createEmptyBuildFile(dotBazelBspDir)
-  }
-
-  private fun createEmptyBuildFile(dotBazelBspDir: Path) {
-    dotBazelBspDir.resolve(Constants.defaultBuildFileName())
-      .writeIfDifferent("")
-    dotBazelBspDir.resolve(Constants.WORKSPACE_FILE_NAME).deleteIfExists()
-  }
-
-  fun createGitIgnoreFile(dotBazelBspDir: Path) {
-    dotBazelBspDir.resolve(".gitignore")
-      .writeIfDifferent(
-        """
-        aspects
-        .bazelproject
-        .gitignore
-        BUILD.bazel
-        bazel_invocation_cache/output_base
-      """.trimIndent(),
-      )
-  }
-
-  private fun createDir(rootDir: Path, name: String): Path {
-    val dir = rootDir.resolve(name)
-    try {
-      Files.createDirectories(dir)
-    } catch (_: FileAlreadyExistsException) {
+    public EnvironmentCreator(Path projectRootDir) {
+        myProjectRootDir = projectRootDir;
     }
-    return dir
-  }
+
+    public Path create() {
+        return createDotBazelBsp();
+    }
+
+    private Path createDotBazelBsp() {
+        Path bazelBspDir = createDir(myProjectRootDir, Constants.DOT_BAZELBSP_DIR_NAME);
+        createDotBazelBspFiles(bazelBspDir);
+        return bazelBspDir;
+    }
+
+    private void createDotBazelBspFiles(Path dotBazelBspDir) {
+        createGitIgnoreFile(dotBazelBspDir);
+        createEmptyBuildFile(dotBazelBspDir);
+    }
+
+    private void createEmptyBuildFile(Path dotBazelBspDir) {
+        FileUtils.writeIfDifferent(dotBazelBspDir.resolve(Constants.defaultBuildFileName()), "");
+        try {
+            Files.deleteIfExists(dotBazelBspDir.resolve(Constants.WORKSPACE_FILE_NAME));
+        }
+        catch (IOException e) {
+            // consulo: Kotlin has no checked exceptions, upstream propagates the IOException as is
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    public void createGitIgnoreFile(Path dotBazelBspDir) {
+        FileUtils.writeIfDifferent(
+            dotBazelBspDir.resolve(".gitignore"),
+            """
+                aspects
+                .bazelproject
+                .gitignore
+                BUILD.bazel
+                bazel_invocation_cache/output_base"""
+        );
+    }
+
+    private Path createDir(Path rootDir, String name) {
+        Path dir = rootDir.resolve(name);
+        try {
+            Files.createDirectories(dir);
+        }
+        catch (FileAlreadyExistsException ignored) {
+        }
+        catch (IOException e) {
+            // consulo: Kotlin has no checked exceptions, upstream propagates the IOException as is
+            throw new UncheckedIOException(e);
+        }
+        return dir;
+    }
 }

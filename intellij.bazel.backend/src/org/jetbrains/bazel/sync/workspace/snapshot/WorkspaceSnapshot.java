@@ -1,80 +1,79 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.RepoMappingDisabled
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTargetMap
-import org.jetbrains.bsp.protocol.BuildTarget
-import java.nio.file.Path
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTargetMap;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 /**
- * Immutable workspace snapshot, describing fixed input scope for [BazelWorkspaceImporter]
+ * Immutable workspace snapshot, describing fixed input scope for {@link BazelWorkspaceImporter}
  *
- * @property targets Lazy loadable collection of [BuildTarget]
- * @property workspaceName Bazel workspace name, `null` when it is not known yet
- * @property configurations All used bazel configurations
- * @property targetGraph Immutable representation of bazel target graph
- * @property syncConfigs Set of sync configs used by [BazelWorkspaceImporter] in later stage
- * @property repoMapping Bazel repo mapping
- * @property metadata Snapshot metadata
+ * @param targets           Lazy loadable collection of {@link BuildTarget}
+ * @param workspaceName     Bazel workspace name, {@code null} when it is not known yet
+ * @param configurations    All used bazel configurations
+ * @param targetGraph       Immutable representation of bazel target graph
+ * @param syncConfigs       Set of sync configs used by {@link BazelWorkspaceImporter} in later stage
+ * @param repoMapping       Bazel repo mapping
+ * @param metadata          Snapshot metadata
  */
-@ApiStatus.Internal
-data class WorkspaceSnapshot(
-  val targets: WorkspaceTargetMap,
-  val workspaceName: String?,
-  val configurations: Map<WorkspaceConfigurationId, WorkspaceConfiguration>,
-  val targetGraph: WorkspaceTargetGraph,
-  val fileToTarget: FileToTargetMap,
-  val executableTargets: ExecutableTargetsIndex,
-  val syncConfigs: List<WorkspaceSyncConfig>,
-  val repoMapping: RepoMapping,
-  val bazelInfo: BazelInfo,
-  val metadata: WorkspaceSnapshotMetadata,
+public record WorkspaceSnapshot(
+    WorkspaceTargetMap targets,
+    @Nullable String workspaceName,
+    Map<WorkspaceConfigurationId, WorkspaceConfiguration> configurations,
+    WorkspaceTargetGraph targetGraph,
+    FileToTargetMap fileToTarget,
+    ExecutableTargetsIndex executableTargets,
+    List<WorkspaceSyncConfig> syncConfigs,
+    RepoMapping repoMapping,
+    BazelInfo bazelInfo,
+    WorkspaceSnapshotMetadata metadata
 ) {
-  companion object {
-    val EMPTY: WorkspaceSnapshot = WorkspaceSnapshot(
-      targets = WorkspaceTargetMap.EMPTY,
-      workspaceName = null,
-      configurations = mapOf(),
-      targetGraph = WorkspaceTargetGraph.EMPTY,
-      fileToTarget = FileToTargetMap.EMPTY,
-      executableTargets = ExecutableTargetsIndex.EMPTY,
-      syncConfigs = emptyList(),
-      repoMapping = RepoMappingDisabled,
-      bazelInfo = BazelInfo.DEFAULT,
-      metadata = WorkspaceSnapshotMetadata(
-        version = 1,
-      ),
-    )
-  }
+    public static final WorkspaceSnapshot EMPTY = new WorkspaceSnapshot(
+        WorkspaceTargetMap.EMPTY,
+        null,
+        Map.of(),
+        WorkspaceTargetGraph.EMPTY,
+        FileToTargetMap.EMPTY,
+        ExecutableTargetsIndex.EMPTY,
+        List.of(),
+        RepoMapping.RepoMappingDisabled.INSTANCE,
+        BazelInfo.DEFAULT,
+        new WorkspaceSnapshotMetadata(
+            1
+        )
+    );
+
+    public record WorkspaceSnapshotMetadata(
+        int version
+    ) {
+    }
+
+    /**
+     * Marker interface for workspace importer specific configuration,
+     * Any kind of projectview flag, registry key, or user setting have to be passed
+     * using class implementing {@link WorkspaceSyncConfig} to ensure correct workspace state.
+     */
+    // RC: keep it open, so other modules can extend it
+    public interface WorkspaceSyncConfig {
+    }
+
+    /**
+     * Common {@link WorkspaceSyncConfig} shared among all importers
+     *
+     * @param projectRootDir Project root directory shall be used instead of {@code Project.rootDir} to ensure importer pure semantics
+     * @param projectName    Project name shall be used instead of {@code Project.bazelProjectName}
+     */
+    public record CommonWorkspaceSyncConfig(
+        Path projectRootDir,
+        @Nullable Path dotIdeaPath,
+        String projectName,
+        int importDepth
+    ) implements WorkspaceSyncConfig {
+    }
 }
-
-@ApiStatus.Internal
-data class WorkspaceSnapshotMetadata(
-  val version: Int,
-)
-
-/**
- * Marker interface for workspace importer specific configuration,
- * Any kind of projectview flag, registry key, or user setting have to be passed
- * using class implementing [WorkspaceSyncConfig] to ensure correct workspace state.
- */
-// RC: keep it open, so other modules can extend it
-@ApiStatus.Internal
-interface WorkspaceSyncConfig
-
-/**
- * Common [WorkspaceSyncConfig] shared among all importers
- *
- * @property projectRootDir Project root directory shall be used instead of [Project.rootDir] to ensure importer pure semantics
- * @property projectName Project name shall be used instead of [Project.bazelProjectName]
- */
-@ApiStatus.Internal
-data class CommonWorkspaceSyncConfig(
-  val projectRootDir: Path,
-  val dotIdeaPath: Path?,
-  val projectName: String,
-  val importDepth: Int,
-) : WorkspaceSyncConfig

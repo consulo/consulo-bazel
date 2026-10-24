@@ -1,10 +1,21 @@
-package org.jetbrains.bazel.server
+package org.jetbrains.bazel.server;
 
-internal enum class BazelTestFileNames(val filename: String) {
-   LOG("test.log"),
-   COVERAGE("test.lcov"),
-   XML("test.xml");
+public enum BazelTestFileNames {
+    LOG("test.log"),
+    COVERAGE("test.lcov"),
+    XML("test.xml");
 
-  val filenameRegex: String
-    get() = ".*/" +  filename.replace("\\", "\\\\").replace(".", "\\.")
+    private final String myFilename;
+
+    BazelTestFileNames(String filename) {
+        myFilename = filename;
+    }
+
+    public String getFilename() {
+        return myFilename;
+    }
+
+    public String getFilenameRegex() {
+        return ".*/" + myFilename.replace("\\", "\\\\").replace(".", "\\.");
+    }
 }

@@ -1,273 +1,378 @@
-package org.jetbrains.bazel.server.sync
+package org.jetbrains.bazel.server.sync;
 
-import com.intellij.execution.process.OSProcessUtil.killProcess
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.bazelrunner.BazelCommand
-import org.jetbrains.bazel.bazelrunner.BazelLog
-import org.jetbrains.bazel.bazelrunner.BazelProcessResult
-import org.jetbrains.bazel.bazelrunner.BazelRunner
-import org.jetbrains.bazel.bazelrunner.HasAdditionalBazelOptions
-import org.jetbrains.bazel.bazelrunner.HasEnvironment
-import org.jetbrains.bazel.bazelrunner.HasMultipleTargets
-import org.jetbrains.bazel.bazelrunner.HasProgramArguments
-import org.jetbrains.bazel.bazelrunner.params.BazelFlag
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.commons.TargetCollection
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bazel.server.BazelTestFileNames
-import org.jetbrains.bazel.server.bep.AnalysisCacheInvalidationParser
-import org.jetbrains.bazel.server.bep.BepBuildResult
-import org.jetbrains.bazel.server.bep.BepReader
-import org.jetbrains.bazel.server.bep.BepServer
-import org.jetbrains.bazel.server.bep.analysisPhaseTimeMsOrNull
-import org.jetbrains.bazel.server.bep.toActionCacheStats
-import org.jetbrains.bazel.server.diagnostics.DiagnosticsService
-import org.jetbrains.bsp.protocol.AnalysisDebugParams
-import org.jetbrains.bsp.protocol.AnalysisDebugResult
-import org.jetbrains.bsp.protocol.BazelInvocationContext
-import org.jetbrains.bsp.protocol.BazelInvocationMetrics
-import org.jetbrains.bsp.protocol.BazelTaskEventsHandler
-import org.jetbrains.bsp.protocol.CompileParams
-import org.jetbrains.bsp.protocol.CompileResult
-import org.jetbrains.bsp.protocol.RunParams
-import org.jetbrains.bsp.protocol.RunResult
-import org.jetbrains.bsp.protocol.TaskId
-import org.jetbrains.bsp.protocol.TestParams
-import org.jetbrains.bsp.protocol.TestResult
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.io.path.deleteExisting
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
+import consulo.application.Application;
+import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.project.Project;
+import org.jetbrains.bazel.bazelrunner.BazelCommand;
+import org.jetbrains.bazel.bazelrunner.BazelCommand.BazelCommandExecutionDescriptor;
+import org.jetbrains.bazel.bazelrunner.BazelLog;
+import org.jetbrains.bazel.bazelrunner.BazelProcess;
+import org.jetbrains.bazel.bazelrunner.BazelProcessResult;
+import org.jetbrains.bazel.bazelrunner.BazelRunner;
+import org.jetbrains.bazel.bazelrunner.params.BazelFlag;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.commons.TargetCollection;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.server.BazelTestFileNames;
+import org.jetbrains.bazel.server.bep.AnalysisCacheInvalidationParser;
+import org.jetbrains.bazel.server.bep.BazelInvocationMetricsMapper;
+import org.jetbrains.bazel.server.bep.BepBuildResult;
+import org.jetbrains.bazel.server.bep.BepOutput;
+import org.jetbrains.bazel.server.bep.BepReader;
+import org.jetbrains.bazel.server.bep.BepServer;
+import org.jetbrains.bazel.server.diagnostics.DiagnosticsService;
+import org.jetbrains.bsp.protocol.BazelInvocationMetrics;
+import org.jetbrains.bsp.protocol.BazelInvocationMetrics.AnalysisCacheInvalidation;
+import org.jetbrains.bsp.protocol.BazelInvocationMetrics.BazelInvocationContext;
+import org.jetbrains.bsp.protocol.BazelTaskEventsHandler;
+import org.jetbrains.bsp.protocol.CompileParams;
+import org.jetbrains.bsp.protocol.CompileResult;
+import org.jetbrains.bsp.protocol.RunParams;
+import org.jetbrains.bsp.protocol.RunResult;
+import org.jetbrains.bsp.protocol.RunWithDebugParams.AnalysisDebugParams;
+import org.jetbrains.bsp.protocol.RunWithDebugParams.AnalysisDebugResult;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jetbrains.bsp.protocol.TestParams;
+import org.jetbrains.bsp.protocol.TestResult;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class ExecuteService(
-  private val project: Project,
-  private val workspaceRoot: Path,
-  private val taskEventsHandler: BazelTaskEventsHandler,
-  private val bazelRunner: BazelRunner,
-  private val projectView: ProjectView,
-  private val bazelPathsResolver: BazelPathsResolver,
-  private val rawProgressReporterProvider: RawProgressReporterProvider = RawProgressReporterProvider.current(),
-) {
-  private suspend fun runWithBepServer(
-    command: BazelCommand,
-    taskId: TaskId,
-    context: BazelInvocationContext,
-    pidDeferred: CompletableDeferred<Long?>? = null,
-  ): BepBuildResult = rawProgressReporterProvider { rawProgressReporter ->
-    coroutineScope {
-      val eventFile: Path =
-        Files.createTempFile("bazel-bep-output", null).toAbsolutePath()
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 
-      var bepReader: BepReader? = null
-      try {
-        command.useBes(eventFile)
-        val executionDescriptor = command.buildExecutionDescriptor()
-        val diagnosticsService = DiagnosticsService(workspaceRoot)
-        val bepServer = BepServer(project, taskEventsHandler, diagnosticsService, taskId, bazelPathsResolver, rawProgressReporter)
-        bepReader = BepReader(bepServer, eventFile)
-        val bepReaderDeferred = async(Dispatchers.IO) {
-          bepReader.start()
-        }
+public class ExecuteService {
+    private final Project myProject;
+    private final Path myWorkspaceRoot;
+    private final BazelTaskEventsHandler myTaskEventsHandler;
+    private final BazelRunner myBazelRunner;
+    private final ProjectView myProjectView;
+    private final BazelPathsResolver myBazelPathsResolver;
+    private final RawProgressReporterProvider myRawProgressReporterProvider;
 
-        val bazelProcess = bazelRunner.runBazelCommand(
-          executionDescriptor,
-          taskId = taskId,
-        )
-        pidDeferred?.complete(bazelProcess.pid)
-        val processResult = bazelProcess.waitAndGetResult()
-
-        bepReader.bazelBuildFinished()
-        bepReaderDeferred.await()
-
-        bepServer.bepMetrics?.let { metrics ->
-          BazelLog.write {
-            println("Metrics:")
-            println(metrics.toString())
-          }
-        }
-
-        reportInvocationMetrics(context, bepServer, processResult)
-
-        val bepOutput = bepServer.bepOutput
-        BepBuildResult(processResult, bepOutput)
-      }
-      catch (e: CancellationException) {
-        if (BazelFeatureFlags.killServerOnCancel) {
-          val serverPid = bepReader?.serverPid?.get() ?: 0
-          if (serverPid > 0) {
-            killProcess(serverPid.toInt())
-          }
-        }
-        throw e
-      }
-      finally {
-        eventFile.deleteExisting()
-      }
-    }
-  }
-
-  /** Reports analysis-cache discards and action cache hit/miss stats for a finished invocation (FUS). */
-  private fun reportInvocationMetrics(
-    context: BazelInvocationContext,
-    bepServer: BepServer,
-    processResult: BazelProcessResult,
-  ) {
-    taskEventsHandler.onBazelInvocationMetrics(
-      BazelInvocationMetrics(
-        context = context,
-        // BEP progress events are the primary source: Bazel routes its output through BEP when
-        // --build_event_binary_path is set. Process streams are the fallback for output that arrives
-        // before BEP starts, or in PTY mode where stderr is merged into stdout.
-        analysisCacheInvalidation = bepServer.analysisCacheInvalidation
-          ?: AnalysisCacheInvalidationParser.parse(processResult.stderrLines, processResult.stdoutLines),
-        actionCacheStats = bepServer.bepMetrics?.toActionCacheStats(),
-        analysisPhaseTimeMs = bepServer.bepMetrics?.analysisPhaseTimeMsOrNull(),
-      ),
-    )
-  }
-
-  suspend fun compile(params: CompileParams): CompileResult =
-    if (params.targets.isNotEmpty()) {
-      val result = build(params.targets, params.taskId, params.arguments)
-      CompileResult(statusCode = result.bazelStatus)
-    }
-    else {
-      CompileResult(statusCode = BazelStatus.FATAL_ERROR)
+    // consulo: overload for the upstream default value of rawProgressReporterProvider
+    public ExecuteService(
+        Project project,
+        Path workspaceRoot,
+        BazelTaskEventsHandler taskEventsHandler,
+        BazelRunner bazelRunner,
+        ProjectView projectView,
+        BazelPathsResolver bazelPathsResolver
+    ) {
+        this(project, workspaceRoot, taskEventsHandler, bazelRunner, projectView, bazelPathsResolver, RawProgressReporterProvider.current());
     }
 
-  suspend fun analysisDebug(params: AnalysisDebugParams): AnalysisDebugResult {
-    val statusCode =
-      if (params.targets.isNotEmpty()) {
-        val debugFlags =
-          listOf(BazelFlag.noBuild(), BazelFlag.starlarkDebug(), BazelFlag.starlarkDebugPort(params.port))
-        val result = build(params.targets, params.taskId, debugFlags)
-        result.bazelStatus
-      }
-      else {
-        BazelStatus.FATAL_ERROR
-      }
-    return AnalysisDebugResult(statusCode)
-  }
-
-  suspend fun run(params: RunParams): RunResult = runImpl(params)
-
-  private suspend fun runImpl(
-    params: RunParams,
-    additionalProgramArguments: List<String>? = null,
-    additionalOptions: List<String>? = null,
-  ): RunResult {
-    val command =
-      bazelRunner.buildBazelCommand(projectView) {
-        run(params.target) {
-          options.add(BazelFlag.color(true))
-          if (!params.checkVisibility) {
-            options.add(BazelFlag.checkVisibility(false))
-          }
-          additionalOptions?.let { options.addAll(it) }
-          additionalProgramArguments?.let { programArguments.addAll(it) }
-          environment.putAll(params.environmentVariables)
-          programArguments.addAll(params.arguments)
-          additionalBazelOptions.addAll(params.additionalBazelParams)
-          enablePty = !params.captureStdout // otherwise stderr is merged into stdout
-        }
-      }
-    val result = runWithBepServer(command, params.taskId, BazelInvocationContext.RUN, pidDeferred = params.pidDeferred)
-    return RunResult(
-      statusCode = result.processResult.bazelStatus,
-      taskId = params.taskId,
-      stdout = if (params.captureStdout) result.processResult.stdout.decodeToString() else null,
-    )
-  }
-
-  suspend fun test(params: TestParams): TestResult {
-    val targetsSpec = TargetCollection(params.targets, emptyList())
-    val command =
-      when {
-        params.useCoverage -> bazelRunner.buildBazelCommand(projectView) { coverage() }.also { command ->
-          command.options.add(BazelFlag.combinedReportLcov())
-        }
-        else -> bazelRunner.buildBazelCommand(projectView) { test() }
-      }
-
-    val instrumentationFilter = params.coverageInstrumentationFilter?.takeIf { params.useCoverage }
-    val testFilter = params.testFilter
-    // separate fields options should overwrite additional options
-    val separateFieldsOptions = listOfNotNull(
-      testFilter?.let(BazelFlag::testFilter),
-      instrumentationFilter?.let(BazelFlag::instrumentationFilter)
-    )
-    val additionalOptions = params.additionalBazelParams + separateFieldsOptions
-    if (additionalOptions.isNotEmpty()) {
-      (command as HasAdditionalBazelOptions).additionalBazelOptions.addAll(additionalOptions)
+    public ExecuteService(
+        Project project,
+        Path workspaceRoot,
+        BazelTaskEventsHandler taskEventsHandler,
+        BazelRunner bazelRunner,
+        ProjectView projectView,
+        BazelPathsResolver bazelPathsResolver,
+        RawProgressReporterProvider rawProgressReporterProvider
+    ) {
+        myProject = project;
+        myWorkspaceRoot = workspaceRoot;
+        myTaskEventsHandler = taskEventsHandler;
+        myBazelRunner = bazelRunner;
+        myProjectView = projectView;
+        myBazelPathsResolver = bazelPathsResolver;
+        myRawProgressReporterProvider = rawProgressReporterProvider;
     }
 
-    if (params.streamTestOutput) {
-      // Ensure streamed test output for live UI in IDE
-      ensureTestOutputStreamed(command)
-    }
-    (command as HasEnvironment).environment.putAll(params.environmentVariables)
-    (command as HasProgramArguments).programArguments.addAll(params.arguments)
-    command.options.add(BazelFlag.buildEventBinaryPathConversion(false))
-    // Ensure all test xml, log, and lcov files are downloaded even when remote_download_outputs=minimal is set
-    command.options.addAll(
-      BazelTestFileNames.entries.map { BazelFlag.remoteDownloadRegex(it.filenameRegex) })
-    with(command as HasMultipleTargets) {
-      targets.addAll(targetsSpec.values)
-      excludedTargets.addAll(targetsSpec.excludedValues)
+    // consulo: overload for the upstream default value of pidDeferred
+    private CompletableFuture<BepBuildResult> runWithBepServer(
+        BazelCommand command,
+        TaskId taskId,
+        BazelInvocationContext context
+    ) {
+        return runWithBepServer(command, taskId, context, null);
     }
 
-    // TODO: handle multiple targets
-    val result = runWithBepServer(command, params.taskId, BazelInvocationContext.TEST)
-    return TestResult(statusCode = result.processResult.bazelStatus)
-  }
+    private CompletableFuture<BepBuildResult> runWithBepServer(
+        BazelCommand command,
+        TaskId taskId,
+        BazelInvocationContext context,
+        @Nullable CompletableFuture<@Nullable Long> pidDeferred
+    ) {
+        return myRawProgressReporterProvider.invoke(rawProgressReporter -> {
+            // consulo: upstream coroutineScope; the try/catch/finally of upstream runs when the future completes
+            Path eventFile;
+            try {
+                eventFile =
+                    Files.createTempFile("bazel-bep-output", null).toAbsolutePath();
+            }
+            catch (IOException e) {
+                return CompletableFuture.failedFuture(new UncheckedIOException(e));
+            }
 
-  private suspend fun build(
-    allTargets: List<Label>,
-    taskId: TaskId,
-    additionalArguments: List<String> = emptyList(),
-  ): BazelProcessResult {
-    // you must compute all targets before passing them to bound
-    val command =
-      bazelRunner.buildBazelCommand(projectView) {
-        build {
-          additionalBazelOptions.addAll(additionalArguments)
-          targets.addAll(allTargets)
-          enablePty = true
+            AtomicReference<@Nullable BepReader> bepReaderRef = new AtomicReference<>();
+            CompletableFuture<BepBuildResult> result;
+            try {
+                command.useBes(eventFile);
+                BazelCommandExecutionDescriptor executionDescriptor = command.buildExecutionDescriptor();
+                DiagnosticsService diagnosticsService = new DiagnosticsService(myWorkspaceRoot);
+                BepServer bepServer =
+                    new BepServer(myProject, myTaskEventsHandler, diagnosticsService, taskId, myBazelPathsResolver, rawProgressReporter);
+                BepReader bepReader = new BepReader(bepServer, eventFile);
+                bepReaderRef.set(bepReader);
+                // consulo: upstream async(Dispatchers.IO) { bepReader.start() }
+                CompletableFuture<@Nullable Void> bepReaderDeferred = CompletableFuture
+                    .supplyAsync(bepReader::start, Application.get().getInstance(ApplicationConcurrency.class).executor())
+                    .thenCompose(started -> started.thenApply(ignored -> null));
+
+                BazelProcess bazelProcess = myBazelRunner.runBazelCommand(
+                    executionDescriptor,
+                    taskId
+                );
+                if (pidDeferred != null) {
+                    pidDeferred.complete(bazelProcess.getPid());
+                }
+                result = bazelProcess.waitAndGetResult().thenCompose(processResult -> {
+                    bepReader.bazelBuildFinished();
+                    return bepReaderDeferred.thenApply(ignored -> {
+                        BuildEventStreamProtos.BuildMetrics metrics = bepServer.getBepMetrics();
+                        if (metrics != null) {
+                            BazelLog.write(writer -> {
+                                writer.println("Metrics:");
+                                writer.println(metrics.toString());
+                            });
+                        }
+
+                        reportInvocationMetrics(context, bepServer, processResult);
+
+                        BepOutput bepOutput = bepServer.getBepOutput();
+                        return new BepBuildResult(processResult, bepOutput);
+                    });
+                });
+            }
+            catch (Throwable e) {
+                result = CompletableFuture.failedFuture(e);
+            }
+
+            return result.whenComplete((value, error) -> {
+                try {
+                    if (error != null) {
+                        BepReader bepReader = bepReaderRef.get();
+                        // consulo: coroutineScope cancels the BEP reader when the block fails; here the reader is told to stop
+                        if (bepReader != null) {
+                            bepReader.bazelBuildFinished();
+                        }
+                        if (unwrap(error) instanceof CancellationException) {
+                            if (BazelFeatureFlags.getKillServerOnCancel()) {
+                                long serverPid = bepReader != null ? bepReader.getServerPid().get() : 0;
+                                if (serverPid > 0) {
+                                    // consulo: Consulo has no OSProcessUtil.killProcess(pid); ProcessHandle kills the process by its pid
+                                    ProcessHandle.of(serverPid).ifPresent(ProcessHandle::destroyForcibly);
+                                }
+                            }
+                        }
+                    }
+                }
+                finally {
+                    try {
+                        Files.delete(eventFile);
+                    }
+                    catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                }
+            });
+        });
+    }
+
+    /** Reports analysis-cache discards and action cache hit/miss stats for a finished invocation (FUS). */
+    private void reportInvocationMetrics(
+        BazelInvocationContext context,
+        BepServer bepServer,
+        BazelProcessResult processResult
+    ) {
+        AnalysisCacheInvalidation analysisCacheInvalidation = bepServer.getAnalysisCacheInvalidation();
+        BuildEventStreamProtos.BuildMetrics bepMetrics = bepServer.getBepMetrics();
+        myTaskEventsHandler.onBazelInvocationMetrics(
+            new BazelInvocationMetrics(
+                context,
+                // BEP progress events are the primary source: Bazel routes its output through BEP when
+                // --build_event_binary_path is set. Process streams are the fallback for output that arrives
+                // before BEP starts, or in PTY mode where stderr is merged into stdout.
+                analysisCacheInvalidation != null
+                    ? analysisCacheInvalidation
+                    : AnalysisCacheInvalidationParser.parse(processResult.getStderrLines(), processResult.getStdoutLines()),
+                bepMetrics != null ? BazelInvocationMetricsMapper.toActionCacheStats(bepMetrics) : null,
+                bepMetrics != null ? BazelInvocationMetricsMapper.analysisPhaseTimeMsOrNull(bepMetrics) : null
+            )
+        );
+    }
+
+    public CompletableFuture<CompileResult> compile(CompileParams params) {
+        if (!params.targets().isEmpty()) {
+            return build(params.targets(), params.taskId(), params.arguments())
+                .thenApply(result -> new CompileResult(result.getBazelStatus()));
         }
-      }
-
-    return runWithBepServer(command, taskId, BazelInvocationContext.BUILD).processResult
-  }
-
-  private fun ensureTestOutputStreamed(command: BazelCommand) {
-    // Add to the beginning to make overriding possible
-    command.options.addFirst(BazelFlag.testOutputStreamed())
-  }
-
-  suspend fun buildTargetsWithBep(
-    targetsSpec: TargetCollection,
-    extraFlags: List<String> = emptyList(),
-    taskId: TaskId,
-  ): BepBuildResult {
-    val command =
-      bazelRunner.buildBazelCommand(projectView) {
-        build {
-          options.addAll(extraFlags)
-          targets.addAll(targetsSpec.values)
-          excludedTargets.addAll(targetsSpec.excludedValues)
-          enablePty = true
+        else {
+            return CompletableFuture.completedFuture(new CompileResult(BazelStatus.FATAL_ERROR));
         }
-      }
+    }
 
-    return runWithBepServer(command, taskId, BazelInvocationContext.SYNC)
-  }
+    public CompletableFuture<AnalysisDebugResult> analysisDebug(AnalysisDebugParams params) {
+        CompletableFuture<BazelStatus> statusCode;
+        if (!params.targets().isEmpty()) {
+            List<String> debugFlags =
+                List.of(BazelFlag.noBuild(), BazelFlag.starlarkDebug(), BazelFlag.starlarkDebugPort(params.port()));
+            statusCode = build(params.targets(), params.taskId(), debugFlags).thenApply(BazelProcessResult::getBazelStatus);
+        }
+        else {
+            statusCode = CompletableFuture.completedFuture(BazelStatus.FATAL_ERROR);
+        }
+        return statusCode.thenApply(AnalysisDebugResult::new);
+    }
+
+    public CompletableFuture<RunResult> run(RunParams params) {
+        return runImpl(params, null, null);
+    }
+
+    private CompletableFuture<RunResult> runImpl(
+        RunParams params,
+        @Nullable List<String> additionalProgramArguments,
+        @Nullable List<String> additionalOptions
+    ) {
+        BazelCommand command =
+            myBazelRunner.buildBazelCommand(myProjectView, builder ->
+                builder.run(params.target(), run -> {
+                    run.getOptions().add(BazelFlag.color(true));
+                    if (!params.checkVisibility()) {
+                        run.getOptions().add(BazelFlag.checkVisibility(false));
+                    }
+                    if (additionalOptions != null) {
+                        run.getOptions().addAll(additionalOptions);
+                    }
+                    if (additionalProgramArguments != null) {
+                        run.getProgramArguments().addAll(additionalProgramArguments);
+                    }
+                    run.getEnvironment().putAll(params.environmentVariables());
+                    run.getProgramArguments().addAll(params.arguments());
+                    run.getAdditionalBazelOptions().addAll(params.additionalBazelParams());
+                    run.setEnablePty(!params.captureStdout()); // otherwise stderr is merged into stdout
+                })
+            );
+        return runWithBepServer(command, params.taskId(), BazelInvocationContext.RUN, params.pidDeferred()).thenApply(result ->
+            new RunResult(
+                params.taskId(),
+                result.processResult().getBazelStatus(),
+                params.captureStdout() ? new String(result.processResult().getStdout(), StandardCharsets.UTF_8) : null
+            )
+        );
+    }
+
+    public CompletableFuture<TestResult> test(TestParams params) {
+        TargetCollection targetsSpec = new TargetCollection(params.targets(), List.of());
+        BazelCommand command;
+        if (params.useCoverage()) {
+            command = myBazelRunner.buildBazelCommand(myProjectView, builder -> builder.coverage());
+            command.getOptions().add(BazelFlag.combinedReportLcov());
+        }
+        else {
+            command = myBazelRunner.buildBazelCommand(myProjectView, builder -> builder.test());
+        }
+
+        String instrumentationFilter = params.useCoverage() ? params.coverageInstrumentationFilter() : null;
+        String testFilter = params.testFilter();
+        // separate fields options should overwrite additional options
+        List<String> separateFieldsOptions = new ArrayList<>();
+        if (testFilter != null) {
+            separateFieldsOptions.add(BazelFlag.testFilter(testFilter));
+        }
+        if (instrumentationFilter != null) {
+            separateFieldsOptions.add(BazelFlag.instrumentationFilter(instrumentationFilter));
+        }
+        List<String> additionalOptions = new ArrayList<>(params.additionalBazelParams());
+        additionalOptions.addAll(separateFieldsOptions);
+        if (!additionalOptions.isEmpty()) {
+            ((BazelCommand.HasAdditionalBazelOptions) command).getAdditionalBazelOptions().addAll(additionalOptions);
+        }
+
+        if (params.streamTestOutput()) {
+            // Ensure streamed test output for live UI in IDE
+            ensureTestOutputStreamed(command);
+        }
+        ((BazelCommand.HasEnvironment) command).getEnvironment().putAll(params.environmentVariables());
+        ((BazelCommand.HasProgramArguments) command).getProgramArguments().addAll(params.arguments());
+        command.getOptions().add(BazelFlag.buildEventBinaryPathConversion(false));
+        // Ensure all test xml, log, and lcov files are downloaded even when remote_download_outputs=minimal is set
+        for (BazelTestFileNames it : BazelTestFileNames.values()) {
+            command.getOptions().add(BazelFlag.remoteDownloadRegex(it.getFilenameRegex()));
+        }
+        BazelCommand.HasMultipleTargets multipleTargetsCommand = (BazelCommand.HasMultipleTargets) command;
+        multipleTargetsCommand.getTargets().addAll(targetsSpec.values());
+        multipleTargetsCommand.getExcludedTargets().addAll(targetsSpec.excludedValues());
+
+        // TODO: handle multiple targets
+        return runWithBepServer(command, params.taskId(), BazelInvocationContext.TEST)
+            .thenApply(result -> new TestResult(result.processResult().getBazelStatus()));
+    }
+
+    private CompletableFuture<BazelProcessResult> build(
+        List<Label> allTargets,
+        TaskId taskId,
+        List<String> additionalArguments
+    ) {
+        // you must compute all targets before passing them to bound
+        BazelCommand command =
+            myBazelRunner.buildBazelCommand(myProjectView, builder ->
+                builder.build(build -> {
+                    build.getAdditionalBazelOptions().addAll(additionalArguments);
+                    build.getTargets().addAll(allTargets);
+                    build.setEnablePty(true);
+                })
+            );
+
+        return runWithBepServer(command, taskId, BazelInvocationContext.BUILD).thenApply(BepBuildResult::processResult);
+    }
+
+    private void ensureTestOutputStreamed(BazelCommand command) {
+        // Add to the beginning to make overriding possible
+        command.getOptions().add(0, BazelFlag.testOutputStreamed());
+    }
+
+    // consulo: overload for the upstream default value of extraFlags
+    public CompletableFuture<BepBuildResult> buildTargetsWithBep(
+        TargetCollection targetsSpec,
+        TaskId taskId
+    ) {
+        return buildTargetsWithBep(targetsSpec, List.of(), taskId);
+    }
+
+    public CompletableFuture<BepBuildResult> buildTargetsWithBep(
+        TargetCollection targetsSpec,
+        List<String> extraFlags,
+        TaskId taskId
+    ) {
+        BazelCommand command =
+            myBazelRunner.buildBazelCommand(myProjectView, builder ->
+                builder.build(build -> {
+                    build.getOptions().addAll(extraFlags);
+                    build.getTargets().addAll(targetsSpec.values());
+                    build.getExcludedTargets().addAll(targetsSpec.excludedValues());
+                    build.setEnablePty(true);
+                })
+            );
+
+        return runWithBepServer(command, taskId, BazelInvocationContext.SYNC);
+    }
+
+    // consulo: the failure of a CompletableFuture stage is wrapped into a CompletionException
+    private static Throwable unwrap(Throwable error) {
+        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+    }
 }

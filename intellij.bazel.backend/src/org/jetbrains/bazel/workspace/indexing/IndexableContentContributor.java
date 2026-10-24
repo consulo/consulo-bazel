@@ -1,15 +1,17 @@
-package org.jetbrains.bazel.workspace.indexing
+package org.jetbrains.bazel.workspace.indexing;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import consulo.project.Project;
 
-@ApiStatus.Internal
-interface IndexableContentContributor {
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface IndexableContentContributor {
 
-  fun getIndexableContent(project: Project): IndexableContent
+    IndexableContent getIndexableContent(Project project);
 
-  companion object {
-    val ep: ExtensionPointName<IndexableContentContributor> = ExtensionPointName("org.jetbrains.bazel.indexableContentContributor")
-  }
+    static ExtensionPoint<IndexableContentContributor> getEp() {
+        return Application.get().getExtensionPoint(IndexableContentContributor.class);
+    }
 }

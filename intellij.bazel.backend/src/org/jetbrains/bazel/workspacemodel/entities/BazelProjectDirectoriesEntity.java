@@ -1,22 +1,21 @@
-package org.jetbrains.bazel.workspacemodel.entities
+package org.jetbrains.bazel.workspacemodel.entities;
 
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.annotations.IndexVfu
-import com.intellij.platform.workspace.storage.url.VirtualFileUrl
-import org.jetbrains.annotations.ApiStatus
+import java.util.List;
 
-@ApiStatus.Internal
-interface BazelProjectDirectoriesEntity : WorkspaceEntity {
-  @IndexVfu
-  public val projectRoot: VirtualFileUrl
-  public val includedRoots: List<VirtualFileUrl>
-  public val excludedRoots: List<VirtualFileUrl>
-
-  /**
-   * Patterns used to compute [indexableRecursiveRoots] and [indexableNonRecursiveRoots].
-   * We need to preserve them to properly process file events and keep [indexableNonRecursiveRoots] up to date.
-   */
-  public val indexPatterns: List<String>
-  public val indexableRecursiveRoots: List<VirtualFileUrl>
-  public val indexableNonRecursiveRoots: List<VirtualFileUrl>
+/**
+ * consulo: classic data instead of a workspace entity (published with
+ * {@code BazelModelBuilder.putProjectData}); all roots are VFS urls.
+ *
+ * @param indexPatterns Patterns used to compute {@code indexableRecursiveRoots} and {@code indexableNonRecursiveRoots}.
+ *                      We need to preserve them to properly process file events and keep
+ *                      {@code indexableNonRecursiveRoots} up to date.
+ */
+public record BazelProjectDirectoriesEntity(
+    String projectRoot,
+    List<String> includedRoots,
+    List<String> excludedRoots,
+    List<String> indexPatterns,
+    List<String> indexableRecursiveRoots,
+    List<String> indexableNonRecursiveRoots
+) {
 }

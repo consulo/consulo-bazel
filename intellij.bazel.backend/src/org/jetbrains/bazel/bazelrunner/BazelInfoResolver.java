@@ -1,146 +1,196 @@
-package org.jetbrains.bazel.bazelrunner
+package org.jetbrains.bazel.bazelrunner;
 
-import com.intellij.openapi.diagnostic.logger
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.commons.BazelRelease
-import org.jetbrains.bazel.commons.orFallbackVersion
-import org.jetbrains.bazel.commons.orFromBazelVersionFile
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bazel.server.sync.isConfigurationSupportEnabled
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
-import java.nio.file.Paths
+import consulo.logging.Logger;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.BazelInfo.BazelRelease;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.server.sync.configuration;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-private const val RELEASE = "release"
-private const val EXECUTION_ROOT = "execution_root"
-private const val OUTPUT_BASE = "output_base"
-private const val WORKSPACE = "workspace"
-private const val BAZEL_BIN = "bazel-bin"
-private const val STARLARK_SEMANTICS = "starlark-semantics"
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-@ApiStatus.Internal
-class BazelInfoResolver(val workspaceRoot: Path) {
-  suspend fun resolveBazelInfo(bazelRunner: BazelRunner, projectView: ProjectView, taskId: TaskId?): BazelInfo {
-    val command =
-      bazelRunner.buildBazelCommand(projectView) {
-        info {
-          options.addAll(listOf(RELEASE, EXECUTION_ROOT, OUTPUT_BASE, WORKSPACE, BAZEL_BIN, STARLARK_SEMANTICS))
-        }
-      }
-    val processResult =
-      bazelRunner
-        .runBazelCommand(command, taskId)
-        .waitAndGetResult()
-    if (processResult.isNotSuccess)
-      error(
-        "Querying bazel info failed.\n" +
-        "stdout: ${processResult.stdoutLines.joinToString("\n")}\n" +
-        "stderr: ${processResult.stderrLines.joinToString("\n")}",
-      )
-    return parseBazelInfo(processResult.stdoutLines, processResult.stderrLines)
-  }
+public class BazelInfoResolver {
+    // consulo: upstream private top-level constants of BazelInfoResolver.kt
+    private static final String RELEASE = "release";
+    private static final String EXECUTION_ROOT = "execution_root";
+    private static final String OUTPUT_BASE = "output_base";
+    private static final String WORKSPACE = "workspace";
+    private static final String BAZEL_BIN = "bazel-bin";
+    private static final String STARLARK_SEMANTICS = "starlark-semantics";
 
-  private fun parseBazelInfo(stdoutLines: List<String>, stderrLines: List<String>): BazelInfo {
-    val outputMap =
-      stdoutLines
-        .mapNotNull { line ->
-          INFO_LINE_PATTERN.matchEntire(line)?.let { it.groupValues[1] to it.groupValues[2] }
-        }.toMap()
+    private final Path myWorkspaceRoot;
 
-    fun extract(name: String): String =
-      outputMap[name]
-      ?: error(
-        "Failed to resolve $name from bazel info in $workspaceRoot. " +
-        "Bazel Info output: '${stderrLines.joinToString("\n")}'",
-      )
-
-    val bazelReleaseVersion = BazelRelease.fromReleaseString(extract(RELEASE))
-      .orFromBazelVersionFile(workspaceRoot)
-      .orFallbackVersion()
-
-    val reportedWorkspaceRoot = Paths.get(extract(WORKSPACE))
-    if (reportedWorkspaceRoot != workspaceRoot) {
-      log.error("Workspace path mismatch: given $workspaceRoot, Bazel reported $reportedWorkspaceRoot")
+    public BazelInfoResolver(Path workspaceRoot) {
+        myWorkspaceRoot = workspaceRoot;
     }
 
-    val starlarkSemantics = parseStarlarkSemantics(extract(STARLARK_SEMANTICS), bazelReleaseVersion)
+    public Path getWorkspaceRoot() {
+        return myWorkspaceRoot;
+    }
 
-    return BazelInfo(
-      execRoot = Paths.get(extract(EXECUTION_ROOT)),
-      outputBase = Paths.get(extract(OUTPUT_BASE)),
-      workspaceRoot = workspaceRoot,
-      bazelBin = Paths.get(extract(BAZEL_BIN)),
-      release = bazelReleaseVersion,
-      isBzlModEnabled = starlarkSemantics.isBzlModEnabled,
-      isWorkspaceEnabled = starlarkSemantics.isWorkspaceEnabled,
-      externalAutoloads = starlarkSemantics.externalAutoloads,
-      isConfigurationSupportEnabled = bazelReleaseVersion.isConfigurationSupportEnabled,
-    )
-  }
+    public CompletableFuture<BazelInfo> resolveBazelInfo(BazelRunner bazelRunner, ProjectView projectView, @Nullable TaskId taskId) {
+        BazelCommand command =
+            bazelRunner.buildBazelCommand(projectView, builder ->
+                builder.info(info -> {
+                    info.getOptions().addAll(List.of(RELEASE, EXECUTION_ROOT, OUTPUT_BASE, WORKSPACE, BAZEL_BIN, STARLARK_SEMANTICS));
+                })
+            );
+        return bazelRunner
+            .runBazelCommand(command, taskId)
+            .waitAndGetResult()
+            .thenApply(processResult -> {
+                if (processResult.isNotSuccess()) {
+                    throw new IllegalStateException(
+                        "Querying bazel info failed.\n" +
+                            "stdout: " + String.join("\n", processResult.getStdoutLines()) + "\n" +
+                            "stderr: " + String.join("\n", processResult.getStderrLines())
+                    );
+                }
+                return parseBazelInfo(processResult.getStdoutLines(), processResult.getStderrLines());
+            });
+    }
 
-  private data class StarlarkSemantics(
-    val isBzlModEnabled: Boolean,
-    val isWorkspaceEnabled: Boolean,
-    val externalAutoloads: List<String>,
-  )
+    private BazelInfo parseBazelInfo(List<String> stdoutLines, List<String> stderrLines) {
+        Map<String, String> outputMap = new HashMap<>();
+        for (String line : stdoutLines) {
+            Matcher matcher = INFO_LINE_PATTERN.matcher(line);
+            if (matcher.matches()) {
+                outputMap.put(matcher.group(1), matcher.group(2));
+            }
+        }
 
-  // Idea taken from https://github.com/bazelbuild/bazel/issues/21303#issuecomment-2007628330
-  private fun parseStarlarkSemantics(starlarkSemantics: String, bazelReleaseVersion: BazelRelease): StarlarkSemantics {
-    val isBzlModEnabled =
-      when {
-        "enable_bzlmod=true" in starlarkSemantics -> true
-        "enable_bzlmod=false" in starlarkSemantics -> false
-        else -> bazelReleaseVersion.major >= 7
-      }
-    val isWorkspaceEnabled =
-      when {
-        "enable_workspace=true" in starlarkSemantics -> true
-        "enable_workspace=false" in starlarkSemantics -> false
-        else -> bazelReleaseVersion.major <= 7
-      }
-    val autoloadsDisabled = (
-      ("incompatible_disable_autoloads_in_main_repo=true" in starlarkSemantics)
-      || ((bazelReleaseVersion.major >= 9) && ("incompatible_disable_autoloads_in_main_repo=false" !in starlarkSemantics))
-                            )
-    // https://github.com/bazelbuild/bazel/issues/23043
-    // https://bazel.build/reference/command-line-reference#flag--incompatible_autoload_externally
-    val externalAutoloads = if (autoloadsDisabled) emptyList()
-    else (
-      parseExternalAutoloads(starlarkSemantics) ?: when (bazelReleaseVersion.major) {
-        // Bazel 8 autoloads several rules by default to ease migration.
-        // This can be turned off via e.g. --incompatible_autoload_externally=""
-        8 -> listOf("rules_python", "rules_java", "rules_android")
-        // Bazel 9 and higher will not autoload rules by default; Bazel 7 had bundled rules instead of autoloading.
-        else -> emptyList()
-      })
+        Function<String, String> extract = name -> {
+            @Nullable String value = outputMap.get(name);
+            if (value == null) {
+                throw new IllegalStateException(
+                    "Failed to resolve " + name + " from bazel info in " + myWorkspaceRoot + ". " +
+                        "Bazel Info output: '" + String.join("\n", stderrLines) + "'"
+                );
+            }
+            return value;
+        };
 
-    return StarlarkSemantics(
-      isBzlModEnabled = isBzlModEnabled,
-      isWorkspaceEnabled = isWorkspaceEnabled,
-      externalAutoloads = externalAutoloads,
-    )
-  }
+        BazelRelease bazelReleaseVersion = BazelInfo.orFallbackVersion(
+            BazelInfo.orFromBazelVersionFile(BazelRelease.fromReleaseString(extract.apply(RELEASE)), myWorkspaceRoot)
+        );
 
-  private fun parseExternalAutoloads(starlarkSemantics: String): List<String>? {
-    val paramBegin = starlarkSemantics.indexOf(INCOMPATIBLE_AUTOLOADS_PARAM).takeIf { it != -1 } ?: return null
-    val autoloadsBegin = paramBegin + INCOMPATIBLE_AUTOLOADS_PARAM.length
-    val autoloadsEnd = starlarkSemantics.indexOf(']', startIndex = autoloadsBegin).takeIf { it != -1 } ?: return null
-    val autoloadsText = starlarkSemantics.substring(autoloadsBegin until autoloadsEnd)
+        Path reportedWorkspaceRoot = Paths.get(extract.apply(WORKSPACE));
+        if (!reportedWorkspaceRoot.equals(myWorkspaceRoot)) {
+            LOG.error("Workspace path mismatch: given " + myWorkspaceRoot + ", Bazel reported " + reportedWorkspaceRoot);
+        }
 
-    return autoloadsText
-      .split(',')
-      .map {
-        it.trim().removePrefix("+").removePrefix("@")
-      }.filter {
-        it.isNotEmpty()
-      }
-  }
+        StarlarkSemantics starlarkSemantics = parseStarlarkSemantics(extract.apply(STARLARK_SEMANTICS), bazelReleaseVersion);
 
-  companion object {
-    private val INFO_LINE_PATTERN = "([\\w-]+): (.*)".toRegex()
-    private const val INCOMPATIBLE_AUTOLOADS_PARAM = "incompatible_autoload_externally=["
+        return new BazelInfo(
+            Paths.get(extract.apply(EXECUTION_ROOT)),
+            Paths.get(extract.apply(OUTPUT_BASE)),
+            myWorkspaceRoot,
+            Paths.get(extract.apply(BAZEL_BIN)),
+            bazelReleaseVersion,
+            starlarkSemantics.isBzlModEnabled(),
+            starlarkSemantics.isWorkspaceEnabled(),
+            starlarkSemantics.externalAutoloads(),
+            configuration.isConfigurationSupportEnabled(bazelReleaseVersion)
+        );
+    }
 
-    private val log = logger<BazelInfoResolver>()
-  }
+    private record StarlarkSemantics(
+        boolean isBzlModEnabled,
+        boolean isWorkspaceEnabled,
+        List<String> externalAutoloads
+    ) {
+    }
+
+    // Idea taken from https://github.com/bazelbuild/bazel/issues/21303#issuecomment-2007628330
+    private StarlarkSemantics parseStarlarkSemantics(String starlarkSemantics, BazelRelease bazelReleaseVersion) {
+        boolean isBzlModEnabled;
+        if (starlarkSemantics.contains("enable_bzlmod=true")) {
+            isBzlModEnabled = true;
+        }
+        else if (starlarkSemantics.contains("enable_bzlmod=false")) {
+            isBzlModEnabled = false;
+        }
+        else {
+            isBzlModEnabled = bazelReleaseVersion.major() >= 7;
+        }
+        boolean isWorkspaceEnabled;
+        if (starlarkSemantics.contains("enable_workspace=true")) {
+            isWorkspaceEnabled = true;
+        }
+        else if (starlarkSemantics.contains("enable_workspace=false")) {
+            isWorkspaceEnabled = false;
+        }
+        else {
+            isWorkspaceEnabled = bazelReleaseVersion.major() <= 7;
+        }
+        boolean autoloadsDisabled = (
+            (starlarkSemantics.contains("incompatible_disable_autoloads_in_main_repo=true"))
+                || ((bazelReleaseVersion.major() >= 9) && (!starlarkSemantics.contains("incompatible_disable_autoloads_in_main_repo=false")))
+        );
+        // https://github.com/bazelbuild/bazel/issues/23043
+        // https://bazel.build/reference/command-line-reference#flag--incompatible_autoload_externally
+        List<String> externalAutoloads;
+        if (autoloadsDisabled) {
+            externalAutoloads = List.of();
+        }
+        else {
+            @Nullable List<String> parsedExternalAutoloads = parseExternalAutoloads(starlarkSemantics);
+            if (parsedExternalAutoloads != null) {
+                externalAutoloads = parsedExternalAutoloads;
+            }
+            else if (bazelReleaseVersion.major() == 8) {
+                // Bazel 8 autoloads several rules by default to ease migration.
+                // This can be turned off via e.g. --incompatible_autoload_externally=""
+                externalAutoloads = List.of("rules_python", "rules_java", "rules_android");
+            }
+            else {
+                // Bazel 9 and higher will not autoload rules by default; Bazel 7 had bundled rules instead of autoloading.
+                externalAutoloads = List.of();
+            }
+        }
+
+        return new StarlarkSemantics(
+            isBzlModEnabled,
+            isWorkspaceEnabled,
+            externalAutoloads
+        );
+    }
+
+    private @Nullable List<String> parseExternalAutoloads(String starlarkSemantics) {
+        int paramBegin = starlarkSemantics.indexOf(INCOMPATIBLE_AUTOLOADS_PARAM);
+        if (paramBegin == -1) {
+            return null;
+        }
+        int autoloadsBegin = paramBegin + INCOMPATIBLE_AUTOLOADS_PARAM.length();
+        int autoloadsEnd = starlarkSemantics.indexOf(']', autoloadsBegin);
+        if (autoloadsEnd == -1) {
+            return null;
+        }
+        String autoloadsText = starlarkSemantics.substring(autoloadsBegin, autoloadsEnd);
+
+        return Arrays.stream(autoloadsText.split(",", -1))
+            .map(it -> removePrefix(removePrefix(it.trim(), "+"), "@"))
+            .filter(it -> !it.isEmpty())
+            .toList();
+    }
+
+    // consulo: Kotlin String.removePrefix
+    private static String removePrefix(String value, String prefix) {
+        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
+    }
+
+    private static final Pattern INFO_LINE_PATTERN = Pattern.compile("([\\w-]+): (.*)");
+    private static final String INCOMPATIBLE_AUTOLOADS_PARAM = "incompatible_autoload_externally=[";
+
+    private static final Logger LOG = Logger.getInstance(BazelInfoResolver.class);
 }

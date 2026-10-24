@@ -1,15 +1,23 @@
-package org.jetbrains.bazel.util
+package org.jetbrains.bazel.util;
 
-import java.time.Duration
+import java.time.Duration;
 
-internal class Stopwatch private constructor() {
-  private val start: Long = now()
+// consulo: `internal` upstream, used from other packages of the module
+public final class Stopwatch {
+    private final long myStart = now();
 
-  fun stop(): Duration = Duration.ofMillis(now() - start)
+    private Stopwatch() {
+    }
 
-  private fun now(): Long = System.currentTimeMillis()
+    public Duration stop() {
+        return Duration.ofMillis(now() - myStart);
+    }
 
-  companion object {
-    fun start(): Stopwatch = Stopwatch()
-  }
+    private long now() {
+        return System.currentTimeMillis();
+    }
+
+    public static Stopwatch start() {
+        return new Stopwatch();
+    }
 }

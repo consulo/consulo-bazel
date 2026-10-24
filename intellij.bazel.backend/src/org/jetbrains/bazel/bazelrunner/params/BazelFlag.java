@@ -1,106 +1,200 @@
-package org.jetbrains.bazel.bazelrunner.params
+package org.jetbrains.bazel.bazelrunner.params;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants.NAME
-import org.jetbrains.bazel.commons.constants.Constants.VERSION
+import java.util.List;
 
-@ApiStatus.Internal
-object BazelFlag {
-  @JvmStatic fun runUnder(command: String): String = arg("run_under", command)
+import static org.jetbrains.bazel.commons.constants.Constants.NAME;
+import static org.jetbrains.bazel.commons.constants.Constants.VERSION;
 
-  @JvmStatic fun color(enabled: Boolean): String = yesNoArg("color", enabled)
+public final class BazelFlag {
+    private BazelFlag() {
+    }
 
-  @JvmStatic fun keepGoing(): String = flag("keep_going")
+    public static String runUnder(String command) {
+        return arg("run_under", command);
+    }
 
-  @JvmStatic fun skipIncompatibleExplicitTargets(): String = flag("skip_incompatible_explicit_targets")
+    public static String color(boolean enabled) {
+        return yesNoArg("color", enabled);
+    }
 
-  @JvmStatic fun noRunValidations(): String = flag("norun_validations")
+    public static String keepGoing() {
+        return flag("keep_going");
+    }
 
-  @JvmStatic fun javaTestDebug(): String = flag("java_debug")
+    public static String skipIncompatibleExplicitTargets() {
+        return flag("skip_incompatible_explicit_targets");
+    }
 
-  @JvmStatic fun outputGroups(groups: List<String>): String = arg("output_groups", groups.joinToString(","))
+    public static String noRunValidations() {
+        return flag("norun_validations");
+    }
 
-  @JvmStatic fun aspect(name: String): String = arg("aspects", name)
+    public static String javaTestDebug() {
+        return flag("java_debug");
+    }
 
-  @JvmStatic fun buildManualTests(): String = flag("build_manual_tests")
+    public static String outputGroups(List<String> groups) {
+        return arg("output_groups", String.join(",", groups));
+    }
 
-  // Use file:// uri scheme for output paths in the build events.
-  @JvmStatic fun buildEventBinaryPathConversion(enabled: Boolean): String =
-    arg(
-      "build_event_binary_file_path_conversion",
-      enabled.toString(),
-    )
+    public static String aspect(String name) {
+        return arg("aspects", name);
+    }
 
-  @JvmStatic fun curses(enabled: Boolean): String = yesNoArg("curses", enabled)
+    public static String buildManualTests() {
+        return flag("build_manual_tests");
+    }
 
-  @JvmStatic fun enableWorkspace(enabled: Boolean = true): String = arg("enable_workspace", enabled.toString())
+    // Use file:// uri scheme for output paths in the build events.
+    public static String buildEventBinaryPathConversion(boolean enabled) {
+        return arg(
+            "build_event_binary_file_path_conversion",
+            Boolean.toString(enabled)
+        );
+    }
 
-  @JvmStatic fun testOutputAll(): String = arg("test_output", "all")
+    public static String curses(boolean enabled) {
+        return yesNoArg("curses", enabled);
+    }
 
-  @JvmStatic fun testOutputStreamed(): String = arg("test_output", "streamed")
+    // consulo: overload for the upstream default argument
+    public static String enableWorkspace() {
+        return enableWorkspace(true);
+    }
 
-  @JvmStatic fun device(device: String): String = arg("device", device)
+    public static String enableWorkspace(boolean enabled) {
+        return arg("enable_workspace", Boolean.toString(enabled));
+    }
 
-  @JvmStatic fun start(startType: String): String = arg("start", startType)
+    public static String testOutputAll() {
+        return arg("test_output", "all");
+    }
 
-  @JvmStatic fun adb(adbPath: String): String = arg("adb", adbPath)
+    public static String testOutputStreamed() {
+        return arg("test_output", "streamed");
+    }
 
-  @JvmStatic fun testFilter(filterExpression: String): String = arg("test_filter", filterExpression)
+    public static String device(String device) {
+        return arg("device", device);
+    }
 
-  @JvmStatic fun toolTag(): String = arg("tool_tag", "$NAME:$VERSION")
+    public static String start(String startType) {
+        return arg("start", startType);
+    }
 
-  @JvmStatic fun starlarkDebug(): String = flag("experimental_skylark_debug")
+    public static String adb(String adbPath) {
+        return arg("adb", adbPath);
+    }
 
-  @JvmStatic fun starlarkDebugPort(port: Int): String = arg("experimental_skylark_debug_server_port", port.toString())
+    public static String testFilter(String filterExpression) {
+        return arg("test_filter", filterExpression);
+    }
 
-  @JvmStatic fun noBuild(): String = flag("nobuild")
+    public static String toolTag() {
+        return arg("tool_tag", NAME + ":" + VERSION);
+    }
 
-  @JvmStatic fun combinedReportLcov(): String = arg("combined_report", "lcov")
+    public static String starlarkDebug() {
+        return flag("experimental_skylark_debug");
+    }
 
-  @JvmStatic fun instrumentationFilter(filter: String): String = arg("instrumentation_filter", filter)
+    public static String starlarkDebugPort(int port) {
+        return arg("experimental_skylark_debug_server_port", Integer.toString(port));
+    }
 
-  @JvmStatic fun checkVisibility(enabled: Boolean): String = arg("check_visibility", enabled.toString())
+    public static String noBuild() {
+        return flag("nobuild");
+    }
 
-  @JvmStatic fun orderOutput(enabled: Boolean): String = yesNoArg("order_output", enabled)
+    public static String combinedReportLcov() {
+        return arg("combined_report", "lcov");
+    }
 
-  @JvmStatic fun universeScope(scope: String): String = arg("universe_scope", scope)
+    public static String instrumentationFilter(String filter) {
+        return arg("instrumentation_filter", filter);
+    }
 
-  @JvmStatic fun consistentLabels(enabled: Boolean): String = arg("consistent_labels", enabled.toString())
+    public static String checkVisibility(boolean enabled) {
+        return arg("check_visibility", Boolean.toString(enabled));
+    }
 
-  @JvmStatic
-  fun buildEventBinaryFile(file: String): String = arg("build_event_binary_file", file)
+    public static String orderOutput(boolean enabled) {
+        return yesNoArg("order_output", enabled);
+    }
 
-  @JvmStatic
-  fun buildEventBinaryFileWait(): String = arg("build_event_binary_file_upload_mode", "wait_for_upload_complete")
+    public static String universeScope(String scope) {
+        return arg("universe_scope", scope);
+    }
 
-  /**
-   * https://bazel.build/reference/command-line-reference#flag--target_pattern_file
-   */
-  @JvmStatic
-  fun targetPatternFile(file: String): String = arg("target_pattern_file", file)
+    public static String consistentLabels(boolean enabled) {
+        return arg("consistent_labels", Boolean.toString(enabled));
+    }
 
-  @JvmStatic
-  fun queryFile(file: String): String = arg("query_file", file)
+    public static String buildEventBinaryFile(String file) {
+        return arg("build_event_binary_file", file);
+    }
 
-  @JvmStatic
-  fun remoteDownloadOutputsTopLevel(): String = arg("remote_download_outputs", "toplevel")
+    public static String buildEventBinaryFileWait() {
+        return arg("build_event_binary_file_upload_mode", "wait_for_upload_complete");
+    }
 
-  @JvmStatic
-  fun remoteDownloadRegex(pattern: String): String = arg("remote_download_regex", pattern)
+    /**
+     * https://bazel.build/reference/command-line-reference#flag--target_pattern_file
+     */
+    public static String targetPatternFile(String file) {
+        return arg("target_pattern_file", file);
+    }
 
-  private fun yesNoArg(name: String, enable: Boolean) = arg(name, if (enable) "yes" else "no")
+    public static String queryFile(String file) {
+        return arg("query_file", file);
+    }
 
-  private fun arg(name: String, value: String) = String.format("--%s=%s", name, value)
+    public static String remoteDownloadOutputsTopLevel() {
+        return arg("remote_download_outputs", "toplevel");
+    }
 
-  private fun flag(name: String) = "--$name"
+    public static String remoteDownloadRegex(String pattern) {
+        return arg("remote_download_regex", pattern);
+    }
 
-  object OutputFormat {
-    @JvmStatic fun label(): String = outputFlag("label")
-    @JvmStatic fun json(): String = outputFlag("json")
-    @JvmStatic fun xml(): String = outputFlag("xml")
-    @JvmStatic fun proto(): String = outputFlag("proto")
-    @JvmStatic fun streamed_proto(): String = outputFlag("streamed_proto")
+    private static String yesNoArg(String name, boolean enable) {
+        return arg(name, enable ? "yes" : "no");
+    }
 
-    private fun outputFlag(format: String) = arg("output", format)
-  }
+    private static String arg(String name, String value) {
+        return String.format("--%s=%s", name, value);
+    }
+
+    private static String flag(String name) {
+        return "--" + name;
+    }
+
+    public static final class OutputFormat {
+        private OutputFormat() {
+        }
+
+        public static String label() {
+            return outputFlag("label");
+        }
+
+        public static String json() {
+            return outputFlag("json");
+        }
+
+        public static String xml() {
+            return outputFlag("xml");
+        }
+
+        public static String proto() {
+            return outputFlag("proto");
+        }
+
+        public static String streamed_proto() {
+            return outputFlag("streamed_proto");
+        }
+
+        private static String outputFlag(String format) {
+            return arg("output", format);
+        }
+    }
 }

@@ -1,10 +1,10 @@
-package org.jetbrains.bazel.server.diagnostics
+package org.jetbrains.bazel.server.diagnostics;
 
-internal interface Parser {
-  fun tryParse(output: Output): List<Diagnostic>
+import java.util.List;
 
-  companion object {
+interface Parser {
+    List<Diagnostic> tryParse(Output output);
+
     // regex part to match the path
-    const val PATH_PART = """(?:[a-zA-z]:[\/\\])?[^:\r\n]+"""
-  }
+    String PATH_PART = "(?:[a-zA-z]:[\\/\\\\])?[^:\\r\\n]+";
 }

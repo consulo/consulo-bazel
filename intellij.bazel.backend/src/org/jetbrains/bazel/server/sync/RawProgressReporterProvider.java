@@ -1,20 +1,25 @@
-package org.jetbrains.bazel.server.sync
+package org.jetbrains.bazel.server.sync;
 
-import com.intellij.platform.util.progress.RawProgressReporter
-import com.intellij.platform.util.progress.reportRawProgress
-import org.jetbrains.annotations.ApiStatus
+import consulo.application.progress.EmptyProgressIndicator;
+import consulo.application.progress.ProgressIndicator;
+import consulo.application.progress.ProgressManager;
 
-@ApiStatus.Internal
-interface RawProgressReporterProvider {
-  suspend operator fun <T> invoke(block: suspend (reporter: RawProgressReporter) -> T): T
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
-  companion object {
-    fun current(): RawProgressReporterProvider {
-      return object : RawProgressReporterProvider {
-        override suspend fun <T> invoke(block: suspend (reporter: RawProgressReporter) -> T): T {
-          return reportRawProgress { block(it) }
-        }
-      }
+// consulo: RawProgressReporter is mapped to ProgressIndicator
+public interface RawProgressReporterProvider {
+    <T> CompletableFuture<T> invoke(Function<ProgressIndicator, CompletableFuture<T>> block);
+
+    static RawProgressReporterProvider current() {
+        return new RawProgressReporterProvider() {
+            @Override
+            public <T> CompletableFuture<T> invoke(Function<ProgressIndicator, CompletableFuture<T>> block) {
+                // consulo: upstream reportRawProgress { } reports to the progress of the current coroutine context;
+                // the progress indicator of the calling thread is used, or an empty one when there is none
+                ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
+                return block.apply(indicator != null ? indicator : new EmptyProgressIndicator());
+            }
+        };
     }
-  }
 }

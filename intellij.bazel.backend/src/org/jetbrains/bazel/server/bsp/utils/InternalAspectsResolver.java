@@ -1,14 +1,23 @@
-package org.jetbrains.bazel.server.bsp.utils
+package org.jetbrains.bazel.server.bsp.utils;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import java.nio.file.Path
+import org.jetbrains.bazel.commons.constants.Constants;
 
-@ApiStatus.Internal
-class InternalAspectsResolver(
-  val workspaceRoot: Path,
-) {
-  private val prefix: String = "//${Constants.DOT_BAZELBSP_DIR_NAME}/"
+import java.nio.file.Path;
 
-  fun resolveLabel(aspect: String): String = "$prefix$aspect"
+public class InternalAspectsResolver {
+    private final Path myWorkspaceRoot;
+
+    private final String myPrefix = "//" + Constants.DOT_BAZELBSP_DIR_NAME + "/";
+
+    public InternalAspectsResolver(Path workspaceRoot) {
+        myWorkspaceRoot = workspaceRoot;
+    }
+
+    public Path getWorkspaceRoot() {
+        return myWorkspaceRoot;
+    }
+
+    public String resolveLabel(String aspect) {
+        return myPrefix + aspect;
+    }
 }

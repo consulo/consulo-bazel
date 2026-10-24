@@ -1,82 +1,71 @@
-package org.jetbrains.bazel.server
+package org.jetbrains.bazel.server;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.bazelrunner.ResolvedModulesAndWarning
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bazel.server.model.AspectSyncProject
-import org.jetbrains.bazel.server.model.PhasedSyncProject
-import org.jetbrains.bazel.sync.BazelOutFileHardLinks
-import org.jetbrains.bsp.protocol.AnalysisDebugParams
-import org.jetbrains.bsp.protocol.AnalysisDebugResult
-import org.jetbrains.bsp.protocol.CompileParams
-import org.jetbrains.bsp.protocol.CompileResult
-import org.jetbrains.bsp.protocol.JvmToolchainInfo
-import org.jetbrains.bsp.protocol.OutputLocationParser
-import org.jetbrains.bsp.protocol.OutputLocationResolver
-import org.jetbrains.bsp.protocol.RunParams
-import org.jetbrains.bsp.protocol.RunResult
-import org.jetbrains.bsp.protocol.TaskId
-import org.jetbrains.bsp.protocol.TestParams
-import org.jetbrains.bsp.protocol.TestResult
-import org.jetbrains.bsp.protocol.WorkspaceBuildTargetParams
-import org.jetbrains.bsp.protocol.WorkspaceBuildTargetPhasedParams
-import org.jetbrains.bsp.protocol.WorkspaceDirectoriesResult
+import org.jetbrains.bazel.bazelrunner.ModuleResolver.ResolvedModulesAndWarning;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.server.BazelQuery.BazelQueryParams;
+import org.jetbrains.bazel.server.BazelQuery.BazelQueryResult;
+import org.jetbrains.bazel.server.model.BazelSyncProject.AspectSyncProject;
+import org.jetbrains.bazel.server.model.BazelSyncProject.PhasedSyncProject;
+import org.jetbrains.bazel.sync.BazelOutFileHardLinks;
+import org.jetbrains.bsp.protocol.CompileParams;
+import org.jetbrains.bsp.protocol.CompileResult;
+import org.jetbrains.bsp.protocol.JvmToolchainInfo;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jetbrains.bsp.protocol.OutputLocationParser;
+import org.jetbrains.bsp.protocol.RunParams;
+import org.jetbrains.bsp.protocol.RunResult;
+import org.jetbrains.bsp.protocol.RunWithDebugParams.AnalysisDebugParams;
+import org.jetbrains.bsp.protocol.RunWithDebugParams.AnalysisDebugResult;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jetbrains.bsp.protocol.TestParams;
+import org.jetbrains.bsp.protocol.TestResult;
+import org.jetbrains.bsp.protocol.WorkspaceBuildTargetParams;
+import org.jetbrains.bsp.protocol.WorkspaceBuildTargetPhasedParams;
+import org.jetbrains.bsp.protocol.WorkspaceDirectories.WorkspaceDirectoriesResult;
 
-interface BazelServerFacade {
-  @get:ApiStatus.Internal
-  val bazelInfo: BazelInfo
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
-  @get:ApiStatus.Internal
-  val outFileHardLinks: BazelOutFileHardLinks
+public interface BazelServerFacade {
+    BazelInfo getBazelInfo();
 
-  @get:ApiStatus.Internal
-  val bazelPathsResolver: BazelPathsResolver
+    BazelOutFileHardLinks getOutFileHardLinks();
 
-  val projectView: ProjectView
+    BazelPathsResolver getBazelPathsResolver();
 
-  @get:ApiStatus.Internal
-  val outputResolver: OutputLocationResolver
+    ProjectView getProjectView();
 
-  @get:ApiStatus.Internal
-  val outputParser: OutputLocationParser
+    OutputLocationResolver getOutputResolver();
 
-  @ApiStatus.Internal
-  suspend fun workspaceRepoMapping(taskId: TaskId): RepoMapping
+    OutputLocationParser getOutputParser();
 
-  @ApiStatus.Internal
-  suspend fun showRepos(repoNames: List<String>, taskId: TaskId): ResolvedModulesAndWarning
+    CompletableFuture<RepoMapping> workspaceRepoMapping(TaskId taskId);
 
-  @ApiStatus.Internal
-  suspend fun workspaceBuildTargets(params: WorkspaceBuildTargetParams): AspectSyncProject
+    CompletableFuture<ResolvedModulesAndWarning> showRepos(List<String> repoNames, TaskId taskId);
 
-  @ApiStatus.Internal
-  suspend fun workspaceBuildPhasedTargets(params: WorkspaceBuildTargetPhasedParams): PhasedSyncProject
+    CompletableFuture<AspectSyncProject> workspaceBuildTargets(WorkspaceBuildTargetParams params);
 
-  @ApiStatus.Internal
-  suspend fun buildTargetCompile(params: CompileParams): CompileResult
+    CompletableFuture<PhasedSyncProject> workspaceBuildPhasedTargets(WorkspaceBuildTargetPhasedParams params);
 
-  /**
-   * [buildTargetRun] can also be used for debugging if you pass params into [org.jetbrains.bsp.protocol.RunParams.additionalBazelParams]
-   */
-  @ApiStatus.Internal
-  suspend fun buildTargetRun(params: RunParams): RunResult
+    CompletableFuture<CompileResult> buildTargetCompile(CompileParams params);
 
-  @ApiStatus.Internal
-  suspend fun buildTargetTest(params: TestParams): TestResult
+    /**
+     * {@link #buildTargetRun} can also be used for debugging if you pass params into
+     * {@link org.jetbrains.bsp.protocol.RunParams#additionalBazelParams()}
+     */
+    CompletableFuture<RunResult> buildTargetRun(RunParams params);
 
-  @ApiStatus.Internal
-  suspend fun workspaceDirectories(repoMapping: RepoMapping, taskId: TaskId): WorkspaceDirectoriesResult
+    CompletableFuture<TestResult> buildTargetTest(TestParams params);
 
-  @ApiStatus.Internal
-  suspend fun buildTargetAnalysisDebug(params: AnalysisDebugParams): AnalysisDebugResult
+    CompletableFuture<WorkspaceDirectoriesResult> workspaceDirectories(RepoMapping repoMapping, TaskId taskId);
 
-  @ApiStatus.Internal
-  suspend fun jvmToolchainInfoForTarget(target: Label): JvmToolchainInfo
+    CompletableFuture<AnalysisDebugResult> buildTargetAnalysisDebug(AnalysisDebugParams params);
 
-  @ApiStatus.Internal
-  suspend fun <T> query(params: BazelQueryParams<T>): BazelQueryResult<T>
+    CompletableFuture<JvmToolchainInfo> jvmToolchainInfoForTarget(Label target);
+
+    <T> CompletableFuture<BazelQueryResult<T>> query(BazelQueryParams<T> params);
 }

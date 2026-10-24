@@ -1,67 +1,105 @@
-package org.jetbrains.bazel.sync.workspace.persistence.mvstore
+package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
-import com.dynatrace.hash4j.hashing.Hashing
-import it.unimi.dsi.fastutil.ints.IntArrayList
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.snapshot.FileToTargetMap
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bsp.protocol.OutputLocation
-import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.io.path.absolutePathString
+import com.dynatrace.hash4j.hashing.Hashing;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.SnapshotStorage.SnapshotGeneration;
+import org.jetbrains.bazel.sync.workspace.snapshot.FileToTargetMap;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 
-internal class PersistentFileToTargetMap(
-  val partialSnapshot: PersistentWorkspaceSnapshot,
-  val generation: SnapshotGeneration,
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-  /**
-   * Live changes to [FileToTargetMap] performed using [FileToTargetMap.addMapping] and [FileToTargetMap.removeMapping],
-   * are accumulated into [delta] map in order to prevent full rebuilds on entire [FileToTargetMap] on each small change.
-   * This was mainly done to prevent full snapshot saves even on smallest changes performed by bazel file listener.
-   */
-  internal val delta: ConcurrentHashMap<Long, List<WorkspaceTargetKey>> = ConcurrentHashMap(),
-) : FileToTargetMap {
+// consulo: internal upstream, public for the top-level hashFilePath()
+public final class PersistentFileToTargetMap implements FileToTargetMap {
+    private final PersistentWorkspaceSnapshot myPartialSnapshot;
+    private final SnapshotGeneration myGeneration;
 
-  override fun getTargetsByFile(path: Path): List<WorkspaceTargetKey> {
-    delta[hashFilePath(path)]?.let { return it }
-    return generation.findTargetsByFile(partialSnapshot, path).toList()
-  }
+    /**
+     * Live changes to {@link FileToTargetMap} performed using {@link FileToTargetMap#addMapping} and {@link FileToTargetMap#removeMapping},
+     * are accumulated into {@code delta} map in order to prevent full rebuilds on entire {@link FileToTargetMap} on each small change.
+     * This was mainly done to prevent full snapshot saves even on smallest changes performed by bazel file listener.
+     */
+    private final ConcurrentHashMap<Long, List<WorkspaceTargetKey>> myDelta;
 
-  override fun addMapping(path: Path, targets: List<WorkspaceTargetKey>) {
-    delta[hashFilePath(path)] = targets
-  }
-
-  override fun removeMapping(path: Path) {
-    delta[hashFilePath(path)] = listOf()
-  }
-
-  override val size: Int
-    get() = generation.fileCount()  // stats-only, small pending deltas are not counted
-
-  fun flush() {
-    for ((hash, keys) in delta) {
-      if (keys.isEmpty()) {
-        generation.removeFileMapping(hash)
-      }
-      else {
-        val keyIds = IntArrayList(keys.size)
-        for (key in keys) {
-          val keyId = partialSnapshot.keyId2Target.getReverseOrDefault(key, -1)
-          if (keyId > 0) {
-            keyIds.add(keyId)
-          }
-        }
-        if (keyIds.isEmpty) {
-          generation.removeFileMapping(hash)
-        }
-        else {
-          generation.putFileMapping(hash, keyIds)
-        }
-      }
-      delta.remove(hash, keys)
+    PersistentFileToTargetMap(PersistentWorkspaceSnapshot partialSnapshot, SnapshotGeneration generation) {
+        this(partialSnapshot, generation, new ConcurrentHashMap<>());
     }
-  }
-}
 
-@ApiStatus.Internal
-fun hashFilePath(path: Path): Long = Hashing.xxh3_64().hashStream().putString(path.absolutePathString()).asLong
+    PersistentFileToTargetMap(
+        PersistentWorkspaceSnapshot partialSnapshot,
+        SnapshotGeneration generation,
+        ConcurrentHashMap<Long, List<WorkspaceTargetKey>> delta
+    ) {
+        myPartialSnapshot = partialSnapshot;
+        myGeneration = generation;
+        myDelta = delta;
+    }
+
+    PersistentWorkspaceSnapshot getPartialSnapshot() {
+        return myPartialSnapshot;
+    }
+
+    SnapshotGeneration getGeneration() {
+        return myGeneration;
+    }
+
+    ConcurrentHashMap<Long, List<WorkspaceTargetKey>> getDelta() {
+        return myDelta;
+    }
+
+    @Override
+    public List<WorkspaceTargetKey> getTargetsByFile(Path path) {
+        List<WorkspaceTargetKey> pending = myDelta.get(hashFilePath(path));
+        if (pending != null) {
+            return pending;
+        }
+        return myGeneration.findTargetsByFile(myPartialSnapshot, path).toList();
+    }
+
+    @Override
+    public void addMapping(Path path, List<WorkspaceTargetKey> targets) {
+        myDelta.put(hashFilePath(path), targets);
+    }
+
+    @Override
+    public void removeMapping(Path path) {
+        myDelta.put(hashFilePath(path), List.of());
+    }
+
+    @Override
+    public int getSize() {
+        return myGeneration.fileCount();  // stats-only, small pending deltas are not counted
+    }
+
+    public void flush() {
+        for (Map.Entry<Long, List<WorkspaceTargetKey>> entry : myDelta.entrySet()) {
+            long hash = entry.getKey();
+            List<WorkspaceTargetKey> keys = entry.getValue();
+            if (keys.isEmpty()) {
+                myGeneration.removeFileMapping(hash);
+            }
+            else {
+                IntArrayList keyIds = new IntArrayList(keys.size());
+                for (WorkspaceTargetKey key : keys) {
+                    int keyId = myPartialSnapshot.getKeyId2Target().getReverseOrDefault(key, -1);
+                    if (keyId > 0) {
+                        keyIds.add(keyId);
+                    }
+                }
+                if (keyIds.isEmpty()) {
+                    myGeneration.removeFileMapping(hash);
+                }
+                else {
+                    myGeneration.putFileMapping(hash, keyIds);
+                }
+            }
+            myDelta.remove(hash, keys);
+        }
+    }
+
+    public static long hashFilePath(Path path) {
+        return Hashing.xxh3_64().hashStream().putString(path.toAbsolutePath().toString()).getAsLong();
+    }
+}

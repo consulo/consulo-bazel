@@ -1,20 +1,32 @@
-package org.jetbrains.bazel.bazelrunner.outputs
+package org.jetbrains.bazel.bazelrunner.outputs;
 
-import org.jetbrains.annotations.ApiStatus
-import java.io.ByteArrayOutputStream
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
 
-@ApiStatus.Internal
-class OutputCollector {
-  private val raw = ByteArrayOutputStream()
+public class OutputCollector {
+    private final ByteArrayOutputStream myRaw = new ByteArrayOutputStream();
 
-  fun append(byte: Int) {
-    raw.write(byte)
-  }
+    public void append(int b) {
+        myRaw.write(b);
+    }
 
-  fun append(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size) {
-    raw.write(bytes, offset, length)
-  }
+    // consulo: overload for the upstream default arguments
+    public void append(byte[] bytes) {
+        append(bytes, 0, bytes.length);
+    }
 
-  fun raw(): ByteArray = raw.toByteArray()
-  fun lines(): List<String> = raw().toString(Charsets.UTF_8).lines()
+    public void append(byte[] bytes, int offset, int length) {
+        myRaw.write(bytes, offset, length);
+    }
+
+    public byte[] raw() {
+        return myRaw.toByteArray();
+    }
+
+    // consulo: Kotlin String.lines() splits on \r\n, \n and \r and keeps the trailing empty line
+    public List<String> lines() {
+        return Arrays.asList(new String(raw(), StandardCharsets.UTF_8).split("\r\n|\n|\r", -1));
+    }
 }

@@ -1,26 +1,33 @@
-package org.jetbrains.bazel.sync.workspace.snapshot
+package org.jetbrains.bazel.sync.workspace.snapshot;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bsp.protocol.BuildTarget
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
+
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 // contains minimal set of information needed for WorkspaceSnapshot construction/merge,
 // it allows to avoid unnecessary building of target graph and indexes
-@ApiStatus.Internal
-data class IncompleteWorkspaceSnapshot(
-  val targets: Map<WorkspaceTargetKey, BuildTarget>,
-  val rootTargets: Set<WorkspaceTargetKey>,
-  val configurations: Map<WorkspaceConfigurationId, WorkspaceConfiguration>,
-  val repoMapping: RepoMapping,
-  val workspaceName: String?,
-)
-
-@ApiStatus.Internal
-fun WorkspaceSnapshot.toIncompleteSnapshot(): IncompleteWorkspaceSnapshot =
-  IncompleteWorkspaceSnapshot(
-    targets = this.targets.allTargets().associateBy { it.key },
-    rootTargets = this.targetGraph.rootTargets.toHashSet(),
-    configurations = this.configurations,
-    repoMapping = this.repoMapping,
-    workspaceName = this.workspaceName,
-  )
+public record IncompleteWorkspaceSnapshot(
+    Map<WorkspaceTargetKey, BuildTarget> targets,
+    Set<WorkspaceTargetKey> rootTargets,
+    Map<WorkspaceConfigurationId, WorkspaceConfiguration> configurations,
+    RepoMapping repoMapping,
+    @Nullable String workspaceName
+) {
+    public static IncompleteWorkspaceSnapshot toIncompleteSnapshot(WorkspaceSnapshot receiver) {
+        Map<WorkspaceTargetKey, BuildTarget> targets = new LinkedHashMap<>();
+        receiver.targets().allTargets().forEach(it -> targets.put(it.getKey(), it));
+        return new IncompleteWorkspaceSnapshot(
+            targets,
+            receiver.targetGraph().getRootTargets().collect(Collectors.toCollection(HashSet::new)),
+            receiver.configurations(),
+            receiver.repoMapping(),
+            receiver.workspaceName()
+        );
+    }
+}

@@ -1,26 +1,32 @@
-package org.jetbrains.bazel.sync.workspace.persistence
+package org.jetbrains.bazel.sync.workspace.persistence;
 
-import kotlinx.coroutines.flow.StateFlow
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.util.concurrent.coroutine.ObservableValue;
+import consulo.util.lang.Pair;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-fun interface WorkspaceSnapshotUpdater<R> {
-  suspend fun update(snapshot: WorkspaceSnapshot): Pair<WorkspaceSnapshot, R>
-}
+import java.util.concurrent.CompletableFuture;
 
-@ApiStatus.Internal
-interface WorkspaceSnapshotService {
-  val snapshot: StateFlow<WorkspaceSnapshot>
+@ServiceAPI(ComponentScope.PROJECT)
+public interface WorkspaceSnapshotService {
+    @FunctionalInterface
+    interface WorkspaceSnapshotUpdater<R extends @Nullable Object> {
+        CompletableFuture<Pair<WorkspaceSnapshot, R>> update(WorkspaceSnapshot snapshot);
+    }
 
-  /**
-   * Awaits the initial disk load, then returns the current snapshot.
-   * [WorkspaceSnapshot.EMPTY] means no snapshot exists yet.
-   */
-  suspend fun currentSnapshot(): WorkspaceSnapshot
+    // consulo: StateFlow replaced by ObservableValue
+    ObservableValue<WorkspaceSnapshot> getSnapshot();
 
-  /**
-   * Update current snapshot atomically
-   */
-  suspend fun <R> update(updater: WorkspaceSnapshotUpdater<R>): Pair<WorkspaceSnapshot, R>
+    /**
+     * Awaits the initial disk load, then returns the current snapshot.
+     * {@link WorkspaceSnapshot#EMPTY} means no snapshot exists yet.
+     */
+    CompletableFuture<WorkspaceSnapshot> currentSnapshot();
+
+    /**
+     * Update current snapshot atomically
+     */
+    <R extends @Nullable Object> CompletableFuture<Pair<WorkspaceSnapshot, R>> update(WorkspaceSnapshotUpdater<R> updater);
 }

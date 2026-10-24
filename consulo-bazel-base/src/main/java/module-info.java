@@ -18,7 +18,8 @@ import org.jspecify.annotations.NullMarked;
 
 /**
  * Upstream Bazel plugin core modules compiled as one module (they share packages), see CONSULO.md:
- * {@code intellij.bazel.languages}, {@code intellij.bazel.commons}, {@code intellij.bazel.projectview}.
+ * {@code intellij.bazel.languages}, {@code intellij.bazel.commons}, {@code intellij.bazel.projectview},
+ * {@code intellij.bazel.backend}.
  *
  * @author VISTALL
  * @since 2026-10-24
@@ -31,6 +32,8 @@ module consulo.bazel.base {
     requires consulo.language.code.style.api;
     requires consulo.language.code.style.ui.api;
     requires consulo.datacontext.api;
+    requires consulo.index.io;
+    requires consulo.disposer.api;
     requires consulo.color.scheme.api;
     requires consulo.code.editor.api;
     requires consulo.ui.api;
@@ -56,6 +59,11 @@ module consulo.bazel.base {
     requires com.google.common;
     requires com.dynatrace.hash4j;
     requires org.commonmark;
+    requires it.unimi.dsi.fastutil;
+    requires tools.jackson.databind;
+    requires tools.jackson.dataformat.xml;
+    requires com.h2database.mvstore;
+    requires com.esotericsoftware.kryo.kryo5;
     requires org.commonmark.ext.gfm.tables;
 
     requires transitive consulo.bazel.protobuf;
@@ -66,12 +74,14 @@ module consulo.bazel.base {
     exports consulo.bazel.languages.localize;
     exports consulo.bazel.commons.localize;
     exports consulo.bazel.projectview.localize;
+    exports consulo.bazel.backend.localize;
 
     // consulo-only
     exports consulo.bazel.languages;
     exports consulo.bazel.commons;
     exports consulo.bazel.documentation;
     exports consulo.bazel.projectview;
+    exports consulo.bazel.workspace;
 
     exports org.jetbrains.bazel.languages;
     exports org.jetbrains.bazel.languages.bazelquery;
@@ -158,7 +168,53 @@ module consulo.bazel.base {
     exports org.jetbrains.bazel.languages.projectview.psi.sections;
     exports org.jetbrains.bazel.languages.projectview.references;
 
+
+    // intellij.bazel.backend
+    exports org.jetbrains.bazel.action;
+    exports org.jetbrains.bazel.bazelrunner;
+    exports org.jetbrains.bazel.bazelrunner.outputs;
+    exports org.jetbrains.bazel.bazelrunner.params;
+    exports org.jetbrains.bazel.install;
+    exports org.jetbrains.bazel.languages.starlark.repomapping;
+    exports org.jetbrains.bazel.magicmetamodel;
+    exports org.jetbrains.bazel.run.task;
+    exports org.jetbrains.bazel.server;
+    exports org.jetbrains.bazel.server.bep;
+    exports org.jetbrains.bazel.server.bsp;
+    exports org.jetbrains.bazel.server.bsp.managers;
+    exports org.jetbrains.bazel.server.bsp.utils;
+    exports org.jetbrains.bazel.server.bzlmod;
+    exports org.jetbrains.bazel.server.model;
+    exports org.jetbrains.bazel.server.sync;
+    exports org.jetbrains.bazel.server.sync.firstPhase;
+    exports org.jetbrains.bazel.server.sync.sharding;
+    exports org.jetbrains.bazel.sync.projectStructure;
+    exports org.jetbrains.bazel.sync.status;
+    exports org.jetbrains.bazel.sync.task;
+    exports org.jetbrains.bazel.sync.workspace;
+    exports org.jetbrains.bazel.sync.workspace.importer;
+    exports org.jetbrains.bazel.sync.workspace.languages;
+    exports org.jetbrains.bazel.sync.workspace.mapper;
+    exports org.jetbrains.bazel.sync.workspace.persistence.mvstore;
+    exports org.jetbrains.bazel.sync.workspace.targetKind;
+    exports org.jetbrains.bazel.target;
+    exports org.jetbrains.bazel.taskEvents;
+    exports org.jetbrains.bazel.util;
+    exports org.jetbrains.bazel.workspace.indexing;
+    exports org.jetbrains.bazel.workspace.packageMarker;
+    exports org.jetbrains.bazel.workspacemodel.entities;
+
     // reflection: persistent settings state and Gson-parsed model classes
     opens org.jetbrains.bazel.settings.bazel to consulo.util.xml.serializer;
-    opens org.jetbrains.bsp.protocol to com.google.gson;
+    opens org.jetbrains.bazel.bazelrunner to com.google.gson;
+    opens org.jetbrains.bazel.server.bsp.managers to com.google.gson;
+    opens org.jetbrains.bazel.server.sync to com.google.gson;
+    opens org.jetbrains.bazel.server.bep to tools.jackson.databind;
+    opens consulo.bazel.workspace to consulo.util.xml.serializer;
+    // Kryo serializes the persisted workspace snapshot by reflection
+    opens org.jetbrains.bazel.sync.workspace.persistence.mvstore to com.esotericsoftware.kryo.kryo5;
+    opens org.jetbrains.bazel.sync.workspace.snapshot to com.esotericsoftware.kryo.kryo5;
+    opens org.jetbrains.bazel.label to com.esotericsoftware.kryo.kryo5;
+    opens org.jetbrains.bazel.commons to com.esotericsoftware.kryo.kryo5;
+    opens org.jetbrains.bsp.protocol to com.google.gson, com.esotericsoftware.kryo.kryo5;
 }

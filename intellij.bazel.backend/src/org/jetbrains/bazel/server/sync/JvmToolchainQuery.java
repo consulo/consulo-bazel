@@ -1,100 +1,120 @@
-package org.jetbrains.bazel.server.sync
+package org.jetbrains.bazel.server.sync;
 
-import com.google.gson.Gson
-import com.google.gson.JsonObject
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.bazelrunner.BazelRunner
-import org.jetbrains.bazel.commons.ExecUtils
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bsp.protocol.JvmToolchainInfo
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import org.jetbrains.bazel.bazelrunner.BazelCommand;
+import org.jetbrains.bazel.bazelrunner.BazelRunner;
+import org.jetbrains.bazel.commons.ExecUtils;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bsp.protocol.JvmToolchainInfo;
 
-@ApiStatus.Internal
-object JvmToolchainQuery {
-  suspend fun jvmToolchainQueryForTarget(
-    bazelRunner: BazelRunner,
-    projectView: ProjectView,
-    target: Label,
-  ): JvmToolchainInfo {
-    val aqueryExpression = javacMnemonic(target)
-    val command =
-      bazelRunner.buildBazelCommand(projectView = projectView, inheritProjectviewOptionsOverride = true) {
-        aquery {
-          options.addAll(listOf("--output=jsonproto", aqueryExpression))
+import java.io.ByteArrayInputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+public final class JvmToolchainQuery {
+    private JvmToolchainQuery() {
+    }
+
+    public static CompletableFuture<JvmToolchainInfo> jvmToolchainQueryForTarget(
+        BazelRunner bazelRunner,
+        ProjectView projectView,
+        Label target
+    ) {
+        String aqueryExpression = javacMnemonic(target);
+        BazelCommand command =
+            bazelRunner.buildBazelCommand(projectView, true, builder ->
+                builder.aquery(aquery -> {
+                    aquery.getOptions().addAll(List.of("--output=jsonproto", aqueryExpression));
+                })
+            );
+        return bazelRunner
+            .runBazelCommand(command, null, false)
+            .waitAndGetResult()
+            .thenApply(aqueryResult -> {
+                if (aqueryResult.isNotSuccess()) {
+                    throw new RuntimeException("Could not query target '" + target + "' for jvm toolchain info");
+                }
+
+                return parseJavaHomeAndToolchainPathFromAquery(aqueryResult.getStdout());
+            });
+    }
+
+    public static String javacMnemonic(Label target) {
+        return "mnemonic(\"Javac\", \"" + target + "\")";
+    }
+
+    /**
+     * Extract java_home, toolchain_path, and jvm_opts from aquery result.
+     * Uses -jar as delimiter: everything before -jar are JVM options, everything after are compiler options.
+     */
+    private static JvmToolchainInfo parseJavaHomeAndToolchainPathFromAquery(byte[] stdout) {
+        Gson gson = new Gson();
+        JsonObject jsonObject =
+            gson.fromJson(new InputStreamReader(new ByteArrayInputStream(stdout), StandardCharsets.UTF_8), JsonObject.class);
+        JsonArray actions = jsonObject.getAsJsonArray("actions");
+
+        if (actions.isEmpty()) {
+            throw new RuntimeException("No Javac actions found in aquery result");
         }
-      }
-    val aqueryResult =
-      bazelRunner
-        .runBazelCommand(command, logProcessOutput = false, taskId = null)
-        .waitAndGetResult()
-    if (aqueryResult.isNotSuccess) throw RuntimeException("Could not query target '$target' for jvm toolchain info")
 
-    return parseJavaHomeAndToolchainPathFromAquery(aqueryResult.stdout)
-  }
+        JsonElement firstAction = actions.size() > 0 ? actions.get(0) : null;
+        if (firstAction == null) {
+            throw new RuntimeException("No Javac actions found in aquery result");
+        }
+        JsonObject javacAction = firstAction.getAsJsonObject();
+        JsonArray arguments = javacAction.getAsJsonArray("arguments");
 
-  fun javacMnemonic(target: Label): String = "mnemonic(\"Javac\", \"$target\")"
+        String javaHome = "";
+        String toolchainPath = "";
+        List<String> jvmOpts = new ArrayList<>();
 
-  /**
-   * Extract java_home, toolchain_path, and jvm_opts from aquery result.
-   * Uses -jar as delimiter: everything before -jar are JVM options, everything after are compiler options.
-   */
-  private fun parseJavaHomeAndToolchainPathFromAquery(stdout: ByteArray): JvmToolchainInfo {
-    val gson = Gson()
-    val jsonObject = gson.fromJson(stdout.inputStream().reader(), JsonObject::class.java)
-    val actions = jsonObject.getAsJsonArray("actions")
+        // Find -jar position to use as delimiter
+        int jarIndex = -1;
+        for (int i = 0; i < arguments.size(); i++) {
+            if (arguments.get(i).getAsString().equals("-jar")) {
+                jarIndex = i;
+                break;
+            }
+        }
 
-    if (actions.isEmpty) {
-      throw RuntimeException("No Javac actions found in aquery result")
+        if (jarIndex == -1) {
+            throw new RuntimeException("No -jar argument found in javac command");
+        }
+
+        // Extract java_home from first argument
+        if (arguments.size() > 0) {
+            String javaExec = arguments.get(0).getAsString();
+            String javaExecName = ExecUtils.calculateExecutableName("java");
+            if (javaExec.endsWith("/bin/" + javaExecName) || javaExec.endsWith("/" + javaExecName)) {
+                javaHome = javaExec.substring(0, javaExec.lastIndexOf("/bin/" + javaExecName));
+            }
+            else if (javaExec.contains("/bin/" + javaExecName)) {
+                javaHome = javaExec.substring(0, javaExec.indexOf("/bin/" + javaExecName));
+            }
+        }
+
+        // Extract toolchain_path from argument after -jar
+        if (jarIndex + 1 < arguments.size()) {
+            toolchainPath = arguments.get(jarIndex + 1).getAsString();
+        }
+
+        // Extract JVM options: everything between java executable and -jar
+        for (int i = 1; i < jarIndex; i++) {
+            String arg = arguments.get(i).getAsString();
+            jvmOpts.add(arg);
+        }
+
+        return new JvmToolchainInfo(
+            javaHome,
+            toolchainPath,
+            jvmOpts
+        );
     }
-
-    val javacAction =
-      actions.firstOrNull()?.asJsonObject
-        ?: throw RuntimeException("No Javac actions found in aquery result")
-    val arguments = javacAction.getAsJsonArray("arguments")
-
-    var javaHome = ""
-    var toolchainPath = ""
-    val jvmOpts = mutableListOf<String>()
-
-    // Find -jar position to use as delimiter
-    var jarIndex = -1
-    for (i in 0 until arguments.size()) {
-      if (arguments[i].asString == "-jar") {
-        jarIndex = i
-        break
-      }
-    }
-
-    if (jarIndex == -1) {
-      throw RuntimeException("No -jar argument found in javac command")
-    }
-
-    // Extract java_home from first argument
-    if (arguments.size() > 0) {
-      val javaExec = arguments[0].asString
-      val javaExecName = ExecUtils.calculateExecutableName("java")
-      if (javaExec.endsWith("/bin/$javaExecName") || javaExec.endsWith("/$javaExecName")) {
-        javaHome = javaExec.substring(0, javaExec.lastIndexOf("/bin/$javaExecName"))
-      } else if (javaExec.contains("/bin/$javaExecName")) {
-        javaHome = javaExec.substring(0, javaExec.indexOf("/bin/$javaExecName"))
-      }
-    }
-
-    // Extract toolchain_path from argument after -jar
-    if (jarIndex + 1 < arguments.size()) {
-      toolchainPath = arguments[jarIndex + 1].asString
-    }
-
-    // Extract JVM options: everything between java executable and -jar
-    for (i in 1 until jarIndex) {
-      val arg = arguments[i].asString
-      jvmOpts.add(arg)
-    }
-
-    return JvmToolchainInfo(
-      java_home = javaHome,
-      toolchain_path = toolchainPath,
-      jvm_opts = jvmOpts,
-    )
-  }
 }

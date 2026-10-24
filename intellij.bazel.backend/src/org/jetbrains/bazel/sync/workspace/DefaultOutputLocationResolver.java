@@ -1,82 +1,99 @@
-package org.jetbrains.bazel.sync.workspace
+package org.jetbrains.bazel.sync.workspace;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelInfo
-import org.jetbrains.bazel.commons.LocalRepositoryMapping
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.sync.BazelOutFileHardLinks
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.OutputLocationResolver
-import org.jetbrains.bsp.protocol.isGenerated
-import org.jetbrains.bsp.protocol.isUserCode
-import org.jetbrains.bsp.protocol.toExecrootPath
-import java.nio.file.InvalidPathException
-import java.nio.file.Path
-import kotlin.io.path.Path
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RepoMapping.LocalRepositoryMapping;
+import org.jetbrains.bazel.sync.BazelOutFileHardLinks;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class DefaultOutputLocationResolver private constructor(
-  private val bazelInfo: BazelInfo,
-) : OutputLocationResolver {
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 
-  companion object {
-    fun createLocalWorkspaceOnly(bazelInfo: BazelInfo, repoMapping: RepoMapping): OutputLocationResolver =
-      object : DefaultOutputLocationResolver(bazelInfo) {
-        override fun resolve(location: OutputLocation, localOverride: LocalRepositoryMapping?): Path? {
-          if (!location.isUserCode(repoMapping) || location.isGenerated) {
-            return null
-          }
-          return super.resolve(location, localOverride)
-        }
-      }
+public class DefaultOutputLocationResolver implements OutputLocationResolver {
+    private final BazelInfo myBazelInfo;
 
-    fun createHardlinkResolving(
-      bazelInfo: BazelInfo,
-      hardlinks: BazelOutFileHardLinks = BazelOutFileHardLinks.NONE,
-    ): OutputLocationResolver =
-      object : DefaultOutputLocationResolver(bazelInfo = bazelInfo) {
-        override fun resolveExecrootPath(execrootPath: Path): Path = hardlinks.resolveCachedPath(execrootPath)
-      }
+    private DefaultOutputLocationResolver(BazelInfo bazelInfo) {
+        myBazelInfo = bazelInfo;
+    }
+
+    public static OutputLocationResolver createLocalWorkspaceOnly(BazelInfo bazelInfo, RepoMapping repoMapping) {
+        return new DefaultOutputLocationResolver(bazelInfo) {
+            @Override
+            public @Nullable Path resolve(OutputLocation location, @Nullable LocalRepositoryMapping localOverride) {
+                if (!OutputLocation.isUserCode(location, repoMapping) || OutputLocation.isGenerated(location)) {
+                    return null;
+                }
+                return super.resolve(location, localOverride);
+            }
+        };
+    }
+
+    // consulo: overload for the upstream default argument (hardlinks = BazelOutFileHardLinks.NONE)
+    public static OutputLocationResolver createHardlinkResolving(BazelInfo bazelInfo) {
+        return createHardlinkResolving(bazelInfo, BazelOutFileHardLinks.NONE);
+    }
+
+    public static OutputLocationResolver createHardlinkResolving(
+        BazelInfo bazelInfo,
+        BazelOutFileHardLinks hardlinks
+    ) {
+        return new DefaultOutputLocationResolver(bazelInfo) {
+            @Override
+            protected Path resolveExecrootPath(Path execrootPath) {
+                return hardlinks.resolveCachedPath(execrootPath);
+            }
+        };
+    }
 
     /**
      * Resolved locations can be located inside bazel execroot.
      */
-    fun createExecrootResolving(bazelInfo: BazelInfo): OutputLocationResolver = object : DefaultOutputLocationResolver(bazelInfo) {}
-  }
+    public static OutputLocationResolver createExecrootResolving(BazelInfo bazelInfo) {
+        return new DefaultOutputLocationResolver(bazelInfo) {
+        };
+    }
 
-  override fun resolve(
-    location: OutputLocation,
-    localOverride: LocalRepositoryMapping?,
-  ): Path? = try {
-    val resolved = when (location) {
-      is OutputLocation.Host -> Path(location.absolutePath)
-      is OutputLocation.Workspace -> bazelInfo.workspaceRoot.resolve(location.relativePath)
-      is OutputLocation.Output -> bazelInfo.execRoot.resolve(location.toExecrootPath())
-      is OutputLocation.External -> resolveExternal(location, localOverride)
+    @Override
+    public @Nullable Path resolve(
+        OutputLocation location,
+        @Nullable LocalRepositoryMapping localOverride
+    ) {
+        try {
+            Path resolved = switch (location) {
+                case OutputLocation.Host host -> Path.of(host.absolutePath());
+                case OutputLocation.Workspace workspace -> myBazelInfo.workspaceRoot().resolve(workspace.relativePath());
+                case OutputLocation.Output output -> myBazelInfo.execRoot().resolve(OutputLocation.toExecrootPath(output));
+                case OutputLocation.External external -> resolveExternal(external, localOverride);
+            };
+            if (OutputLocation.isGenerated(location)) {
+                return resolveExecrootPath(resolved);
+            }
+            else {
+                return resolved;
+            }
+        }
+        catch (InvalidPathException ignored) {
+            return null;
+        }
     }
-    if (location.isGenerated) {
-      resolveExecrootPath(resolved)
-    } else {
-      resolved
-    }
-  }
-  catch (_: InvalidPathException) {
-    null
-  }
 
-  private fun resolveExternal(location: OutputLocation.External, localOverride: LocalRepositoryMapping?): Path {
-    if (location.isGenerated) {
-      return bazelInfo.execRoot.resolve(location.toExecrootPath()).normalize()
+    private Path resolveExternal(OutputLocation.External location, @Nullable LocalRepositoryMapping localOverride) {
+        if (OutputLocation.isGenerated(location)) {
+            return myBazelInfo.execRoot().resolve(OutputLocation.toExecrootPath(location)).normalize();
+        }
+        Path overriddenRoot = localOverride != null ? localOverride.localRepositories().get(location.repoName()) : null;
+        if (overriddenRoot != null) {
+            return myBazelInfo.workspaceRoot().resolve(overriddenRoot).resolve(location.relativePath()).normalize();
+        }
+        // a source file lives in the output base in both layouts
+        return myBazelInfo.outputBase().resolve("external")
+            .resolve(location.repoName())
+            .resolve(location.relativePath());
     }
-    val overriddenRoot = localOverride?.localRepositories?.get(location.repoName)
-    if (overriddenRoot != null) {
-      return bazelInfo.workspaceRoot.resolve(overriddenRoot).resolve(location.relativePath).normalize()
-    }
-    // a source file lives in the output base in both layouts
-    return bazelInfo.outputBase.resolve("external")
-      .resolve(location.repoName)
-      .resolve(location.relativePath)
-  }
 
-  protected open fun resolveExecrootPath(execrootPath: Path): Path = execrootPath
+    protected Path resolveExecrootPath(Path execrootPath) {
+        return execrootPath;
+    }
 }

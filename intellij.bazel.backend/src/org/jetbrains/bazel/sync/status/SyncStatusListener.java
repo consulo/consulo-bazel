@@ -1,13 +1,14 @@
-package org.jetbrains.bazel.sync.status
+package org.jetbrains.bazel.sync.status;
 
-import com.intellij.util.messages.Topic
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.TopicAPI;
 
-interface SyncStatusListener {
-  fun syncStarted()
+@TopicAPI(ComponentScope.PROJECT)
+public interface SyncStatusListener {
+    void syncStarted();
 
-  fun syncFinished(canceled: Boolean)
+    void syncFinished(boolean canceled);
 
-  companion object {
-    val TOPIC: Topic<SyncStatusListener> = Topic(SyncStatusListener::class.java)
-  }
+    // consulo: Consulo topics are identified by the listener class
+    Class<SyncStatusListener> TOPIC = SyncStatusListener.class;
 }

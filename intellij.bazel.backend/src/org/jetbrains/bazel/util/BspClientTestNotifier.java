@@ -1,112 +1,143 @@
-package org.jetbrains.bazel.util
+package org.jetbrains.bazel.util;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.testing.BazelTestDetails
-import org.jetbrains.bsp.protocol.BazelTaskEventsHandler
-import org.jetbrains.bsp.protocol.JUnitStyleTestCaseData
-import org.jetbrains.bsp.protocol.TaskFinishParams
-import org.jetbrains.bsp.protocol.TaskId
-import org.jetbrains.bsp.protocol.TaskStartParams
-import org.jetbrains.bsp.protocol.TestFinish
-import org.jetbrains.bsp.protocol.TestFinishData
-import org.jetbrains.bsp.protocol.TestStart
-import org.jetbrains.bsp.protocol.TestStatus
-import org.jetbrains.bsp.protocol.TestTask
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.testing.BazelTestDetails;
+import org.jetbrains.bsp.protocol.BazelTaskEventsHandler;
+import org.jetbrains.bsp.protocol.TaskFinishParams;
+import org.jetbrains.bsp.protocol.TaskFinishParams.JUnitStyleTestCaseData;
+import org.jetbrains.bsp.protocol.TaskFinishParams.TestFinish;
+import org.jetbrains.bsp.protocol.TaskFinishParams.TestFinishData;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jetbrains.bsp.protocol.TaskStartParams;
+import org.jetbrains.bsp.protocol.TaskStartParams.TestStart;
+import org.jetbrains.bsp.protocol.TaskStartParams.TestTask;
+import org.jetbrains.bsp.protocol.TestStatus;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BspClientTestNotifier(private val taskEventsHandler: BazelTaskEventsHandler) {
-  private var passedTests: Int = 0
-  private var failedTests: Int = 0
-  private var ignoredTests: Int = 0
-  private var cancelledTests: Int = 0
-  private var skippedTests: Int = 0
+public class BspClientTestNotifier {
+    private final BazelTaskEventsHandler myTaskEventsHandler;
 
-  /** Notifies the client about starting a single test or a test suite */
-  fun startTest(
-    testDetails: BazelTestDetails,
-    taskId: TaskId,
-    targetKind: TargetKind?,
-  ) {
-    val displayName = testDetails.displayName
-    val locationHint = BazelTestLocationHintProvider.getLocationHint(testDetails, targetKind)
-    val testStart = TestStart(displayName, testDetails.isSuite, locationHint)
-    val taskStartParams =
-      TaskStartParams(
-        taskId,
-        data = testStart,
-        message = "Test $displayName started",
-      )
-    taskEventsHandler.onBuildTaskStart(taskStartParams)
-  }
+    private int myPassedTests = 0;
+    private int myFailedTests = 0;
+    private int myIgnoredTests = 0;
+    private int myCancelledTests = 0;
+    private int mySkippedTests = 0;
 
-  /**
-   * Notifies the client about finishing a single test or a test suite.
-   *
-   * @param displayName display name of the finished test / test suite
-   * @param taskId      TaskId of the finished test / test suite
-   * @param status      status of the performed test (does not matter for test suites)
-   * @param message     additional message concerning the test execution
-   * @param data
-   */
-  fun finishTest(
-      displayName: String,
-      taskId: TaskId,
-      status: TestStatus,
-      message: String?,
-      data: TestFinishData? = null,
-  ) {
-    val testFinish = TestFinish(displayName, message = message, status = status, data = data)
-
-    // For leaf tests, update reported counters
-    if (data is JUnitStyleTestCaseData) {
-      when (status) {
-        TestStatus.PASSED -> passedTests++
-        TestStatus.FAILED -> failedTests++
-        TestStatus.IGNORED -> ignoredTests++
-        TestStatus.CANCELLED -> cancelledTests++
-        TestStatus.SKIPPED -> skippedTests++
-      }
+    public BspClientTestNotifier(BazelTaskEventsHandler taskEventsHandler) {
+        myTaskEventsHandler = taskEventsHandler;
     }
 
-    val taskFinishParams =
-        TaskFinishParams(
-            taskId,
-            status = BazelStatus.SUCCESS,
-            data = testFinish,
-            message = "Test $displayName finished",
-        )
-    taskEventsHandler.onBuildTaskFinish(taskFinishParams)
-  }
+    /**
+     * Notifies the client about starting a single test or a test suite
+     */
+    public void startTest(
+        BazelTestDetails testDetails,
+        TaskId taskId,
+        @Nullable TargetKind targetKind
+    ) {
+        String displayName = testDetails.displayName();
+        @Nullable String locationHint = BazelTestLocationHintProvider.getLocationHint(testDetails, targetKind);
+        TestStart testStart = new TestStart(displayName, testDetails.isSuite(), locationHint);
+        TaskStartParams taskStartParams =
+            new TaskStartParams(
+                taskId,
+                null,
+                "Test " + displayName + " started",
+                testStart
+            );
+        myTaskEventsHandler.onBuildTaskStart(taskStartParams);
+    }
 
-  fun startAndFinishTest(
-    testDetails: BazelTestDetails,
-    taskId: TaskId,
-    status: TestStatus,
-    message: String?,
-    targetKind: TargetKind?,
-    data: TestFinishData? = null,
-  ) {
-    startTest(testDetails, taskId, targetKind)
-    finishTest(testDetails.displayName, taskId, status, message, data)
-  }
+    // consulo: overload for the upstream default argument
+    public void finishTest(
+        String displayName,
+        TaskId taskId,
+        TestStatus status,
+        @Nullable String message
+    ) {
+        finishTest(displayName, taskId, status, message, null);
+    }
 
-  /**
-   * Notifies the client about beginning the testing procedure
-   *
-   * @param targetIdentifier identifier of the testing target being executed
-   * @param taskId           TaskId of the testing target execution
-   */
-  fun beginTestTarget(targetIdentifier: Label, taskId: TaskId) {
-    val testingBegin = TestTask(targetIdentifier)
-    val taskStartParams =
-        TaskStartParams(
-            taskId,
-            data = testingBegin,
-            message = "Test started for target $targetIdentifier",
-        )
-    taskEventsHandler.onBuildTaskStart(taskStartParams)
-  }
+    /**
+     * Notifies the client about finishing a single test or a test suite.
+     *
+     * @param displayName display name of the finished test / test suite
+     * @param taskId      TaskId of the finished test / test suite
+     * @param status      status of the performed test (does not matter for test suites)
+     * @param message     additional message concerning the test execution
+     * @param data
+     */
+    public void finishTest(
+        String displayName,
+        TaskId taskId,
+        TestStatus status,
+        @Nullable String message,
+        @Nullable TestFinishData data
+    ) {
+        TestFinish testFinish = new TestFinish(displayName, status, message, null, data);
+
+        // For leaf tests, update reported counters
+        if (data instanceof JUnitStyleTestCaseData) {
+            switch (status) {
+                case PASSED -> myPassedTests++;
+                case FAILED -> myFailedTests++;
+                case IGNORED -> myIgnoredTests++;
+                case CANCELLED -> myCancelledTests++;
+                case SKIPPED -> mySkippedTests++;
+            }
+        }
+
+        TaskFinishParams taskFinishParams =
+            new TaskFinishParams(
+                taskId,
+                null,
+                "Test " + displayName + " finished",
+                BazelStatus.SUCCESS,
+                testFinish
+            );
+        myTaskEventsHandler.onBuildTaskFinish(taskFinishParams);
+    }
+
+    // consulo: overload for the upstream default argument
+    public void startAndFinishTest(
+        BazelTestDetails testDetails,
+        TaskId taskId,
+        TestStatus status,
+        @Nullable String message,
+        @Nullable TargetKind targetKind
+    ) {
+        startAndFinishTest(testDetails, taskId, status, message, targetKind, null);
+    }
+
+    public void startAndFinishTest(
+        BazelTestDetails testDetails,
+        TaskId taskId,
+        TestStatus status,
+        @Nullable String message,
+        @Nullable TargetKind targetKind,
+        @Nullable TestFinishData data
+    ) {
+        startTest(testDetails, taskId, targetKind);
+        finishTest(testDetails.displayName(), taskId, status, message, data);
+    }
+
+    /**
+     * Notifies the client about beginning the testing procedure
+     *
+     * @param targetIdentifier identifier of the testing target being executed
+     * @param taskId           TaskId of the testing target execution
+     */
+    public void beginTestTarget(Label targetIdentifier, TaskId taskId) {
+        TestTask testingBegin = new TestTask(targetIdentifier);
+        TaskStartParams taskStartParams =
+            new TaskStartParams(
+                taskId,
+                null,
+                "Test started for target " + targetIdentifier,
+                testingBegin
+            );
+        myTaskEventsHandler.onBuildTaskStart(taskStartParams);
+    }
 }

@@ -13,76 +13,100 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.server.sync.sharding
+package org.jetbrains.bazel.server.sync.sharding;
 
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.label.toPath
-import java.io.File
-import java.nio.file.Path
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.name
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.label.Label;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Traverses Bazel packages specified by wildcard target patterns, expanding to a set of
  * single-package target patterns.
  */
-internal object PackageLister {
-  /**
-   * Expands all-in-package-recursive wildcard targets into all-in-single-package targets by
-   * traversing the file system, looking for child bazel packages.
-   */
-  fun expandPackageTargets(
-    pathResolver: BazelPathsResolver,
-    wildcardPatterns: List<Label>,
-  ): Map<Label, List<Label>> {
-    val calculatedBazelSymlinks =
-      BazelSymlinksCalculator.calculateBazelSymlinksToExclude(
-        pathResolver.workspaceRoot(),
-        BazelFeatureFlags.symlinkScanMaxDepth,
-      )
-    return wildcardPatterns
-      .filter { it.isRecursive }
-      .mapNotNull { pattern ->
-        val dir = pathResolver.relativePathToWorkspaceAbsolute(pattern.packagePath.toPath())
-        if (!dir.isDirectory()) return@mapNotNull null
-
-        val expandedTargets = mutableListOf<Label>()
-        traversePackageRecursively(pathResolver, calculatedBazelSymlinks, mutableListOf(dir), expandedTargets)
-        pattern to expandedTargets
-      }.toMap()
-  }
-
-  private tailrec fun traversePackageRecursively(
-    pathResolver: BazelPathsResolver,
-    calculatedBazelSymlinks: Set<Path>,
-    dirs: MutableList<Path>,
-    output: MutableList<Label>,
-  ) {
-    val dir = dirs.removeFirstOrNull() ?: return
-    if (dir.isEligibleForTraversal(pathResolver, calculatedBazelSymlinks)) {
-      val path = pathResolver.getWorkspaceRelativePath(dir)
-      if (dir.containsBuildFile()) {
-        output.add(Label.parse("//$path:all"))
-      }
-      val children = dir.toFile().listFiles() ?: arrayOf<File>()
-      dirs.addAll(children.asSequence().filter { it.isDirectory }.map { it.toPath() })
+public final class PackageLister {
+    private PackageLister() {
     }
-    traversePackageRecursively(
-      pathResolver,
-      calculatedBazelSymlinks,
-      dirs,
-      output,
-    )
-  }
 
-  private fun Path.isEligibleForTraversal(pathResolver: BazelPathsResolver, calculatedBazelSymlinks: Set<Path>): Boolean =
-    !this.isDotBazelBsp(pathResolver) && !calculatedBazelSymlinks.contains(this)
+    /**
+     * Expands all-in-package-recursive wildcard targets into all-in-single-package targets by
+     * traversing the file system, looking for child bazel packages.
+     */
+    public static Map<Label, List<Label>> expandPackageTargets(
+        BazelPathsResolver pathResolver,
+        List<Label> wildcardPatterns
+    ) {
+        Set<Path> calculatedBazelSymlinks =
+            BazelSymlinksCalculator.calculateBazelSymlinksToExclude(
+                pathResolver.workspaceRoot(),
+                BazelFeatureFlags.getSymlinkScanMaxDepth()
+            );
+        Map<Label, List<Label>> result = new LinkedHashMap<>();
+        for (Label pattern : wildcardPatterns) {
+            if (!pattern.isRecursive()) {
+                continue;
+            }
+            Path dir = pathResolver.relativePathToWorkspaceAbsolute(Label.toPath(pattern.packagePath()));
+            if (!Files.isDirectory(dir)) {
+                continue;
+            }
 
-  private fun Path.isDotBazelBsp(pathResolver: BazelPathsResolver): Boolean = this.name == Constants.DOT_BAZELBSP_DIR_NAME && this.parent == pathResolver.workspaceRoot()
-  private fun Path.containsBuildFile(): Boolean = Constants.BUILD_FILE_NAMES.any { resolve(it).isRegularFile() }
+            List<Label> expandedTargets = new ArrayList<>();
+            List<Path> dirs = new ArrayList<>();
+            dirs.add(dir);
+            traversePackageRecursively(pathResolver, calculatedBazelSymlinks, dirs, expandedTargets);
+            result.put(pattern, expandedTargets);
+        }
+        return result;
+    }
+
+    // consulo: upstream tailrec function, the tail recursion is a loop
+    private static void traversePackageRecursively(
+        BazelPathsResolver pathResolver,
+        Set<Path> calculatedBazelSymlinks,
+        List<Path> dirs,
+        List<Label> output
+    ) {
+        while (true) {
+            if (dirs.isEmpty()) {
+                return;
+            }
+            Path dir = dirs.remove(0);
+            if (isEligibleForTraversal(dir, pathResolver, calculatedBazelSymlinks)) {
+                String path = pathResolver.getWorkspaceRelativePath(dir);
+                if (containsBuildFile(dir)) {
+                    output.add(Label.parse("//" + path + ":all"));
+                }
+                File[] listFiles = dir.toFile().listFiles();
+                File[] children = listFiles != null ? listFiles : new File[0];
+                Arrays.stream(children).filter(File::isDirectory).map(File::toPath).forEach(dirs::add);
+            }
+        }
+    }
+
+    private static boolean isEligibleForTraversal(Path receiver, BazelPathsResolver pathResolver, Set<Path> calculatedBazelSymlinks) {
+        return !isDotBazelBsp(receiver, pathResolver) && !calculatedBazelSymlinks.contains(receiver);
+    }
+
+    private static boolean isDotBazelBsp(Path receiver, BazelPathsResolver pathResolver) {
+        Path fileName = receiver.getFileName();
+        return fileName != null && fileName.toString().equals(Constants.DOT_BAZELBSP_DIR_NAME)
+            && Objects.equals(receiver.getParent(), pathResolver.workspaceRoot());
+    }
+
+    private static boolean containsBuildFile(Path receiver) {
+        return Arrays.stream(Constants.BUILD_FILE_NAMES).anyMatch(it -> Files.isRegularFile(receiver.resolve(it)));
+    }
 }

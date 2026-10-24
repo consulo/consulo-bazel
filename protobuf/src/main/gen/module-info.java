@@ -22,6 +22,12 @@
  */
 module consulo.bazel.protobuf {
     requires transitive com.google.protobuf;
+    requires transitive io.grpc;
+    requires transitive io.grpc.stub;
+    requires transitive io.grpc.protobuf;
+    requires transitive proto.google.common.protos;
+    requires static java.annotation;
+    requires com.google.common;
 
     exports com.google.devtools.build.lib.actions.cache;
     exports com.google.devtools.build.lib.buildeventstream;
@@ -32,6 +38,7 @@ module consulo.bazel.protobuf {
     exports com.google.devtools.build.lib.starlarkdebugging;
     exports com.google.devtools.build.lib.starlarkdocextract;
     exports com.google.devtools.build.lib.view.proto;
+    exports com.google.devtools.build.v1;
     exports com.google.devtools.common.options.proto;
     exports com.google.devtools.intellij.plugin;
 }
