@@ -246,6 +246,16 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>com.dynatrace.hash4j</groupId>
             <artifactId>hash4j</artifactId>
             <scope>provided</scope>

@@ -53,6 +53,8 @@ module consulo.bazel.base {
     requires com.google.gson;
     requires com.google.common;
     requires com.dynatrace.hash4j;
+    requires org.commonmark;
+    requires org.commonmark.ext.gfm.tables;
 
     requires transitive consulo.bazel.protobuf;
     requires transitive consulo.bazel.aspect.sdk;
@@ -65,6 +67,7 @@ module consulo.bazel.base {
     // consulo-only
     exports consulo.bazel.languages;
     exports consulo.bazel.commons;
+    exports consulo.bazel.documentation;
 
     exports org.jetbrains.bazel.languages;
     exports org.jetbrains.bazel.languages.bazelquery;
