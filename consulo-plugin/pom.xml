@@ -84,10 +84,13 @@
             <artifactId>consulo.bazel.aspect.sdk</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!--
-          TODO consulo: protobuf-java cannot be bundled: it is an automatic module named com.google.protobuf, like the
-          platform's protobuf-javalite, and JPMS refuses to read both. The generated code needs the full runtime.
-        -->
+        <!-- protobuf-java is provided by the Consulo platform (it ships the full runtime, not protobuf-javalite) -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- the platform's commonmark is not visible to plugins -->
         <dependency>
             <groupId>org.commonmark</groupId>

@@ -16,6 +16,7 @@
 
 /**
  * Generated protobuf classes of the IntelliJ aspect ({@code sdk/proto} of JetBrains/intellij-aspect).
+ * The classes are generated with the full protobuf API (not lite): the plugin parses the aspect text output.
  *
  * @author VISTALL
  * @since 2026-10-24

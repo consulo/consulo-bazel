@@ -65,6 +65,8 @@
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
             <version>${protobuf.version}</version>
+            <!-- provided by the Consulo platform -->
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 </project>

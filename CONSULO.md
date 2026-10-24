@@ -48,6 +48,15 @@ git merge-base HEAD upstream/main
   added there; upstream build files (`BUILD.bazel`, `.iml`) stay untouched.
 - Exception: upstream's generated protobuf code (`protobuf/src/main/gen`) is its own Maven module
   (`protobuf/pom.xml`, `protobuf/src/main/gen/module-info.java`).
+- **Protobuf runtime comes from the platform.** The generated code needs the full `protobuf-java` (descriptors,
+  `TextFormat`). The Consulo platform must ship `protobuf-java` instead of `protobuf-javalite` (same module name
+  `com.google.protobuf`; the full runtime also runs lite code). Bundling our own copy is impossible: both are
+  automatic modules named `com.google.protobuf`. All modules use `protobuf-java` with `provided` scope, and
+  `consulo-aspect-sdk` overrides the platform's `liteOnly=true` for its generated code.
+- The plugin packaging (`maven-consulo-plugin`) bundles **direct** dependencies of `consulo-plugin/pom.xml` only:
+  every bundled library must be listed there.
+- The Maven build cache ignores plugin-configuration-only changes in a pom; touch an input file of the module to
+  force a rebuild.
 - Language integrations (`java/`, `golang/`, `python/`, `clion/`) go to the consumer plugins. They also share
   packages with core (e.g. `org.jetbrains.bazel.config`); this needs a decision when the first one is ported.
 - The Consulo plugin descriptor lives in the Consulo-only module `consulo-plugin/`.
