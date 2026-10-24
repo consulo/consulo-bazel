@@ -56,6 +56,10 @@ message CIdeInfo {
   CompilationContext compilation_context = 2;
 }
 
+message ForeignCcInfo {
+  bool is_foreign = 1;
+}
+
 message PyIdeInfo {
   enum PythonVersion {
     UNKNOWN = 0;
@@ -103,13 +107,13 @@ message DartIdeInfo {
 }
 
 message JavaToolchainInfo {
+  reserved 3, 4;
+  reserved "java_home", "boot_clas_java_home";
   string source_version = 1;
   string target_version = 2;
 
-  ArtifactLocation java_home = 3 [deprecated = true];
   string java_home_path = 6;
 
-  ArtifactLocation boot_classpath_java_home = 4 [deprecated = true];
   string boot_classpath_java_home_path = 7;
 
   bool is_exec_config = 5;
@@ -153,6 +157,7 @@ message CToolchainIdeInfo {
   string sysroot = 8;
   map<string, string> c_environment = 9;
   map<string, string> cpp_environment = 10;
+  repeated ArtifactLocation all_files = 11;
 }
 
 message KotlincPluginOption {
@@ -262,6 +267,7 @@ message TargetIdeInfo {
   int64 sync_time_millis = 20;
 
   CIdeInfo c_ide_info = 120;
+  ForeignCcInfo foreign_cc = 123;
   CToolchainIdeInfo c_toolchain_ide_info = 121;
   XcodeIdeInfo xcode_ide_info = 122;
 

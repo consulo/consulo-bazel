@@ -1,8 +1,11 @@
 # Vendored IntelliJ aspect sources
 
-The Starlark sources in this directory are copied verbatim from
+The Starlark sources in this directory, and the protos in `../protobuf/sdk/proto`, are copied verbatim from our fork
+[consulo/bazel-aspects](https://github.com/consulo/bazel-aspects) of
 [JetBrains/intellij-aspect](https://github.com/JetBrains/intellij-aspect) at commit
-`5b08cdf0f02b0a6d4eae9bc96cc7b64a4ac3cd48` (the commit pinned by the Bazel plugin in `MODULE.bazel`).
+`b1cc13c8d9b153df89d702e1cfb21be1c4301dc6`: the commit the Bazel plugin pins in `MODULE.bazel`
+(`git_override` of `intellij_aspect_sdk`). Always vendor the commit that `MODULE.bazel` pins, so the aspect output
+matches what the ported plugin code reads.
 
 They are the inputs of upstream's `//:archive_ide` target (`pkg_zip` of the `aspect_lib` targets `//common`,
 `//intellij` and `//modules`). The Maven build (`maven-antrun-plugin`, `generate-resources`) zips this directory
@@ -24,13 +27,16 @@ They are kept here with exactly that content.
 ## Updating
 
 ```bash
-UPSTREAM=/path/to/intellij-aspect   # checkout of the new pinned commit
+# checkout of consulo/bazel-aspects at the commit pinned in MODULE.bazel
+# (sync the fork with JetBrains/intellij-aspect first if it does not have that commit yet)
+UPSTREAM=/path/to/bazel-aspects
 cd consulo-aspect-sdk/src/main/aspect
 rm -f common/*.bzl common/third_party/*.bzl intellij/*.bzl modules/*.bzl
 cp "$UPSTREAM"/common/*.bzl common/
 cp "$UPSTREAM"/common/third_party/*.bzl common/third_party/
 cp "$UPSTREAM"/intellij/*.bzl intellij/
 cp "$UPSTREAM"/modules/*.bzl modules/
+cp "$UPSTREAM"/sdk/proto/common.proto "$UPSTREAM"/sdk/proto/ide_info.proto ../protobuf/sdk/proto/
 ```
 
 Then:
@@ -39,7 +45,8 @@ Then:
    for changed globs or new packages in `archive_ide`, and update this directory and the `zip` task in
    `consulo-aspect-sdk/pom.xml` accordingly.
 2. Update the commit hash above.
-3. Port changes of upstream `sdk/lib/*.kt` into `consulo-aspect-sdk/src/main/java/com/intellij/aspect/lib`.
+3. Port changes of upstream `sdk/lib/*.kt` and `private/lib/*.kt` into
+   `consulo-aspect-sdk/src/main/java/com/intellij/aspect/lib` (`git diff <old> <new> -- sdk private/lib` in the fork).
 4. Regenerate `Modules.java` (see below).
 
 ## `Modules.java` (upstream `kt_aspect_enum`)

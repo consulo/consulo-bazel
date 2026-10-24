@@ -12,6 +12,7 @@ public enum Modules {
     TEST_INFO("test_info", List.of()),
     XCODE_INFO("xcode_info", List.of(Rules.CC)),
     CC_INFO("cc_info", List.of(Rules.CC)),
+    FOREIGN_CC_INFO("foreign_cc_info", List.of(Rules.FOREIGN_CC)),
     CC_TOOLCHAIN_INFO("cc_toolchain_info", List.of(Rules.CC)),
     JAVA_INFO("java_info", List.of(Rules.JAVA)),
     JAVA_TOOLCHAIN_INFO("java_toolchain_info", List.of(Rules.JAVA)),

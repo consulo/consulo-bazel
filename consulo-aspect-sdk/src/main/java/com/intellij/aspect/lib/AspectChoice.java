@@ -25,11 +25,10 @@ import java.util.Set;
 
 /**
  * consulo: top-level declarations of upstream sdk/lib/aspectchoice.kt. The enums of that file are
- * {@link Rules}, {@link OutputGroups} and {@link Aspects}.
+ * {@link Rules} and {@link OutputGroups}.
  */
 public final class AspectChoice {
-    @SuppressWarnings("deprecation")
-    public static final String ASPECT_NAME = Aspects.INTELLIJ.toString();
+    public static final String ASPECT_NAME = "config:aspect.bzl%intellij_aspect";
 
     private AspectChoice() {
     }

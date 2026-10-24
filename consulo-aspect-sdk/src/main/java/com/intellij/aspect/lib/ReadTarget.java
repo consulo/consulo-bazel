@@ -20,8 +20,6 @@ import com.google.protobuf.TextFormat;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -48,8 +46,8 @@ public final class ReadTarget {
                 .newBuilder()
                 .setAllowUnknownFields(true)
                 .build();
-        try (Reader it = new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8)) {
-            parser.merge(it, builder);
+        try {
+            parser.merge(new String(Files.readAllBytes(file), StandardCharsets.UTF_8), builder);
         }
         catch (IOException e) {
             logErrorMessage.accept(e.getMessage());

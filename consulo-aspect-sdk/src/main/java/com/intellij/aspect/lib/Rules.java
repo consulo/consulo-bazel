@@ -19,6 +19,7 @@ package com.intellij.aspect.lib;
 // consulo: declared in upstream sdk/lib/aspectchoice.kt
 public enum Rules {
     CC("@rules_cc"),
+    FOREIGN_CC("@rules_foreign_cc"),
     PYTHON("@rules_python"),
     JAVA("@rules_java"),
     KOTLIN("@rules_kotlin"),

@@ -34,4 +34,36 @@ final class PathUtil {
         }
         return result;
     }
+
+    static String joinBazelPath(String... parts) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            String part = i == 0 ? trimEnd(parts[i]) : trimEnd(trimStart(parts[i]));
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (!result.isEmpty()) {
+                result.append('/');
+            }
+            result.append(part);
+        }
+        return result.toString();
+    }
+
+    // consulo: Kotlin String.trimStart('/') / trimEnd('/')
+    private static String trimStart(String value) {
+        int start = 0;
+        while (start < value.length() && value.charAt(start) == '/') {
+            start++;
+        }
+        return value.substring(start);
+    }
+
+    private static String trimEnd(String value) {
+        int end = value.length();
+        while (end > 0 && value.charAt(end - 1) == '/') {
+            end--;
+        }
+        return value.substring(0, end);
+    }
 }
