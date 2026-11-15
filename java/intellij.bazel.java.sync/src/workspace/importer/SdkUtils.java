@@ -6,6 +6,7 @@ import consulo.application.Application;
 import consulo.application.WriteAction;
 import consulo.content.base.BinariesOrderRootType;
 import consulo.content.bundle.Sdk;
+import consulo.platform.Platform;
 import consulo.content.bundle.SdkTable;
 import consulo.java.language.bundle.JavaSdkTypeUtil;
 import consulo.project.Project;
@@ -78,7 +79,8 @@ public final class SdkUtils {
         if (homePath == null) {
             return false;
         }
-        return javaSdkInstance().isValidSdkHome(homePath) &&
+        // consulo: the String overload is unsupported by PlatformAwareSdkType, the home is checked for the current platform
+        return javaSdkInstance().isValidSdkHome(Platform.current(), Path.of(homePath)) &&
             sdk.getRootProvider().getUrls(BinariesOrderRootType.ID).length != 0;
     }
 

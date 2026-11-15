@@ -11,8 +11,10 @@ import consulo.module.Module;
 import consulo.module.content.layer.ContentEntry;
 import consulo.module.content.layer.ContentFolder;
 import consulo.module.content.layer.ModifiableRootModel;
+import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.config.BazelFeatureFlags;
 import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget.KotlinBuildTarget;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmPackageNameParser;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTarget;
 import org.jetbrains.bazel.workspace.ProjectViewGlobSet;
 import org.jetbrains.bsp.protocol.BuildTarget;
@@ -20,13 +22,19 @@ import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
 import org.jspecify.annotations.Nullable;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 // RC: replaces `SourcesItemToJavaSourceRootTransformer` + `SourceItemToSourceRootTransformer` +
 // `JavaSourceEntityUpdater` + the source-side of `ContentRootEntityUpdater`;
@@ -112,7 +120,16 @@ public final class SourceRootBuilder {
         }
 
         Map<Path, List<ResolvedSourceRoot>> groups = new LinkedHashMap<>();
-        for (ResolvedSourceRoot root : sourceRoots) {
+        Set<Path> packageRoots = new HashSet<>();
+        for (ResolvedSourceRoot original : sourceRoots) {
+            // consulo: see toPackageRoot; a package root is its own content root and is written once
+            ResolvedSourceRoot root = toPackageRoot(original);
+            if (root != original) {
+                if (packageRoots.add(root.sourcePath())) {
+                    groups.computeIfAbsent(root.sourcePath(), it -> new ArrayList<>()).add(root);
+                }
+                continue;
+            }
             Path key;
             if (BazelFeatureFlags.getMergeSourceRoots() || // sources were merged earlier, now we just need to create a source root for each path
                 Objects.equals(root.sourcePath().getParent(), projectBasePath)) { // don't create a content root for project root dir to avoid excessive indexing
@@ -137,6 +154,72 @@ public final class SourceRootBuilder {
             for (ResolvedSourceRoot it : entry.getValue()) {
                 sourceRootEntity(it, contentEntry);
             }
+        }
+    }
+
+    /**
+     * consulo: upstream marks a source root which is not a jar with {@code packageMatchesDirectory = false}: Bazel does not require
+     * that a directory under a source root corresponds to a JVM package, so IntelliJ takes the package of a file from its
+     * {@code package} statement. Consulo has neither that property nor a package prefix, and derives the package from the directory.
+     * So a root whose directory ends with the package that its files declare (e.g. {@code src/main/java/com/example/app} with
+     * {@code package com.example.app}) is moved up to the package root ({@code src/main/java}). Any other root is kept as is.
+     * <p>
+     * TODO consulo: a directory whose layout does not match the package of its files can't be expressed, and targets sharing
+     *   one package root (e.g. two targets under the same src/main/java) get the same content root
+     */
+    private static ResolvedSourceRoot toPackageRoot(ResolvedSourceRoot sourceRoot) {
+        Path sourcePath = sourceRoot.sourcePath();
+        if ("jar".equals(BuilderUtils.extension(sourcePath))) {
+            return sourceRoot;
+        }
+        Path directory;
+        Path sourceFile;
+        if (Files.isRegularFile(sourcePath)) {
+            directory = sourcePath.getParent();
+            sourceFile = sourcePath;
+        }
+        else {
+            directory = sourcePath;
+            sourceFile = findJvmSourceFile(sourcePath);
+        }
+        if (directory == null || sourceFile == null) {
+            return sourceRoot;
+        }
+        String packageName = JvmPackageNameParser.findPackage(sourceFile, "scala".equals(BuilderUtils.extension(sourceFile)));
+        if (packageName == null || packageName.isEmpty()) {
+            return Files.isRegularFile(sourcePath) ? new ResolvedSourceRoot(directory, sourceRoot.generated(), sourceRoot.rootType()) : sourceRoot;
+        }
+        Path packagePath;
+        try {
+            packagePath = directory.getFileSystem().getPath(packageName.replace('.', '/'));
+        }
+        catch (InvalidPathException e) {
+            return sourceRoot;
+        }
+        if (!directory.endsWith(packagePath)) {
+            return sourceRoot;
+        }
+        Path packageRoot = directory;
+        for (int i = 0; i < packagePath.getNameCount(); i++) {
+            packageRoot = packageRoot.getParent();
+            if (packageRoot == null) {
+                return sourceRoot;
+            }
+        }
+        return new ResolvedSourceRoot(packageRoot, sourceRoot.generated(), sourceRoot.rootType());
+    }
+
+    // consulo: the first JVM source file directly in the directory (a merged root contains the files of one package)
+    private static @Nullable Path findJvmSourceFile(Path directory) {
+        try (Stream<Path> children = Files.list(directory)) {
+            return children
+                .filter(it -> Files.isRegularFile(it) && Constants.JVM_LANGUAGES_EXTENSIONS.contains(BuilderUtils.extension(it)))
+                .sorted()
+                .findFirst()
+                .orElse(null);
+        }
+        catch (IOException e) {
+            return null;
         }
     }
 

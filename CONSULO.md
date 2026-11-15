@@ -174,6 +174,13 @@ by hand.
   equivalent (TODO).
 - The generated workspace entity code (`intellij.bazel.backend/gen`) is deleted.
 - `BazelWorkspaceImporter.import` is `doImport` (`import` is a Java keyword).
+- JVM source roots: upstream marks a source root which is not a jar with `packageMatchesDirectory = false` (experimental
+  IntelliJ property: the package of a file comes from its `package` statement). Consulo has neither this property nor a
+  package prefix, so `SourceRootBuilder.toPackageRoot` moves a root whose directory ends with the declared package up
+  to the package root (`.../com/example/app` -> `src/main/java`; decision of the project owner). TODO: layouts where the
+  directory does not match the package.
+- The importers fill `BazelModelBuilder` on background threads; the classic modifiable models need read access there
+  (`getRootModel` takes it itself, the JVM entity writer runs in a read action).
 
 ### Core: project opening, build and platform gaps
 
