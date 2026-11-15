@@ -1,27 +1,44 @@
-package org.jetbrains.bazel.java.ui.gutters
+package org.jetbrains.bazel.java.ui.gutters;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiMethod
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.BuildTarget
+import com.intellij.java.language.psi.PsiMethod;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import consulo.project.Project;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface JvmTestFilterExtension {
-  fun isApplicable(project: Project, target: BuildTarget): Boolean
+import java.util.Objects;
 
-  fun getTestFilter(className: String, method: PsiMethod?): String
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface JvmTestFilterExtension {
+    boolean isApplicable(Project project, BuildTarget target);
 
-  companion object {
-    val ep: ExtensionPointName<JvmTestFilterExtension> = ExtensionPointName("org.jetbrains.bazel.jvmTestFilterExtension")
+    String getTestFilter(String className, @Nullable PsiMethod method);
 
-    fun getInstance(project: Project, target: BuildTarget): JvmTestFilterExtension =
-      checkNotNull(ep.findFirstSafe { it.isApplicable(project, target) })
-  }
+    static ExtensionPoint<JvmTestFilterExtension> getEp() {
+        return Application.get().getExtensionPoint(JvmTestFilterExtension.class);
+    }
+
+    static JvmTestFilterExtension getInstance(Project project, BuildTarget target) {
+        return Objects.requireNonNull(getEp().findFirstSafe(it -> it.isApplicable(project, target)));
+    }
 }
 
-internal class DefaultJvmTestFilterExtension : JvmTestFilterExtension {
-  override fun isApplicable(project: Project, target: BuildTarget): Boolean = true
+@ExtensionImpl(order = "last")
+class DefaultJvmTestFilterExtension implements JvmTestFilterExtension {
+    public DefaultJvmTestFilterExtension() {
+    }
 
-  override fun getTestFilter(className: String, method: PsiMethod?): String = getTestFilter(className, method?.name)
+    @Override
+    public boolean isApplicable(Project project, BuildTarget target) {
+        return true;
+    }
+
+    @Override
+    public String getTestFilter(String className, @Nullable PsiMethod method) {
+        return BazelJavaRunConfigurationProducer.getTestFilter(className, method != null ? method.getName() : null);
+    }
 }

@@ -1,7 +1,7 @@
-package org.jetbrains.bazel.fastbuild
+package org.jetbrains.bazel.fastbuild;
 
-enum class FastBuildActionStatus {
-  UNKNOWN,
-  SUCCESS,
-  ERROR,
+public enum FastBuildActionStatus {
+    UNKNOWN,
+    SUCCESS,
+    ERROR,
 }

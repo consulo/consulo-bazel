@@ -1,17 +1,28 @@
-package org.jetbrains.bazel.sync.workspace.languages.kotlin
+package org.jetbrains.bazel.sync.workspace.languages.kotlin;
 
-import com.intellij.aspect.lib.Rules
-import org.jetbrains.bazel.util.BazelRuleSet
-import org.jetbrains.bazel.util.BazelRuleSetProvider
+import com.intellij.aspect.lib.Rules;
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.util.BazelRuleSetProvider;
+import org.jetbrains.bazel.util.BazelRuleSetProvider.BazelRuleSet;
 
-private val KotlinRuleSet = BazelRuleSet(
-  aspectLanguage = Rules.KOTLIN,
-  rulesetNames = listOf("rules_kotlin", "io_bazel_rules_kotlin"),
-  isBundled = false,
-  autoloadHints = listOf(),
-  hostLocations = listOf("https://github.com/bazelbuild/rules_kotlin/"),
-)
+import java.util.List;
 
-internal class KotlinRuleSetPlugin : BazelRuleSetProvider {
-  override fun ruleSets(): List<BazelRuleSet> = listOf(KotlinRuleSet)
+@ExtensionImpl
+public class KotlinRuleSetPlugin implements BazelRuleSetProvider {
+    // consulo: upstream private top-level val KotlinRuleSet
+    private static final BazelRuleSet KOTLIN_RULE_SET = new BazelRuleSet(
+        Rules.KOTLIN,
+        List.of("rules_kotlin", "io_bazel_rules_kotlin"),
+        false,
+        List.of(),
+        List.of("https://github.com/bazelbuild/rules_kotlin/")
+    );
+
+    public KotlinRuleSetPlugin() {
+    }
+
+    @Override
+    public List<BazelRuleSet> ruleSets() {
+        return List.of(KOTLIN_RULE_SET);
+    }
 }

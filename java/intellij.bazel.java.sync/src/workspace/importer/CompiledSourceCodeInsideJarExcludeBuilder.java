@@ -1,175 +1,246 @@
-package org.jetbrains.bazel.workspace.importer
+package org.jetbrains.bazel.workspace.importer;
 
-import com.google.common.hash.Hashing
-import com.intellij.openapi.vfs.JarFileSystem
-import com.intellij.platform.workspace.jps.entities.LibraryEntity
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.entities
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.VisibleForTesting
-import org.jetbrains.bazel.workspacemodel.entities.BazelProjectEntitySource
-import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity
-import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeId
-import org.jetbrains.bazel.workspacemodel.entities.LibraryCompiledSourceCodeInsideJarExcludeEntity
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.LibraryItem
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.nonGeneratedSources
-import java.nio.file.Path
-import java.util.Locale
-import kotlin.io.path.extension
-import kotlin.io.path.invariantSeparatorsPathString
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.content.library.Library;
+import consulo.virtualFileSystem.StandardFileSystems;
+import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity;
+import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity.CompiledSourceCodeInsideJarExcludeId;
+import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity.LibraryCompiledSourceCodeInsideJarExcludeEntity;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.BazelLibraryExtensionEntity;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.WorkspaceLibraries.LibraryItem;
+import org.jspecify.annotations.Nullable;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 
 // https://youtrack.jetbrains.com/issue/BAZEL-1672
 // RC: replaces `CompiledSourceCodeInsideJarExcludeTransformer` + `CompiledSourceCodeInsideJarExcludeEntityUpdater`
-@ApiStatus.Internal
-object CompiledSourceCodeInsideJarExcludeBuilder {
-  /**
-   * writes a [CompiledSourceCodeInsideJarExcludeEntity] plus a
-   * [LibraryCompiledSourceCodeInsideJarExcludeEntity] per existing [LibraryEntity] in [storage].
-   *
-   * returns without writing anything when there are no libraries from internal targets that need
-   * source-code exclusion.
-   *
-   * must run after [LibraryBuilder] so the per-library link entities have something to reference.
-   *
-   * [currentExcludeEntity] is the previous exclude entity (if any). when the content is unchanged,
-   * its ID is reused; otherwise the ID is a hash of the content, so referring entities invalidate and
-   * `CompiledSourceCodeInsideJarExcludeWorkspaceFileIndexContributor` re-runs.
-   * the contributor caches data by the ID, so the ID must be different for different content
-   * also among the open projects and the IDs loaded from the workspace model cache.
-   */
-  fun write(
-    targets: Collection<BuildTarget>,
-    libraries: List<LibraryItem>,
-    resolveLocation: (OutputLocation) -> Path?,
-    storage: MutableEntityStorage,
-    currentExcludeEntity: CompiledSourceCodeInsideJarExcludeEntity? = null,
-  ) {
-    val librariesFromInternalTargetsUrls = calculateLibrariesFromInternalTargetsUrls(libraries)
-    if (librariesFromInternalTargetsUrls.isEmpty()) {
-      return
+public final class CompiledSourceCodeInsideJarExcludeBuilder {
+    private CompiledSourceCodeInsideJarExcludeBuilder() {
     }
 
-    val relativePathsInsideJarToExclude = calculateSourceFilePaths(targets, resolveLocation)
-
-    val nextExcludeEntityId: CompiledSourceCodeInsideJarExcludeId =
-      if (currentExcludeEntity != null &&
-          currentExcludeEntity.relativePathsInsideJarToExclude == relativePathsInsideJarToExclude &&
-          currentExcludeEntity.librariesFromInternalTargetsUrls == librariesFromInternalTargetsUrls
-      ) {
-        currentExcludeEntity.excludeId
-      } else {
-        // Change the ID so that all referring entities (LibraryCompiledSourceCodeInsideJarExcludeEntity)
-        // are invalidated and CompiledSourceCodeInsideJarExcludeWorkspaceFileIndexContributor re-runs on them.
-        contentExcludeId(relativePathsInsideJarToExclude, librariesFromInternalTargetsUrls)
-      }
-
-    val excludeEntity = storage.addEntity(
-      CompiledSourceCodeInsideJarExcludeEntity(
-        relativePathsInsideJarToExclude = relativePathsInsideJarToExclude,
-        librariesFromInternalTargetsUrls = librariesFromInternalTargetsUrls,
-        excludeId = nextExcludeEntityId,
-        entitySource = BazelProjectEntitySource,
-      ),
-    )
-
-    storage.entities<LibraryEntity>().forEach { library ->
-      storage.addEntity(
-        LibraryCompiledSourceCodeInsideJarExcludeEntity(
-          libraryId = library.symbolicId,
-          compiledSourceCodeInsideJarExcludeId = excludeEntity.symbolicId,
-          entitySource = BazelProjectEntitySource,
-        ),
-      )
+    public static void write(
+        Collection<BuildTarget> targets,
+        List<LibraryItem> libraries,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        BazelModelBuilder storage
+    ) {
+        write(targets, libraries, resolveLocation, storage, null);
     }
-  }
 
-  /** The same content gives the same ID, so the ID does not depend on the order of the syncs or on the open projects. */
-  private fun contentExcludeId(sourceFilePaths: Set<String>, libraryUrls: Set<String>): CompiledSourceCodeInsideJarExcludeId {
-    val hasher = Hashing.murmur3_32_fixed().newHasher()
-    for (values in listOf(sourceFilePaths, libraryUrls)) {
-      for (value in values.sorted()) {
-        hasher.putString(value, Charsets.UTF_8)
-        hasher.putByte(0)
-      }
-      hasher.putByte(1)
-    }
-    return CompiledSourceCodeInsideJarExcludeId(hasher.hash().asInt())
-  }
-
-  /**
-   * The package of a source file is unknown, so the paths of the source files are stored instead of the paths inside jars.
-   * [CompiledSourceFileIndex] approximates the package by the relative path inside the jar and matches it against them.
-   */
-  @VisibleForTesting
-  fun calculateSourceFilePaths(
-    targets: Collection<BuildTarget>,
-    resolveLocation: (OutputLocation) -> Path?,
-  ): Set<String> {
-    val result = HashSet<String>()
-    for (target in targets) {
-      for (source in target.nonGeneratedSources().mapNotNull(resolveLocation)) {
-        if (source.extension == "java" || source.extension == "kt") {
-          result.add(source.invariantSeparatorsPathString)
+    /**
+     * writes a {@link CompiledSourceCodeInsideJarExcludeEntity} plus a
+     * {@link LibraryCompiledSourceCodeInsideJarExcludeEntity} per existing {@code LibraryEntity} in {@code storage}.
+     * <p>
+     * returns without writing anything when there are no libraries from internal targets that need
+     * source-code exclusion.
+     * <p>
+     * must run after {@link LibraryBuilder} so the per-library link entities have something to reference.
+     * <p>
+     * {@code currentExcludeEntity} is the previous exclude entity (if any). when the content is unchanged,
+     * its ID is reused; otherwise the ID is a hash of the content, so referring entities invalidate and
+     * `CompiledSourceCodeInsideJarExcludeWorkspaceFileIndexContributor` re-runs.
+     * the contributor caches data by the ID, so the ID must be different for different content
+     * also among the open projects and the IDs loaded from the workspace model cache.
+     * <p>
+     * consulo: the entities are the project data / library data of {@link BazelModelBuilder}
+     */
+    public static void write(
+        Collection<BuildTarget> targets,
+        List<LibraryItem> libraries,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        BazelModelBuilder storage,
+        @Nullable CompiledSourceCodeInsideJarExcludeEntity currentExcludeEntity
+    ) {
+        Set<String> librariesFromInternalTargetsUrls = calculateLibrariesFromInternalTargetsUrls(libraries);
+        if (librariesFromInternalTargetsUrls.isEmpty()) {
+            return;
         }
-      }
-    }
-    return result
-  }
 
-  @VisibleForTesting
-  fun calculateLibrariesFromInternalTargetsUrls(libraryItems: List<LibraryItem>): Set<String> =
-    libraryItems
-      .asSequence()
-      .filter { it.containsInternalJars }
-      .flatMap { it.jars.asSequence() + it.ijars.asSequence() + it.sourceJars.asSequence() }
-      .map { jarPath -> JarFileSystem.PROTOCOL_PREFIX + jarPath.invariantSeparatorsPathString + JarFileSystem.JAR_SEPARATOR }
-      .toSet()
-}
+        Set<String> relativePathsInsideJarToExclude = calculateSourceFilePaths(targets, resolveLocation);
 
-/**
- * Tells whether a file inside a jar is compiled from (or is a copy of) a source file of the project.
- *
- * The package of the file inside the jar is approximated by its relative path inside the jar:
- * `com/example/Foo.class` corresponds to any source file `.../com/example/Foo.java`.
- */
-@ApiStatus.Internal
-class CompiledSourceFileIndex(sourceFilePaths: Collection<String>) {
-  // source file name -> directories which contain a source file with this name
-  private val directoriesByFileName: Map<String, List<String>> =
-    sourceFilePaths.groupBy({ it.substringAfterLast('/') }, { it.substringBeforeLast('/', "") })
-
-  /**
-   * [relativePathInsideJar] must not point at a nested class, e.g., `com/example/Foo$Bar.class` should be passed as
-   * `com/example/Foo.class`.
-   */
-  fun hasSourceFor(relativePathInsideJar: String): Boolean {
-    val packageDirectory = relativePathInsideJar.substringBeforeLast('/', "")
-    val fileName = relativePathInsideJar.substringAfterLast('/')
-    return sourceFileNameCandidates(fileName).any { sourceFileName ->
-      directoriesByFileName[sourceFileName]?.any { it.endsWithPackageDirectory(packageDirectory) } == true
-    }
-  }
-
-  private fun sourceFileNameCandidates(fileName: String): List<String> {
-    val nameWithoutExtension = fileName.substringBeforeLast('.')
-    return when (fileName.substringAfterLast('.', "")) {
-      "java", "kt" -> listOf(fileName)
-      "class" -> buildList {
-        add("$nameWithoutExtension.java")
-        add("$nameWithoutExtension.kt")
-        // E.g., MainKt.class -> main.kt or Main.kt
-        val kotlinFileName = nameWithoutExtension.removeSuffix("Kt")
-        if (kotlinFileName != nameWithoutExtension && kotlinFileName.isNotEmpty()) {
-          add("$kotlinFileName.kt")
-          add("${kotlinFileName.replaceFirstChar { it.lowercase(Locale.US) }}.kt")
+        CompiledSourceCodeInsideJarExcludeId nextExcludeEntityId;
+        if (currentExcludeEntity != null &&
+            currentExcludeEntity.relativePathsInsideJarToExclude().equals(relativePathsInsideJarToExclude) &&
+            currentExcludeEntity.librariesFromInternalTargetsUrls().equals(librariesFromInternalTargetsUrls)
+        ) {
+            nextExcludeEntityId = currentExcludeEntity.excludeId();
         }
-      }
-      else -> emptyList()
-    }
-  }
+        else {
+            // Change the ID so that all referring entities (LibraryCompiledSourceCodeInsideJarExcludeEntity)
+            // are invalidated and CompiledSourceCodeInsideJarExcludeWorkspaceFileIndexContributor re-runs on them.
+            nextExcludeEntityId = contentExcludeId(relativePathsInsideJarToExclude, librariesFromInternalTargetsUrls);
+        }
 
-  private fun String.endsWithPackageDirectory(packageDirectory: String): Boolean =
-    packageDirectory.isEmpty() || this == packageDirectory || endsWith("/$packageDirectory")
+        CompiledSourceCodeInsideJarExcludeEntity excludeEntity = new CompiledSourceCodeInsideJarExcludeEntity(
+            relativePathsInsideJarToExclude,
+            librariesFromInternalTargetsUrls,
+            nextExcludeEntityId
+        );
+        storage.putProjectData(CompiledSourceCodeInsideJarExcludeEntity.class, excludeEntity);
+
+        // consulo: upstream iterates every LibraryEntity of the diff storage, i.e. the libraries created by this sync;
+        // they are the project libraries which carry a BazelLibraryExtensionEntity in the builder
+        for (Library library : storage.getLibraryModel().getLibraries()) {
+            String libraryName = library.getName();
+            if (libraryName == null || storage.getLibraryData(library, BazelLibraryExtensionEntity.class) == null) {
+                continue;
+            }
+            storage.putLibraryData(
+                library,
+                LibraryCompiledSourceCodeInsideJarExcludeEntity.class,
+                new LibraryCompiledSourceCodeInsideJarExcludeEntity(
+                    libraryName,
+                    excludeEntity.getSymbolicId()
+                )
+            );
+        }
+    }
+
+    /**
+     * The same content gives the same ID, so the ID does not depend on the order of the syncs or on the open projects.
+     */
+    private static CompiledSourceCodeInsideJarExcludeId contentExcludeId(Set<String> sourceFilePaths, Set<String> libraryUrls) {
+        // consulo: the platform Guava (30.1) has no murmur3_32_fixed; murmur3_32 differs only for supplementary characters,
+        //   the ID only has to be stable within one installation
+        @SuppressWarnings("deprecation")
+        Hasher hasher = Hashing.murmur3_32().newHasher();
+        for (Set<String> values : List.of(sourceFilePaths, libraryUrls)) {
+            for (String value : values.stream().sorted().toList()) {
+                hasher.putString(value, StandardCharsets.UTF_8);
+                hasher.putByte((byte) 0);
+            }
+            hasher.putByte((byte) 1);
+        }
+        return new CompiledSourceCodeInsideJarExcludeId(hasher.hash().asInt());
+    }
+
+    /**
+     * The package of a source file is unknown, so the paths of the source files are stored instead of the paths inside jars.
+     * {@link CompiledSourceFileIndex} approximates the package by the relative path inside the jar and matches it against them.
+     */
+    public static Set<String> calculateSourceFilePaths(
+        Collection<BuildTarget> targets,
+        Function<OutputLocation, @Nullable Path> resolveLocation
+    ) {
+        HashSet<String> result = new HashSet<>();
+        for (BuildTarget target : targets) {
+            List<Path> sources = BuildTarget.nonGeneratedSources(target).map(resolveLocation).filter(Objects::nonNull).toList();
+            for (Path source : sources) {
+                String extension = BuilderUtils.extension(source);
+                if (extension.equals("java") || extension.equals("kt")) {
+                    result.add(invariantSeparatorsPathString(source));
+                }
+            }
+        }
+        return result;
+    }
+
+    public static Set<String> calculateLibrariesFromInternalTargetsUrls(List<LibraryItem> libraryItems) {
+        Set<String> result = new LinkedHashSet<>();
+        for (LibraryItem it : libraryItems) {
+            if (!it.containsInternalJars()) {
+                continue;
+            }
+            List<Path> jars = new ArrayList<>(it.jars());
+            jars.addAll(it.ijars());
+            jars.addAll(it.sourceJars());
+            for (Path jarPath : jars) {
+                result.add(StandardFileSystems.JAR_PROTOCOL_PREFIX + invariantSeparatorsPathString(jarPath) + StandardFileSystems.JAR_SEPARATOR);
+            }
+        }
+        return result;
+    }
+
+    // consulo: Kotlin Path.invariantSeparatorsPathString
+    private static String invariantSeparatorsPathString(Path path) {
+        String separator = path.getFileSystem().getSeparator();
+        return separator.equals("/") ? path.toString() : path.toString().replace(separator, "/");
+    }
+
+    /**
+     * Tells whether a file inside a jar is compiled from (or is a copy of) a source file of the project.
+     * <p>
+     * The package of the file inside the jar is approximated by its relative path inside the jar:
+     * `com/example/Foo.class` corresponds to any source file `.../com/example/Foo.java`.
+     */
+    public static class CompiledSourceFileIndex {
+        // source file name -> directories which contain a source file with this name
+        private final Map<String, List<String>> myDirectoriesByFileName;
+
+        public CompiledSourceFileIndex(Collection<String> sourceFilePaths) {
+            Map<String, List<String>> directoriesByFileName = new LinkedHashMap<>();
+            for (String it : sourceFilePaths) {
+                int slash = it.lastIndexOf('/');
+                String fileName = it.substring(slash + 1);
+                String directory = slash == -1 ? "" : it.substring(0, slash);
+                directoriesByFileName.computeIfAbsent(fileName, ignored -> new ArrayList<>()).add(directory);
+            }
+            myDirectoriesByFileName = directoriesByFileName;
+        }
+
+        /**
+         * {@code relativePathInsideJar} must not point at a nested class, e.g., `com/example/Foo$Bar.class` should be passed as
+         * `com/example/Foo.class`.
+         */
+        public boolean hasSourceFor(String relativePathInsideJar) {
+            int slash = relativePathInsideJar.lastIndexOf('/');
+            String packageDirectory = slash == -1 ? "" : relativePathInsideJar.substring(0, slash);
+            String fileName = relativePathInsideJar.substring(slash + 1);
+            for (String sourceFileName : sourceFileNameCandidates(fileName)) {
+                List<String> directories = myDirectoriesByFileName.get(sourceFileName);
+                if (directories != null && directories.stream().anyMatch(it -> endsWithPackageDirectory(it, packageDirectory))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static List<String> sourceFileNameCandidates(String fileName) {
+            int dot = fileName.lastIndexOf('.');
+            String nameWithoutExtension = dot == -1 ? fileName : fileName.substring(0, dot);
+            String extension = dot == -1 ? "" : fileName.substring(dot + 1);
+            switch (extension) {
+                case "java", "kt" -> {
+                    return List.of(fileName);
+                }
+                case "class" -> {
+                    List<String> result = new ArrayList<>();
+                    result.add(nameWithoutExtension + ".java");
+                    result.add(nameWithoutExtension + ".kt");
+                    // E.g., MainKt.class -> main.kt or Main.kt
+                    String kotlinFileName = nameWithoutExtension.endsWith("Kt")
+                        ? nameWithoutExtension.substring(0, nameWithoutExtension.length() - 2)
+                        : nameWithoutExtension;
+                    if (!kotlinFileName.equals(nameWithoutExtension) && !kotlinFileName.isEmpty()) {
+                        result.add(kotlinFileName + ".kt");
+                        result.add(kotlinFileName.substring(0, 1).toLowerCase(Locale.US) + kotlinFileName.substring(1) + ".kt");
+                    }
+                    return result;
+                }
+                default -> {
+                    return List.of();
+                }
+            }
+        }
+
+        private static boolean endsWithPackageDirectory(String receiver, String packageDirectory) {
+            return packageDirectory.isEmpty() || receiver.equals(packageDirectory) || receiver.endsWith("/" + packageDirectory);
+        }
+    }
 }

@@ -1,12 +1,15 @@
-package org.jetbrains.bazel.fastbuild
+package org.jetbrains.bazel.fastbuild;
 
-import com.intellij.openapi.vfs.VirtualFile
-import java.nio.file.Path
+import consulo.virtualFileSystem.VirtualFile;
 
-data class FastBuildStatus(val workspaceRoot: Path, val status: FastBuildActionStatus)
+import java.nio.file.Path;
 
-data class FastBuildTargetStatus(
-  val inputFile: VirtualFile,
-  val targetJar: Path,
-  val status: FastBuildActionStatus,
-)
+public record FastBuildStatus(Path workspaceRoot, FastBuildActionStatus status) {
+    // consulo: upstream declares this public data class as a top-level declaration in the same file
+    public record FastBuildTargetStatus(
+        VirtualFile inputFile,
+        Path targetJar,
+        FastBuildActionStatus status
+    ) {
+    }
+}

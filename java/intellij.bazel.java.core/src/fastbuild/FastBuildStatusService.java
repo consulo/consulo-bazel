@@ -1,29 +1,40 @@
-package org.jetbrains.bazel.fastbuild
+package org.jetbrains.bazel.fastbuild;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.project.Project;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 
-@Service(Service.Level.PROJECT)
-internal class FastBuildStatusService(private val project: Project) {
-  fun startFastBuild() {
-    project.messageBus.syncPublisher(FastBuildStatusListener.TOPIC).fastBuildStarted()
-  }
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class FastBuildStatusService {
+    private final Project myProject;
 
-  fun finishFastBuild(fastBuildStatus: FastBuildStatus) {
-    project.messageBus.syncPublisher(FastBuildStatusListener.TOPIC).fastBuildFinished(fastBuildStatus)
-  }
+    @Inject
+    public FastBuildStatusService(Project project) {
+        myProject = project;
+    }
 
-  fun startFastBuildTarget() {
-    project.messageBus.syncPublisher(FastBuildStatusListener.TOPIC).fastBuildTargetStarted()
-  }
+    public void startFastBuild() {
+        myProject.getMessageBus().syncPublisher(FastBuildStatusListener.TOPIC).fastBuildStarted();
+    }
 
-  fun finishFastBuildTarget(fastBuildTargetStatus: FastBuildTargetStatus) {
-    project.messageBus.syncPublisher(FastBuildStatusListener.TOPIC).fastBuildTargetFinished(fastBuildTargetStatus)
-  }
+    public void finishFastBuild(FastBuildStatus fastBuildStatus) {
+        myProject.getMessageBus().syncPublisher(FastBuildStatusListener.TOPIC).fastBuildFinished(fastBuildStatus);
+    }
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): FastBuildStatusService = project.service<FastBuildStatusService>()
-  }
+    public void startFastBuildTarget() {
+        myProject.getMessageBus().syncPublisher(FastBuildStatusListener.TOPIC).fastBuildTargetStarted();
+    }
+
+    public void finishFastBuildTarget(FastBuildStatus.FastBuildTargetStatus fastBuildTargetStatus) {
+        myProject.getMessageBus().syncPublisher(FastBuildStatusListener.TOPIC).fastBuildTargetFinished(fastBuildTargetStatus);
+    }
+
+    public static FastBuildStatusService getInstance(Project project) {
+        return project.getInstance(FastBuildStatusService.class);
+    }
 }

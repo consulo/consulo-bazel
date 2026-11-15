@@ -1,0 +1,10 @@
+workspace.java.importer.building.model:
+    text: "Building workspace model"
+workspace.java.importer.name:
+    text: "JVM importer"
+workspace.java.importer.resolving.targets:
+    text: "Resolving {0} targets"
+workspace.java.importer.update.internal.model:
+    text: "Update internal model"
+workspace.java.importer.writing.libraries:
+    text: "Writing libraries"

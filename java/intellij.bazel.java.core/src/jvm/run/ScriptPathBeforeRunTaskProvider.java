@@ -1,107 +1,182 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.execution.BeforeRunTask
-import com.intellij.execution.BeforeRunTaskProvider
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.Ref
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.runBlocking
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.jvm.run.ScriptPathBeforeRunTaskProvider.Task
-import org.jetbrains.bazel.run.commandLine.parseAsProgramArguments
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.HasBazelParams
-import org.jetbrains.bazel.run.state.HasProgramArguments
-import org.jetbrains.bazel.server.tasks.DefaultBuildTargetTask
-import org.jetbrains.bazel.server.tasks.ScriptPathBuildTargetTask
-import org.jetbrains.bazel.server.tasks.runBuildTargetTask
-import java.nio.file.Path
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.dataContext.DataContext;
+import consulo.execution.BeforeRunFragment;
+import consulo.execution.BeforeRunTask;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.ui.UIAccess;
+import consulo.ui.image.Image;
+import consulo.util.dataholder.Key;
+import consulo.util.lang.ref.SimpleReference;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.run.BazelRunConfigurationState;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.commandLine.Utils;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.Common;
+import org.jetbrains.bazel.server.tasks.BuildTargetTask;
+import org.jetbrains.bazel.server.tasks.ScriptPathBuildTargetTask;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-val SCRIPT_PATH_KEY: Key<Ref<Path>> = Key.create("bazel.jvm.script.path")
-
-private const val PROVIDER_NAME = "BuildScriptBeforeRunTaskProvider"
-
-private val PROVIDER_ID = Key.create<Task>(PROVIDER_NAME)
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 /**
- * As per [--script_path](https://bazel.build/reference/command-line-reference#run-flag--script_path) doc:
+ * As per <a href="https://bazel.build/reference/command-line-reference#run-flag--script_path">--script_path</a> doc:
  * Writes a shell script to the given file which invokes the target.
- * Then the following can be used to invoke target `//foo`: `bazel run --script_path=foo //foo && ./foo`.
- * This differs from `bazel run //foo` in that the bazel lock is released allowing hotswap in tests.
+ * Then the following can be used to invoke target {@code //foo}: {@code bazel run --script_path=foo //foo && ./foo}.
+ * This differs from {@code bazel run //foo} in that the bazel lock is released allowing hotswap in tests.
  * This gets us:
  * - Diagnostics for a failed build
  * - Hotswap while debugging a test (because the lock is released)
  * - Because debugger is attached only once the ready script is run, it doesn't have to wait for the build (and possibly timeout)
  */
-@ApiStatus.Internal
-class ScriptPathBeforeRunTaskProvider : BeforeRunTaskProvider<Task>() {
-  fun createTaskInstance(): Task = Task()
+// consulo: IntelliJ BeforeRunTaskProvider is Consulo's BeforeRunFragment (stepsBeforeRunProvider -> project @ExtensionImpl)
+@ExtensionImpl
+public class ScriptPathBeforeRunTaskProvider implements BeforeRunFragment<ScriptPathBeforeRunTaskProvider.Task> {
+    // consulo: upstream top-level declarations of ScriptPathBeforeRunTaskProvider.kt
+    public static final Key<SimpleReference<Path>> SCRIPT_PATH_KEY = Key.create("bazel.jvm.script.path");
 
-  override fun createTask(runConfiguration: RunConfiguration): Task? {
-    if (runConfiguration !is BazelRunConfiguration) return null
-    return createTaskInstance()
-  }
+    private static final String PROVIDER_NAME = "BuildScriptBeforeRunTaskProvider";
 
-  override fun executeTask(
-    context: DataContext,
-    configuration: RunConfiguration,
-    environment: ExecutionEnvironment,
-    task: Task,
-  ): Boolean {
-    // Skip for running with coverage, in which case SCRIPT_PATH_KEY is not set
-    val scriptPathRef: Ref<Path>? = environment.getCopyableUserData(SCRIPT_PATH_KEY)
-    val runConfiguration = BazelRunConfiguration.get(environment)
-    val isDebug = environment.executor is DefaultDebugExecutor
-    val project = environment.project
-    val scriptPath = scriptPathRef?.let { ScriptPathBuildTargetTask.createTempScriptFile() }
-    val status =
-      try {
-        val buildTargetTask = if (scriptPath != null) {
-          val state = runConfiguration.handler?.state
-          val programArguments = parseAsProgramArguments((state as? HasProgramArguments)?.programArguments)
-          val additionalBazelParams = parseAsProgramArguments((state as? HasBazelParams)?.additionalBazelParams)
-          ScriptPathBuildTargetTask(
-            scriptPath = scriptPath,
-            programArguments = programArguments,
-            additionalBazelParams = additionalBazelParams,
-          )
-        } else {
-          /**
-           * scriptPath is null when running tests without debug, which indicates that we should build but not pass --script_path
-           * because --script_path screws up test result caching, but we still want diagnostics if the build fails
-           */
-          DefaultBuildTargetTask
-        }
-        // runBlocking instead of runBlockingCancellable because before run tasks aren't cancellable
-        runBlocking {
-          runBuildTargetTask(
-            runConfiguration.targets,
-            project,
-            isDebug,
-            buildTargetTask,
-          )
-        }
-      } catch (_: CancellationException) {
-        return false
-      }
-    if (status == BazelStatus.SUCCESS) {
-      scriptPathRef?.set(scriptPath)
-      return true
-    } else {
-      return false
+    // consulo: Consulo before run tasks are identified by their state class (BeforeRunFragment.find(project, Task.class)), the key is
+    // kept for upstream callers
+    @SuppressWarnings("unused")
+    private static final Key<Task> PROVIDER_ID = Key.create(PROVIDER_NAME);
+
+    public ScriptPathBeforeRunTaskProvider() {
     }
-  }
 
-  override fun getId(): Key<Task> = PROVIDER_ID
+    public Task createTaskInstance() {
+        return new Task();
+    }
 
-  override fun getName(): String = BazelPluginBundle.message("console.task.build.title")
+    @Override
+    public @Nullable Task createTask(RunConfiguration runConfiguration) {
+        if (!(runConfiguration instanceof BazelRunConfiguration)) {
+            return null;
+        }
+        return createTaskInstance();
+    }
 
-  class Task : BeforeRunTask<Task>(PROVIDER_ID)
+    // consulo: BeforeRunFragment.executeAsync() replaces executeTask(); a task returning false cancels the run like upstream
+    @Override
+    public CompletableFuture<?> executeAsync(
+        UIAccess uiAccess,
+        DataContext context,
+        RunConfiguration configuration,
+        ExecutionEnvironment environment,
+        Task task
+    ) {
+        return executeTask(context, configuration, environment, task).thenCompose(success -> {
+            if (success) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return CompletableFuture.failedFuture(new CancellationException());
+        });
+    }
+
+    // consulo: upstream returns a Boolean from runBlocking { }, here the future of it
+    public CompletableFuture<Boolean> executeTask(
+        DataContext context,
+        RunConfiguration configuration,
+        ExecutionEnvironment environment,
+        Task task
+    ) {
+        // Skip for running with coverage, in which case SCRIPT_PATH_KEY is not set
+        SimpleReference<Path> scriptPathRef = environment.getCopyableUserData(SCRIPT_PATH_KEY);
+        BazelRunConfiguration runConfiguration = BazelRunConfiguration.get(environment);
+        boolean isDebug = environment.getExecutor() instanceof DefaultDebugExecutor;
+        Project project = environment.getProject();
+        Path scriptPath = scriptPathRef != null ? ScriptPathBuildTargetTask.createTempScriptFile() : null;
+        CompletableFuture<BazelStatus> status;
+        try {
+            BuildTargetTask buildTargetTask;
+            if (scriptPath != null) {
+                BazelRunHandler handler = runConfiguration.getHandler();
+                BazelRunConfigurationState<?> state = handler == null ? null : handler.getState();
+                List<String> programArguments = Utils.parseAsProgramArguments(
+                    state instanceof Common.HasProgramArguments hasProgramArguments ? hasProgramArguments.getProgramArguments() : null
+                );
+                List<String> additionalBazelParams = Utils.parseAsProgramArguments(
+                    state instanceof Common.HasBazelParams hasBazelParams ? hasBazelParams.getAdditionalBazelParams() : null
+                );
+                buildTargetTask = new ScriptPathBuildTargetTask(
+                    /* scriptPath = */ scriptPath,
+                    /* programArguments = */ programArguments,
+                    /* additionalBazelParams = */ additionalBazelParams
+                );
+            }
+            else {
+                /*
+                 * scriptPath is null when running tests without debug, which indicates that we should build but not pass --script_path
+                 * because --script_path screws up test result caching, but we still want diagnostics if the build fails
+                 */
+                buildTargetTask = BuildTargetTask.DefaultBuildTargetTask.INSTANCE;
+            }
+            // runBlocking instead of runBlockingCancellable because before run tasks aren't cancellable
+            // consulo: the before run task is asynchronous in Consulo, no runBlocking
+            status = BuildTargetTask.runBuildTargetTask(
+                runConfiguration.getTargets(),
+                project,
+                isDebug,
+                buildTargetTask
+            );
+        }
+        catch (CancellationException e) {
+            return CompletableFuture.completedFuture(false);
+        }
+        return status.handle((result, error) -> {
+            if (error != null) {
+                Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+                if (cause instanceof CancellationException) {
+                    return false;
+                }
+                throw new CompletionException(cause);
+            }
+            if (result == BazelStatus.SUCCESS) {
+                if (scriptPathRef != null) {
+                    scriptPathRef.set(scriptPath);
+                }
+                return true;
+            }
+            else {
+                return false;
+            }
+        });
+    }
+
+    @Override
+    public String getId() {
+        return PROVIDER_NAME;
+    }
+
+    @Override
+    public LocalizeValue getName() {
+        return BazelPluginLocalize.consoleTaskBuildTitle();
+    }
+
+    // consulo: BeforeRunFragment requires an icon, upstream BeforeRunTaskProvider has none by default
+    @Override
+    public @Nullable Image getIcon(RunConfiguration configuration) {
+        return null;
+    }
+
+    @Override
+    public Class<Task> getStateClass() {
+        return Task.class;
+    }
+
+    // consulo: upstream BeforeRunTask<Task>(PROVIDER_ID); Consulo before run tasks are identified by their class
+    public static class Task extends BeforeRunTask {
+    }
 }

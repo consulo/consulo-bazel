@@ -1,73 +1,120 @@
-package org.jetbrains.bazel.java.ui.gutters
+package org.jetbrains.bazel.java.ui.gutters;
 
-import com.intellij.execution.junit.DisabledConditionUtil
-import com.intellij.lang.jvm.util.JvmClassUtil
-import com.intellij.lang.jvm.util.JvmMainMethodUtil
-import com.intellij.openapi.vfs.JarFileSystem
-import com.intellij.psi.PsiClass
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiMethod
-import com.intellij.psi.PsiNameIdentifierOwner
-import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer
-import org.jetbrains.bsp.protocol.BuildTarget
+import com.intellij.java.language.psi.PsiClass;
+import com.intellij.java.language.psi.PsiMethod;
+import com.intellij.java.language.psi.util.ClassUtil;
+import com.intellij.java.language.psi.util.PsiMethodUtil;
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiNameIdentifierOwner;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.util.lang.Pair;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.archive.ArchiveFileSystem;
+import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal  // External plugins (e.g., Scala) should extend BazelRunConfigurationProducer instead
-open class BazelJavaRunConfigurationProducer : BazelRunConfigurationProducer() {
-  override fun isDumbAware(): Boolean = true
+import java.util.List;
+import java.util.Map;
 
-  override fun getGutterAction(element: PsiElement, target: BuildTarget): GutterAction? {
-    if (element.containingFile?.virtualFile?.fileSystem is JarFileSystem) return null
-    val psiIdentifier = PsiTreeUtil.getParentOfType(element, PsiNameIdentifierOwner::class.java, true) ?: return null
-    if (psiIdentifier.nameIdentifier != element) return null
-    val (psiClass, psiMethod) = toPsiClassOrMethod(psiIdentifier)
-    val classOrMethod = psiClass ?: psiMethod ?: return null
-    if (isMainMethod(element)) {
-      return GutterAction()
+// External plugins (e.g., Scala) should extend BazelRunConfigurationProducer instead
+// consulo: upstream isDumbAware() = true; BazelRunConfigurationProducer already implements DumbAware
+@ExtensionImpl
+public class BazelJavaRunConfigurationProducer extends BazelRunConfigurationProducer {
+    @Override
+    @RequiredReadAction
+    public @Nullable GutterAction getGutterAction(PsiElement element, BuildTarget target) {
+        // consulo: JarFileSystem -> ArchiveFileSystem
+        PsiFile containingFile = element.getContainingFile();
+        VirtualFile virtualFile = containingFile != null ? containingFile.getVirtualFile() : null;
+        if (virtualFile != null && virtualFile.getFileSystem() instanceof ArchiveFileSystem) {
+            return null;
+        }
+        PsiNameIdentifierOwner psiIdentifier = PsiTreeUtil.getParentOfType(element, PsiNameIdentifierOwner.class, true);
+        if (psiIdentifier == null) {
+            return null;
+        }
+        if (psiIdentifier.getNameIdentifier() != element) {
+            return null;
+        }
+        Pair<@Nullable PsiClass, @Nullable PsiMethod> classOrMethodPair = toPsiClassOrMethod(psiIdentifier);
+        PsiClass psiClass = classOrMethodPair.getFirst();
+        PsiMethod psiMethod = classOrMethodPair.getSecond();
+        PsiElement classOrMethod = psiClass != null ? psiClass : psiMethod;
+        if (classOrMethod == null) {
+            return null;
+        }
+        if (isMainMethod(element)) {
+            return new GutterAction();
+        }
+
+        String className = getContainingClassFqn(psiIdentifier);
+        if (className == null) {
+            return null;
+        }
+        String testFilter = JvmTestFilterExtension.getInstance(element.getProject(), target).getTestFilter(className, psiMethod);
+        // TODO consulo: com.intellij.execution.junit.DisabledConditionUtil is missing in consulo-junit
+        //val junitDisabledCondition = DisabledConditionUtil.getDisabledCondition(classOrMethod)
+        @Nullable String junitDisabledCondition = null;
+        List<String> programArguments;
+        if (junitDisabledCondition != null) {
+            // Support running a @Disabled JUnit test if we clicked on it explicitely
+            programArguments = List.of("--wrapper_script_flag=--jvm_flag=-Djunit.jupiter.conditions.deactivate=" + junitDisabledCondition);
+        }
+        else {
+            programArguments = List.of();
+        }
+        return new GutterAction(
+            /* testFilter = */ testFilter,
+            /* programArguments = */ programArguments,
+            /* env = */ Map.of(),
+            /* additionalLocationString = */ psiMethod != null ? psiMethod.getName() : null
+        );
     }
 
-    val className = getContainingClassFqn(psiIdentifier) ?: return null
-    val testFilter = JvmTestFilterExtension.getInstance(element.project, target).getTestFilter(className, psiMethod)
-    val junitDisabledCondition = DisabledConditionUtil.getDisabledCondition(classOrMethod)
-    return GutterAction(
-      testFilter = testFilter,
-      programArguments = when {
-        // Support running a @Disabled JUnit test if we clicked on it explicitely
-        junitDisabledCondition != null -> listOf("--wrapper_script_flag=--jvm_flag=-Djunit.jupiter.conditions.deactivate=$junitDisabledCondition")
-        else -> emptyList()
-      },
-      additionalLocationString = psiMethod?.name,
-    )
-  }
+    public @Nullable String getContainingClassFqn(PsiElement element) {
+        PsiClass psiClass = PsiTreeUtil.getParentOfType(element, PsiClass.class, false);
+        if (psiClass == null) {
+            return null;
+        }
+        // consulo: JvmClassUtil.getJvmClassName -> ClassUtil.getJVMClassName
+        return ClassUtil.getJVMClassName(psiClass);
+    }
 
-  open fun getContainingClassFqn(element: PsiElement): String? {
-    val psiClass = PsiTreeUtil.getParentOfType(element, PsiClass::class.java, false) ?: return null
-    return JvmClassUtil.getJvmClassName(psiClass)
-  }
+    public Pair<@Nullable PsiClass, @Nullable PsiMethod> toPsiClassOrMethod(PsiNameIdentifierOwner element) {
+        return Pair.create(
+            element instanceof PsiClass psiClass ? psiClass : null,
+            element instanceof PsiMethod psiMethod ? psiMethod : null
+        );
+    }
 
-  open fun toPsiClassOrMethod(element: PsiNameIdentifierOwner): Pair<PsiClass?, PsiMethod?> =
-    (element as? PsiClass) to (element as? PsiMethod)
+    public boolean isMainMethod(PsiElement element) {
+        PsiNameIdentifierOwner identifier = PsiTreeUtil.getParentOfType(element, PsiNameIdentifierOwner.class, true);
+        // consulo: JvmMainMethodUtil.isMainMethod / hasMainMethodInHierarchy -> PsiMethodUtil.isMainMethod / hasMainMethod
+        //   (hasMainMethod searches the methods of the class hierarchy)
+        return identifier instanceof PsiMethod psiMethod && PsiMethodUtil.isMainMethod(psiMethod)
+            || identifier instanceof PsiClass psiClass && PsiMethodUtil.hasMainMethod(psiClass);
+    }
 
-  open fun isMainMethod(element: PsiElement): Boolean {
-    val identifier = PsiTreeUtil.getParentOfType(element, PsiNameIdentifierOwner::class.java, true)
-    return identifier is PsiMethod && JvmMainMethodUtil.isMainMethod(identifier) || identifier is PsiClass && JvmMainMethodUtil.hasMainMethodInHierarchy(
-      identifier,
-    )
-  }
+    // consulo: upstream top-level declarations of BazelJavaRunConfigurationProducer.kt
+
+    public static String getTestFilter(String className, @Nullable String methodName) {
+        if (methodName != null) {
+            // Include
+            return normalizeNestedClassSeparator(className) + "." + methodName + "$";
+        }
+        else {
+            return normalizeNestedClassSeparator(className);
+        }
+    }
+
+    /**
+     * Any `$` separating a nested class is replaced with `.`, because `$` would otherwise be interpreted as a regex end-of-input anchor.
+     */
+    private static String normalizeNestedClassSeparator(String receiver) {
+        return receiver.replace("$", ".");
+    }
 }
-
-@ApiStatus.Internal
-fun getTestFilter(className: String, methodName: String?): String =
-  if (methodName != null) {
-    // Include
-    "${className.normalizeNestedClassSeparator()}.$methodName$"
-  }
-  else {
-    className.normalizeNestedClassSeparator()
-  }
-
-/**
- * Any `$` separating a nested class is replaced with `.`, because `$` would otherwise be interpreted as a regex end-of-input anchor.
- */
-private fun String.normalizeNestedClassSeparator(): String = replace("$", ".")

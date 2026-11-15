@@ -1,30 +1,62 @@
-package org.jetbrains.bazel.hotswap
+package org.jetbrains.bazel.hotswap;
 
-import com.intellij.debugger.impl.DebuggerSession
-import com.intellij.debugger.ui.HotSwapStatusListener
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
+import com.intellij.java.debugger.impl.DebuggerSession;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.project.Project;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Manages hotswapping for bazel java_binary run configurations.
- *
+ * <p>
  * Customers could override the default implementation to add their telemetry, see BAZEL-3091
  */
-interface BazelHotSwapManager {
-  class HotSwapEnvironment(
-    val oldManifest: JarFileManifest,
-    val newManifest: JarFileManifest,
-    val listener: HotSwapStatusListener?,
-    val sessions: List<DebuggerSession>,
-    val isAutoRun: Boolean,
-  )
+@ServiceAPI(ComponentScope.PROJECT)
+public interface BazelHotSwapManager {
+    class HotSwapEnvironment {
+        private final JarFileManifest myOldManifest;
+        private final JarFileManifest myNewManifest;
+        // TODO consulo: com.intellij.debugger.ui.HotSwapStatusListener (HotSwapUIImpl.HOT_SWAP_CALLBACK_KEY) is missing in Consulo
+        // val listener: HotSwapStatusListener?,
+        private final List<DebuggerSession> mySessions;
+        private final boolean myIsAutoRun;
 
-  suspend fun hotswap(environment: HotSwapEnvironment)
+        public HotSwapEnvironment(
+            JarFileManifest oldManifest,
+            JarFileManifest newManifest,
+            List<DebuggerSession> sessions,
+            boolean isAutoRun
+        ) {
+            myOldManifest = oldManifest;
+            myNewManifest = newManifest;
+            mySessions = sessions;
+            myIsAutoRun = isAutoRun;
+        }
 
-  fun getCurrentDebugSessions(): List<DebuggerSession>
+        public JarFileManifest getOldManifest() {
+            return myOldManifest;
+        }
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): BazelHotSwapManager = project.service<BazelHotSwapManager>()
-  }
+        public JarFileManifest getNewManifest() {
+            return myNewManifest;
+        }
+
+        public List<DebuggerSession> getSessions() {
+            return mySessions;
+        }
+
+        public boolean isAutoRun() {
+            return myIsAutoRun;
+        }
+    }
+
+    CompletableFuture<?> hotswap(HotSwapEnvironment environment);
+
+    List<DebuggerSession> getCurrentDebugSessions();
+
+    static BazelHotSwapManager getInstance(Project project) {
+        return project.getInstance(BazelHotSwapManager.class);
+    }
 }

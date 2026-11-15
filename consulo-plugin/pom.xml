@@ -106,16 +106,13 @@
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>
-        <!-- optional libraries (META-INF/plugin-requires.xml): loaded only with the required plugin.
-             TODO: enable with the consulo-bazel-java module in the root pom -->
-        <!--
+        <!-- optional libraries (META-INF/plugin-requires.xml): loaded only with the required plugin -->
         <dependency>
             <groupId>consulo.plugin</groupId>
             <artifactId>consulo.bazel.java</artifactId>
             <version>${project.version}</version>
             <scope>runtime</scope>
         </dependency>
-        -->
         <!-- gRPC (grpc-api, grpc-stub, grpc-protobuf) and proto-google-common-protos are provided by the platform.
              TODO: drop the versions once the published arch.managment manages ${grpc.version} -->
         <dependency>

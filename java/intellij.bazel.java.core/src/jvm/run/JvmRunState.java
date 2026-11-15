@@ -1,39 +1,74 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.execution.ui.SettingsEditorFragment
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.SettingsEditorFragmentContainer
-import com.intellij.openapi.project.Project
-import com.intellij.util.xmlb.annotations.Attribute
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.projectview.projectView
-import org.jetbrains.bazel.languages.projectview.runConfigRunWithBazel
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.AbstractGenericRunState
-import org.jetbrains.bazel.run.state.HasRunWithBazel
-import org.jetbrains.bazel.run.state.RunWithBazelFragment
-import org.jetbrains.bazel.run.state.addEnvironmentFragment
-import org.jetbrains.bazel.run.state.bazelParamsFragment
-import org.jetbrains.bazel.run.state.programArgumentsFragment
+import consulo.bazel.execution.ui.SettingsEditorFragment;
+import consulo.bazel.execution.ui.SettingsEditorFragmentContainer;
+import consulo.project.Project;
+import consulo.util.xml.serializer.WriteExternalException;
+import consulo.util.xml.serializer.annotation.Attribute;
+import org.jdom.Element;
+import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
+import org.jetbrains.bazel.languages.projectview.ProjectViewService;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.AbstractGenericRunState;
+import org.jetbrains.bazel.run.state.Common;
+import org.jetbrains.bazel.run.state.RunWithBazel;
 
-@ApiStatus.Internal
-class JvmRunState(project: Project) :
-  AbstractGenericRunState<JvmRunState>(),
-  HasDebugPort,
-  HasRunWithBazel {
-  @com.intellij.configurationStore.Property(description = "Debug port")
-  @get:Attribute("debugPort")
-  override var debugPort: Int by property(5005)
+import java.util.Collection;
 
-  @com.intellij.configurationStore.Property(description = "Run with Bazel")
-  @get:Attribute("runWithBazel")
-  override var runWithBazel: Boolean by property(project.projectView().runConfigRunWithBazel)
+// consulo: upstream @com.intellij.configurationStore.Property(description = ...) annotations have no Consulo counterpart
+public class JvmRunState
+    extends AbstractGenericRunState<JvmRunState>
+    implements HasDebugPort, RunWithBazel.HasRunWithBazel {
+    private int myDebugPort = 5005;
 
-  override fun createFragments(configuration: BazelRunConfiguration): Collection<SettingsEditorFragment<BazelRunConfiguration, *>> =
-    SettingsEditorFragmentContainer.fragments {
-      addDebugPortFragment()
-      add(bazelParamsFragment())
-      add(programArgumentsFragment())
-      addEnvironmentFragment()
-      add(RunWithBazelFragment())
+    private boolean myRunWithBazel;
+
+    public JvmRunState(Project project) {
+        myRunWithBazel = ProjectViewExtensions.getRunConfigRunWithBazel(ProjectViewService.projectView(project));
+    }
+
+    // consulo: XmlSerializer (SkipDefaultsSerializationFilter) needs a no-arg instance for the default values
+    public JvmRunState() {
+    }
+
+    // consulo: upstream `property(project.projectView().runConfigRunWithBazel)` skips the project view value as the default;
+    // SkipDefaultsSerializationFilter compares with the no-arg instance instead, so runWithBazel is always written
+    @Override
+    public void writeExternal(Element element) throws WriteExternalException {
+        super.writeExternal(element);
+        element.setAttribute("runWithBazel", String.valueOf(myRunWithBazel));
+    }
+
+    @Attribute("debugPort")
+    @Override
+    public int getDebugPort() {
+        return myDebugPort;
+    }
+
+    @Override
+    public void setDebugPort(int debugPort) {
+        myDebugPort = debugPort;
+    }
+
+    @Attribute("runWithBazel")
+    @Override
+    public boolean getRunWithBazel() {
+        return myRunWithBazel;
+    }
+
+    @Override
+    public void setRunWithBazel(boolean runWithBazel) {
+        myRunWithBazel = runWithBazel;
+    }
+
+    @Override
+    public Collection<SettingsEditorFragment<BazelRunConfiguration, ?>> createFragments(BazelRunConfiguration configuration) {
+        return SettingsEditorFragmentContainer.<BazelRunConfiguration>fragments(container -> {
+            JvmTestState.addDebugPortFragment(container);
+            container.add(Common.bazelParamsFragment());
+            container.add(Common.programArgumentsFragment());
+            Common.addEnvironmentFragment(container);
+            container.add(new RunWithBazel.RunWithBazelFragment());
+        });
     }
 }

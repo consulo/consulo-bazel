@@ -1,7 +1,6 @@
-package org.jetbrains.bazel.java.analysis
+package org.jetbrains.bazel.java.analysis;
 
-import com.intellij.codeInspection.bytecodeAnalysis.BytecodeAnalysisSuppressor
-import com.intellij.openapi.vfs.VirtualFile
+import consulo.virtualFileSystem.VirtualFile;
 
 /**
  * Interface jars have most of the bytecode removed (e.g., method bodies), so the bytecode analysis will be incorrect, leading to false positives.
@@ -13,10 +12,15 @@ import com.intellij.openapi.vfs.VirtualFile
  *
  * For simplicity, we suppress the analysis for all `abi.jar` files even if they might not be stripped.
  */
-internal class BazelInterfaceJarAnalysisSuppressor : BytecodeAnalysisSuppressor {
+// TODO consulo: BytecodeAnalysisSuppressor (lang.jvm.bytecodeAnalysisSuppressor) is missing in consulo-java, the class is not registered
+public class BazelInterfaceJarAnalysisSuppressor /* : BytecodeAnalysisSuppressor */ {
 
-  // needs to be bumped if algorithm changes
-  override fun getVersion(): Int = 1
+    // needs to be bumped if algorithm changes
+    public int getVersion() {
+        return 1;
+    }
 
-  override fun shouldSuppress(file: VirtualFile): Boolean = file.isBazelInterfaceJar()
+    public boolean shouldSuppress(VirtualFile file) {
+        return InterfaceJars.isBazelInterfaceJar(file);
+    }
 }

@@ -1,16 +1,40 @@
-package org.jetbrains.bazel.java.analysis
+package org.jetbrains.bazel.java.analysis;
 
-import com.intellij.openapi.vfs.JarFileSystem
-import com.intellij.openapi.vfs.VirtualFile
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.archive.ArchiveVfsUtil;
 
-private val INTERFACE_JAR_SUFFIXES = arrayOf("-ijar.jar", "-hjar.jar", ".abi.jar")
+// consulo: upstream top-level declarations of InterfaceJars.kt
+public final class InterfaceJars {
+    private InterfaceJars() {
+    }
 
-/**
- * Returns true if the given file is a Bazel interface jar. Bazel interface jar must have a specific suffix and be located under `bazel-out`.
- */
-internal fun VirtualFile.isBazelInterfaceJar(): Boolean {
-  val jar = JarFileSystem.getInstance().getVirtualFileForJar(this) ?: return false
-  val name = jar.name
-  return INTERFACE_JAR_SUFFIXES.any { suffix -> name.endsWith(suffix) }
-         && generateSequence(jar.parent) { it.parent }.any { it.name == "bazel-out" }
+    private static final String[] INTERFACE_JAR_SUFFIXES = new String[]{"-ijar.jar", "-hjar.jar", ".abi.jar"};
+
+    /**
+     * Returns true if the given file is a Bazel interface jar. Bazel interface jar must have a specific suffix and be located under `bazel-out`.
+     */
+    public static boolean isBazelInterfaceJar(VirtualFile receiver) {
+        // consulo: JarFileSystem.getVirtualFileForJar -> ArchiveVfsUtil.getVirtualFileForArchive
+        VirtualFile jar = ArchiveVfsUtil.getVirtualFileForArchive(receiver);
+        if (jar == null) {
+            return false;
+        }
+        String name = jar.getName();
+        boolean hasSuffix = false;
+        for (String suffix : INTERFACE_JAR_SUFFIXES) {
+            if (name.endsWith(suffix)) {
+                hasSuffix = true;
+                break;
+            }
+        }
+        if (!hasSuffix) {
+            return false;
+        }
+        for (VirtualFile it = jar.getParent(); it != null; it = it.getParent()) {
+            if (it.getName().equals("bazel-out")) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

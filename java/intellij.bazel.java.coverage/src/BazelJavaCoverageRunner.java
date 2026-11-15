@@ -1,24 +1,33 @@
-package org.jetbrains.bazel.java.coverage
+package org.jetbrains.bazel.java.coverage;
 
-import com.intellij.coverage.CoverageExecutor
-import com.intellij.coverage.CoverageRunnerData
-import com.intellij.execution.configurations.ConfigurationInfoProvider
-import com.intellij.execution.configurations.RunProfile
-import com.intellij.execution.configurations.RunnerSettings
-import com.intellij.execution.impl.DefaultJavaProgramRunner
-
-private const val RUNNER_ID = "BazelJavaCoverageRunner"
+import com.intellij.java.execution.impl.DefaultJavaProgramRunner;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.configuration.ConfigurationInfoProvider;
+import consulo.execution.configuration.RunProfile;
+import consulo.execution.configuration.RunnerSettings;
+import consulo.execution.coverage.CoverageExecutor;
+import consulo.execution.coverage.CoverageRunnerData;
 
 /**
- * [com.intellij.coverage.JavaCoverageRunner]
+ * {@link com.intellij.java.coverage.DefaultJavaCoverageRunner}
  */
-internal class BazelJavaCoverageRunner : DefaultJavaProgramRunner() {
-  override fun canRun(executorId: String, profile: RunProfile): Boolean =
-    executorId == CoverageExecutor.EXECUTOR_ID && isJavaAgentCoverageApplicableTo(profile)
+// TODO consulo: upstream order="before bazelCoverageProgramRunner"; misc/intellij.bazel.coverage is not ported yet
+@ExtensionImpl(id = "BazelJavaCoverageRunner")
+public class BazelJavaCoverageRunner extends DefaultJavaProgramRunner {
+    private static final String RUNNER_ID = "BazelJavaCoverageRunner";
 
-  override fun createConfigurationData(settingsProvider: ConfigurationInfoProvider): RunnerSettings {
-    return CoverageRunnerData()
-  }
+    @Override
+    public boolean canRun(String executorId, RunProfile profile) {
+        return executorId.equals(CoverageExecutor.EXECUTOR_ID) && BazelJavaAgentCoverageEngine.isJavaAgentCoverageApplicableTo(profile);
+    }
 
-  override fun getRunnerId(): String = RUNNER_ID
+    @Override
+    public RunnerSettings createConfigurationData(ConfigurationInfoProvider settingsProvider) {
+        return new CoverageRunnerData();
+    }
+
+    @Override
+    public String getRunnerId() {
+        return RUNNER_ID;
+    }
 }

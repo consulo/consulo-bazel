@@ -1,11 +1,11 @@
-package org.jetbrains.bazel.scala.sdk
+package org.jetbrains.bazel.scala.sdk;
 
-import org.jetbrains.annotations.ApiStatus
-import java.net.URI
+import java.net.URI;
+import java.util.List;
 
-@ApiStatus.Internal
-data class ScalaSdk(
-  val name: String,
-  val scalaVersion: String,
-  val sdkJars: List<URI>,
-)
+public record ScalaSdk(
+    String name,
+    String scalaVersion,
+    List<URI> sdkJars
+) {
+}

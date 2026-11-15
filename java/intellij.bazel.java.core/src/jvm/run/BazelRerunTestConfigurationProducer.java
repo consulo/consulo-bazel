@@ -1,57 +1,83 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.execution.actions.ConfigurationContext
-import com.intellij.execution.actions.LazyRunConfigurationProducer
-import com.intellij.execution.configurations.ConfigurationFactory
-import com.intellij.execution.testframework.AbstractTestProxy
-import com.intellij.openapi.util.Ref
-import com.intellij.psi.PsiElement
-import org.jetbrains.bazel.run.BazelTestRerunExtension
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.config.bazelRunConfigurationFactory
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.action.ConfigurationContext;
+import consulo.execution.action.RunConfigurationProducer;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.test.AbstractTestProxy;
+import consulo.language.psi.PsiElement;
+import consulo.util.lang.ref.SimpleReference;
+import org.jetbrains.bazel.run.BazelTestRerunExtension;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
+import org.jspecify.annotations.Nullable;
+
+import java.util.List;
 
 /**
  * Allows right-clicking on a test in the test results and then rerunning it separately from other tests
+ *
  * @see org.jetbrains.bazel.run.BazelRerunFailedTestsAction
  * @see com.intellij.execution.junit.UniqueIdConfigurationProducer
  */
-internal class BazelRerunTestConfigurationProducer : LazyRunConfigurationProducer<BazelRunConfiguration>() {
-  override fun getConfigurationFactory(): ConfigurationFactory = bazelRunConfigurationFactory
-
-  override fun setupConfigurationFromContext(
-    configuration: BazelRunConfiguration,
-    context: ConfigurationContext,
-    sourceElement: Ref<PsiElement>,
-  ): Boolean {
-    if (BazelTestRerunExtension.getInstance(configuration)
-        ?.setTestsToRerun(configuration, getTestsFromTestConsole(context)) != true) return false
-
-    val selectedProxy = context.dataContext.getData(AbstractTestProxy.DATA_KEY)
-    if (selectedProxy != null) {
-      val configurationName = getConfigurationName(selectedProxy)
-      if (configurationName != null) {
-        configuration.name = configurationName
-      }
+// consulo: LazyRunConfigurationProducer -> RunConfigurationProducer
+@ExtensionImpl
+public class BazelRerunTestConfigurationProducer extends RunConfigurationProducer<BazelRunConfiguration> {
+    public BazelRerunTestConfigurationProducer() {
+        super(BazelRunConfigurationType.getBazelRunConfigurationFactory());
     }
 
-    return true
-  }
+    @Override
+    public ConfigurationFactory getConfigurationFactory() {
+        return BazelRunConfigurationType.getBazelRunConfigurationFactory();
+    }
 
-  override fun isConfigurationFromContext(
-    configuration: BazelRunConfiguration,
-    context: ConfigurationContext,
-  ): Boolean {
-    return BazelTestRerunExtension.getInstance(configuration)?.isRerunOf(configuration, getTestsFromTestConsole(context)) == true
-  }
+    @Override
+    protected boolean setupConfigurationFromContext(
+        BazelRunConfiguration configuration,
+        ConfigurationContext context,
+        SimpleReference<PsiElement> sourceElement
+    ) {
+        BazelTestRerunExtension extension = BazelTestRerunExtension.getInstance(configuration);
+        if (extension == null || !extension.setTestsToRerun(configuration, getTestsFromTestConsole(context))) {
+            return false;
+        }
 
-  private fun getTestsFromTestConsole(context: ConfigurationContext): List<AbstractTestProxy> =
-    context.dataContext.getData(AbstractTestProxy.DATA_KEYS).orEmpty().toList()
+        AbstractTestProxy selectedProxy = context.getDataContext().getData(AbstractTestProxy.KEY);
+        if (selectedProxy != null) {
+            String configurationName = getConfigurationName(selectedProxy);
+            if (configurationName != null) {
+                configuration.setName(configurationName);
+            }
+        }
 
-  private fun getConfigurationName(proxy: AbstractTestProxy): String? {
-    // For a URL like java:test://com.example.TestClass/testMethod we will return testMethod
-    val locationUrl = proxy.locationUrl ?: return proxy.name
-    val slashIndex = locationUrl.lastIndexOf('/')
-    if (slashIndex == -1) return proxy.name
-    return locationUrl.substring(slashIndex + 1)
-  }
+        return true;
+    }
+
+    @Override
+    public boolean isConfigurationFromContext(
+        BazelRunConfiguration configuration,
+        ConfigurationContext context
+    ) {
+        BazelTestRerunExtension extension = BazelTestRerunExtension.getInstance(configuration);
+        return extension != null && extension.isRerunOf(configuration, getTestsFromTestConsole(context));
+    }
+
+    private List<AbstractTestProxy> getTestsFromTestConsole(ConfigurationContext context) {
+        AbstractTestProxy[] proxies = context.getDataContext().getData(AbstractTestProxy.KEY_OF_ARRAY);
+        return proxies == null ? List.of() : List.of(proxies);
+    }
+
+    private @Nullable String getConfigurationName(AbstractTestProxy proxy) {
+        // For a URL like java:test://com.example.TestClass/testMethod we will return testMethod
+        String locationUrl = proxy.getLocationUrl();
+        if (locationUrl == null) {
+            return proxy.getName();
+        }
+        int slashIndex = locationUrl.lastIndexOf('/');
+        if (slashIndex == -1) {
+            return proxy.getName();
+        }
+        return locationUrl.substring(slashIndex + 1);
+    }
 }

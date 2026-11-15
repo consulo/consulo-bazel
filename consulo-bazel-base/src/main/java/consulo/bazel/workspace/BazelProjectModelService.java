@@ -103,6 +103,18 @@ public class BazelProjectModelService implements PersistentStateComponent<BazelP
         myProjectData = Map.copyOf(copy);
     }
 
+    /**
+     * Replaces one data value of a module outside a sync (upstream modifies the module entity with
+     * {@code WorkspaceModel.update}), see {@link #putProjectData}
+     */
+    public synchronized <T> void putModuleData(Module module, Class<T> type, T data) {
+        Map<String, Map<Class<?>, Object>> copy = new HashMap<>(myModuleData);
+        Map<Class<?>, Object> moduleCopy = new HashMap<>(copy.getOrDefault(module.getName(), Map.of()));
+        moduleCopy.put(type, data);
+        copy.put(module.getName(), Map.copyOf(moduleCopy));
+        myModuleData = Map.copyOf(copy);
+    }
+
     void update(
         Collection<String> modules,
         Collection<String> libraries,

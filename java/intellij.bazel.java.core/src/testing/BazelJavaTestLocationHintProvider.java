@@ -1,70 +1,94 @@
-package org.jetbrains.bazel.testing
+// consulo: package org.jetbrains.bazel.testing is also a package of consulo.bazel.base (JPMS split package)
+package org.jetbrains.bazel.testing.java;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bazel.sync.includesJava
-import org.jetbrains.bazel.util.BazelTestLocationHintProvider
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.sync.java.JavaLanguageClass;
+import org.jetbrains.bazel.testing.BazelTestDetails;
+import org.jetbrains.bazel.util.BazelTestLocationHintProvider;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelJavaTestLocationHintProvider : BazelTestLocationHintProvider {
-  override fun isApplicable(targetKind: TargetKind): Boolean = targetKind.includesJava()
+import java.util.List;
+import java.util.Objects;
 
-  override fun getLocationHint(testDetails: BazelTestDetails): String =
-    testDetails.run {
-      if (isSuite) {
-        testSuiteLocationHint(displayName, classname, parentSuiteNames)
-      } else {
-        testCaseLocationHint(displayName, classname, parentSuiteNames)
-      }
+@ExtensionImpl
+public class BazelJavaTestLocationHintProvider implements BazelTestLocationHintProvider {
+    @Override
+    public boolean isApplicable(TargetKind targetKind) {
+        return JavaLanguageClass.includesJava(targetKind);
     }
 
-  /**
-   * Generates a location hint for a test case.
-   * If non-null `classname` is given, `parentSuites` is ignored - it serves as a fallback if `classname` is unknown
-   */
-  fun testCaseLocationHint(
-    testName: String,
-    classname: String? = null,
-    parentSuites: List<String> = emptyList(),
-  ): String {
-    val classnameToUse = classname ?: parentSuites.joinToString(SUITE_DELIMITER)
-    val cleanClassName = classnameToUse.removeMisleadingDelimiters()
-    val cleanTestName = testName.removeSuffix("()")
-    return "$TEST_CASE_PREFIX$cleanClassName$FRAGMENT_DELIMITER$cleanTestName"
-  }
-
-  /**
-   * Generates a location hint for a test suite.
-   * If non-null `classname` is given, `parentSuites` is ignored - it serves as a fallback if `classname` is unknown
-   */
-  fun testSuiteLocationHint(
-    suiteName: String,
-    classname: String? = null,
-    parentSuites: List<String> = emptyList(),
-  ): String {
-    val classnameToUse =
-      when {
-        classname != null -> classname
-        parentSuites.isEmpty() -> suiteName
-        else -> {
-          val generatedClassname = parentSuites.joinToString(SUITE_DELIMITER, postfix = "$SUITE_DELIMITER$suiteName")
-          generatedClassname
+    @Override
+    public String getLocationHint(BazelTestDetails testDetails) {
+        if (testDetails.isSuite()) {
+            return testSuiteLocationHint(testDetails.displayName(), testDetails.classname(), testDetails.parentSuiteNames());
         }
-      }
-    val cleanClassName = classnameToUse.removeMisleadingDelimiters()
-    return "$TEST_SUITE_PREFIX$cleanClassName"
-  }
+        else {
+            return testCaseLocationHint(testDetails.displayName(), testDetails.classname(), testDetails.parentSuiteNames());
+        }
+    }
 
-  private fun String.removeMisleadingDelimiters(): String =
-    replace(FRAGMENT_DELIMITER, SUITE_DELIMITER) // otherwise the delimiters might get misinterpreted
+    // consulo: overload for the upstream default arguments classname = null, parentSuites = emptyList()
+    public String testCaseLocationHint(String testName) {
+        return testCaseLocationHint(testName, null, List.of());
+    }
 
-  companion object {
-    fun getInstance(): BazelJavaTestLocationHintProvider =
-      checkNotNull(BazelTestLocationHintProvider.ep.findExtension(BazelJavaTestLocationHintProvider::class.java))
-  }
+    /**
+     * Generates a location hint for a test case.
+     * If non-null `classname` is given, `parentSuites` is ignored - it serves as a fallback if `classname` is unknown
+     */
+    public String testCaseLocationHint(
+        String testName,
+        @Nullable String classname,
+        List<String> parentSuites
+    ) {
+        String classnameToUse = classname != null ? classname : String.join(SUITE_DELIMITER, parentSuites);
+        String cleanClassName = removeMisleadingDelimiters(classnameToUse);
+        String cleanTestName = testName.endsWith("()") ? testName.substring(0, testName.length() - 2) : testName;
+        return TEST_CASE_PREFIX + cleanClassName + FRAGMENT_DELIMITER + cleanTestName;
+    }
+
+    // consulo: overload for the upstream default arguments classname = null, parentSuites = emptyList()
+    public String testSuiteLocationHint(String suiteName) {
+        return testSuiteLocationHint(suiteName, null, List.of());
+    }
+
+    /**
+     * Generates a location hint for a test suite.
+     * If non-null `classname` is given, `parentSuites` is ignored - it serves as a fallback if `classname` is unknown
+     */
+    public String testSuiteLocationHint(
+        String suiteName,
+        @Nullable String classname,
+        List<String> parentSuites
+    ) {
+        String classnameToUse;
+        if (classname != null) {
+            classnameToUse = classname;
+        }
+        else if (parentSuites.isEmpty()) {
+            classnameToUse = suiteName;
+        }
+        else {
+            String generatedClassname = String.join(SUITE_DELIMITER, parentSuites) + SUITE_DELIMITER + suiteName;
+            classnameToUse = generatedClassname;
+        }
+        String cleanClassName = removeMisleadingDelimiters(classnameToUse);
+        return TEST_SUITE_PREFIX + cleanClassName;
+    }
+
+    private static String removeMisleadingDelimiters(String receiver) {
+        return receiver.replace(FRAGMENT_DELIMITER, SUITE_DELIMITER); // otherwise the delimiters might get misinterpreted
+    }
+
+    public static BazelJavaTestLocationHintProvider getInstance() {
+        return Objects.requireNonNull(BazelTestLocationHintProvider.getEp().findExtension(BazelJavaTestLocationHintProvider.class));
+    }
+
+    // consulo: upstream top-level constants of the file (TEST_SUITE_PREFIX, TEST_CASE_PREFIX are internal, used by
+    //   DefaultJvmTestRerunExtension)
+    public static final String TEST_SUITE_PREFIX = "java:suite://";
+    public static final String TEST_CASE_PREFIX = "java:test://";
+    private static final String SUITE_DELIMITER = "$";
+    private static final String FRAGMENT_DELIMITER = "/";
 }
-
-internal const val TEST_SUITE_PREFIX = "java:suite://"
-internal const val TEST_CASE_PREFIX = "java:test://"
-private const val SUITE_DELIMITER = "$"
-private const val FRAGMENT_DELIMITER = "/"

@@ -1,164 +1,215 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.debugger.engine.AsyncStacksUtils.addDebuggerAgent
-import com.intellij.execution.Executor
-import com.intellij.execution.JavaRunConfigurationExtensionManager
-import com.intellij.execution.configuration.RunConfigurationExtensionsManager
-import com.intellij.execution.configurations.JavaParameters
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.process.OSProcessHandler
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.Ref
-import kotlinx.coroutines.CompletableDeferred
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.import.GooglePluginAwareRunHandlerProvider
-import org.jetbrains.bazel.run.task.BazelRunTaskListener
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bazel.sync.isJvmTarget
-import org.jetbrains.bazel.taskEvents.BazelTaskListener
-import org.jetbrains.bsp.protocol.BuildTarget
+import com.intellij.java.debugger.impl.engine.AsyncStacksUtils;
+import com.intellij.java.execution.impl.JavaRunConfigurationExtensionManager;
+import com.intellij.java.execution.impl.RunConfigurationExtension;
+import consulo.execution.BeforeRunTask;
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.configuration.RunConfigurationExtensionsManager;
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.java.execution.configurations.OwnJavaParameters;
+import consulo.process.ExecutionException;
+import consulo.process.ProcessHandler;
+import consulo.util.dataholder.Key;
+import consulo.util.lang.ref.SimpleReference;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.task.BazelRunTaskListener;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.taskEvents.BazelTaskListener;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-val COROUTINE_JVM_FLAGS_KEY: Key<Ref<List<String>>> = Key.create("bazel.coroutine.jvm.flags")
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
-@ApiStatus.Internal
-class JvmRunHandler(private val configuration: BazelRunConfiguration) : BazelRunHandler {
-  init {
-    configuration.setBeforeRunTasksFromHandler(
-      listOfNotNull(
-        KotlinCoroutineLibraryFinderBeforeRunTaskProvider().createTask(configuration),
-        ScriptPathBeforeRunTaskProvider().createTask(configuration),
-      ),
-    )
-  }
+// consulo: the nested upstream JvmRunHandler.JvmRunHandlerProvider has its own file (nested @ExtensionImpl classes are not supported
+// by the annotation processor), see JvmRunHandlerProvider
+public class JvmRunHandler implements BazelRunHandler {
+    // consulo: upstream top-level declaration of JvmRunHandler.kt
+    public static final Key<SimpleReference<List<String>>> COROUTINE_JVM_FLAGS_KEY = Key.create("bazel.coroutine.jvm.flags");
 
-  override val name: String
-    get() = "Jvm Run Handler"
+    private final BazelRunConfiguration myConfiguration;
 
-  override val isTestHandler: Boolean = false
+    private final JvmRunState myState;
 
-  override val state = JvmRunState(configuration.project)
-
-  override fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
-    if (executor is DefaultDebugExecutor) {
-      environment.putCopyableUserData(COROUTINE_JVM_FLAGS_KEY, Ref())
+    public JvmRunHandler(BazelRunConfiguration configuration) {
+        myConfiguration = configuration;
+        List<BeforeRunTask> beforeRunTasks = new ArrayList<>();
+        KotlinCoroutineLibraryFinderBeforeRunTaskProvider.Task kotlinCoroutineTask =
+            new KotlinCoroutineLibraryFinderBeforeRunTaskProvider().createTask(configuration);
+        if (kotlinCoroutineTask != null) {
+            beforeRunTasks.add(kotlinCoroutineTask);
+        }
+        ScriptPathBeforeRunTaskProvider.Task scriptPathTask = new ScriptPathBeforeRunTaskProvider().createTask(configuration);
+        if (scriptPathTask != null) {
+            beforeRunTasks.add(scriptPathTask);
+        }
+        configuration.setBeforeRunTasksFromHandler(beforeRunTasks);
+        myState = new JvmRunState(configuration.getProject());
     }
-    return if (RunWithScriptPathExtension.shouldRunWithScriptPath(executor, configuration)) {
-      environment.putCopyableUserData(SCRIPT_PATH_KEY, Ref())
-      RunScriptPathCommandLineState(environment, state, configuration)
+
+    @Override
+    public String getName() {
+        return "Jvm Run Handler";
     }
-    else {
-      BazelRunCommandLineState(environment, state)
+
+    @Override
+    public boolean isTestHandler() {
+        return false;
     }
-  }
 
-  override val extensionsManager: RunConfigurationExtensionsManager<in RunConfigurationBase<*>, *>
-    get() = JavaRunConfigurationExtensionManager.instance
+    @Override
+    public JvmRunState getState() {
+        return myState;
+    }
 
-  class JvmRunHandlerProvider : GooglePluginAwareRunHandlerProvider {
-    override val id: String
-      get() = "JvmRunHandlerProvider"
+    @Override
+    public RunProfileState getRunProfileState(Executor executor, ExecutionEnvironment environment) {
+        if (executor instanceof DefaultDebugExecutor) {
+            environment.putCopyableUserData(COROUTINE_JVM_FLAGS_KEY, new SimpleReference<>());
+        }
+        if (RunWithScriptPathExtension.Companion.shouldRunWithScriptPath(executor, myConfiguration)) {
+            environment.putCopyableUserData(ScriptPathBeforeRunTaskProvider.SCRIPT_PATH_KEY, new SimpleReference<>());
+            return new RunScriptPathCommandLineState(environment, myState, myConfiguration);
+        }
+        else {
+            return new BazelRunCommandLineState(environment, myState);
+        }
+    }
 
-    override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = JvmRunHandler(configuration)
+    @Override
+    public RunConfigurationExtensionsManager<? super RunConfigurationBase, ?> getExtensionsManager() {
+        return JavaRunConfigurationExtensionManager.getInstance();
+    }
 
-    override fun canRun(project: Project, targets: List<BuildTarget>): Boolean =
-      targets.all {
-        it.kind.isJvmTarget() && it.kind.ruleType != RuleType.TEST
-      }
+    // consulo: upstream top-level functions of JvmRunHandler.kt
 
-    override val googleHandlerId: String = "BlazeJavaRunConfigurationHandlerProvider"
-    override val isTestHandler: Boolean = false
-  }
+    // consulo: throws ExecutionException of RunConfigurationExtension.updateJavaParameters(), see getJvmRunExtensionVmOptions
+    public static List<String> getAdditionalJvmRunParameters(ExecutionEnvironment environment, int debugPort) throws ExecutionException {
+        List<String> result = new ArrayList<>();
+        if (!(environment.getRunProfile() instanceof BazelRunConfiguration)) {
+            return result;
+        }
+
+        if (environment.getExecutor() instanceof DefaultDebugExecutor) {
+            // https://bazel.build/reference/command-line-reference#flag--java_debug
+            // https://github.com/bazelbuild/rules_java/blob/747bddd6091a624c54a42c1ac20308190c1ad849/java/bazel/rules/java_stub_template.txt#L23
+            result.add("--wrapper_script_flag=--debug=" + debugPort);
+        }
+        for (String it : getJvmDebuggerAgentVmOptions(environment)) {
+            result.add(wrapVmOptionAsArg(it));
+        }
+        for (String it : getJvmRunExtensionVmOptions(environment)) {
+            result.add(wrapVmOptionAsArg(it));
+        }
+        return result;
+    }
+
+    /**
+     * The VM options of the coroutine agent and the debugger agent when {@code environment} debugs, else an empty list.
+     * The JDWP agent option is not in the list.
+     */
+    public static List<String> getJvmDebuggerAgentVmOptions(ExecutionEnvironment environment) {
+        if (!(environment.getExecutor() instanceof DefaultDebugExecutor)) {
+            return List.of();
+        }
+        OwnJavaParameters debugParameters = new OwnJavaParameters();
+        debugParameters.getVMParametersList().addAll(
+            KotlinCoroutineLibraryFinderBeforeRunTaskProvider.retrieveKotlinCoroutineParams(environment, environment.getProject())
+        );
+        // async stacks and the log-capture console decoration require the debugger agent inside the debuggee
+        AsyncStacksUtils.addDebuggerAgent(debugParameters, environment.getProject(), false);
+        return debugParameters.getVMParametersList().getParameters();
+    }
+
+    /**
+     * The VM options that the run configuration extensions add, for example for the profiler or the coverage.
+     */
+    public static List<String> getJvmRunExtensionVmOptions(ExecutionEnvironment environment) throws ExecutionException {
+        if (!(environment.getRunProfile() instanceof BazelRunConfiguration configuration)) {
+            return List.of();
+        }
+        OwnJavaParameters profilerParameters = new OwnJavaParameters();
+        // consulo: JavaRunConfigurationExtensionManager has no updateJavaParameters(configuration, params, runnerSettings, executor);
+        // like Consulo's BaseJavaApplicationCommandLineState every extension is called, the extensions check isApplicableFor()
+        for (RunConfigurationExtension ext : RunConfigurationExtension.EP_NAME.getExtensionList()) {
+            ext.updateJavaParameters(configuration, profilerParameters, environment.getRunnerSettings());
+        }
+        return profilerParameters.getVMParametersList().getParameters();
+    }
+
+    private static String wrapVmOptionAsArg(String vmOption) {
+        // https://github.com/bazelbuild/rules_java/blob/747bddd6091a624c54a42c1ac20308190c1ad849/java/bazel/rules/java_stub_template.txt#L33
+        return "--wrapper_script_flag=--jvm_flag=" + vmOption;
+    }
+
+    // consulo: upstream OSProcessHandler is internal in Consulo, any ProcessHandler is accepted
+    public static void attachJvmRunExtensions(ExecutionEnvironment environment, ProcessHandler processHandler) {
+        if (!(environment.getRunProfile() instanceof BazelRunConfiguration configuration)) {
+            return;
+        }
+        JavaRunConfigurationExtensionManager.getInstance()
+            .attachExtensionsToProcess(configuration, processHandler, environment.getRunnerSettings());
+    }
 }
 
-internal class RunScriptPathCommandLineState(
-  environment: ExecutionEnvironment,
-  private val settings: JvmRunState,
-  configuration: BazelRunConfiguration,
-) :
-  JvmDebuggableCommandLineState(environment, settings.debugPort, configuration) {
-  override fun createAndAddTaskListener(handler: BazelProcessHandler): BazelTaskListener = BazelRunTaskListener(handler)
+class RunScriptPathCommandLineState extends JvmDebuggableCommandLineState {
+    private final JvmRunState mySettings;
 
-  override suspend fun startBsp(
-      server: BazelServerFacade,
-      pidDeferred: CompletableDeferred<Long?>,
-      handler: BazelProcessHandler,
-  ) {
-    val scriptPath = checkNotNull(environment.getCopyableUserData(SCRIPT_PATH_KEY)?.get()) { "Missing --script_path" }
-    runWithScriptPath(
-      taskGroupId.task("jvm-run"),
-      scriptPath,
-      environment.project,
-      pidDeferred,
-      handler,
-      settings.env.envs,
-      additionalScriptParameters = getAdditionalJvmRunParameters(environment, settings.debugPort),
-      isTest = false,
-      isPassParentEnvs = settings.env.isPassParentEnvs,
-      testFilter = null,
-      { processHandler ->
-        attachJvmRunExtensions(environment, processHandler)
-      },
-    )
-  }
-}
+    RunScriptPathCommandLineState(
+        ExecutionEnvironment environment,
+        JvmRunState settings,
+        BazelRunConfiguration configuration
+    ) {
+        super(environment, settings.getDebugPort(), configuration);
+        mySettings = settings;
+    }
 
-internal fun getAdditionalJvmRunParameters(environment: ExecutionEnvironment, debugPort: Int): List<String> = buildList {
-  if (environment.runProfile !is BazelRunConfiguration) return@buildList
+    @Override
+    protected BazelTaskListener createAndAddTaskListener(BazelProcessHandler handler) {
+        return new BazelRunTaskListener(handler);
+    }
 
-  if (environment.executor is DefaultDebugExecutor) {
-    // https://bazel.build/reference/command-line-reference#flag--java_debug
-    // https://github.com/bazelbuild/rules_java/blob/747bddd6091a624c54a42c1ac20308190c1ad849/java/bazel/rules/java_stub_template.txt#L23
-    this += "--wrapper_script_flag=--debug=$debugPort"
-  }
-  this += getJvmDebuggerAgentVmOptions(environment).map { wrapVmOptionAsArg(it) }
-  this += getJvmRunExtensionVmOptions(environment).map { wrapVmOptionAsArg(it) }
-}
-
-/**
- * The VM options of the coroutine agent and the debugger agent when [environment] debugs, else an empty list.
- * The JDWP agent option is not in the list.
- */
-@ApiStatus.Internal
-fun getJvmDebuggerAgentVmOptions(environment: ExecutionEnvironment): List<String> {
-  if (environment.executor !is DefaultDebugExecutor) return emptyList()
-  val debugParameters = JavaParameters()
-  debugParameters.vmParametersList.addAll(retrieveKotlinCoroutineParams(environment, environment.project))
-  // async stacks and the log-capture console decoration require the debugger agent inside the debuggee
-  addDebuggerAgent(debugParameters, environment.project, false)
-  return debugParameters.vmParametersList.parameters
-}
-
-/** The VM options that the run configuration extensions add, for example for the profiler or the coverage. */
-@ApiStatus.Internal
-fun getJvmRunExtensionVmOptions(environment: ExecutionEnvironment): List<String> {
-  val configuration = environment.runProfile as? BazelRunConfiguration ?: return emptyList()
-  val profilerParameters = JavaParameters()
-  JavaRunConfigurationExtensionManager.instance.updateJavaParameters(
-    configuration,
-    profilerParameters,
-    environment.runnerSettings,
-    environment.executor,
-  )
-  return profilerParameters.vmParametersList.parameters
-}
-
-private fun wrapVmOptionAsArg(vmOption: String): String {
-  // https://github.com/bazelbuild/rules_java/blob/747bddd6091a624c54a42c1ac20308190c1ad849/java/bazel/rules/java_stub_template.txt#L33
-  return "--wrapper_script_flag=--jvm_flag=$vmOption"
-}
-
-@ApiStatus.Internal
-fun attachJvmRunExtensions(environment: ExecutionEnvironment, processHandler: OSProcessHandler) {
-  val configuration = environment.runProfile as? BazelRunConfiguration ?: return
-  JavaRunConfigurationExtensionManager.instance.attachExtensionsToProcess(configuration, processHandler, environment.runnerSettings)
+    @Override
+    protected CompletableFuture<?> startBsp(
+        BazelServerFacade server,
+        CompletableFuture<@Nullable Long> pidDeferred,
+        BazelProcessHandler handler
+    ) {
+        SimpleReference<Path> scriptPathRef = getEnvironment().getCopyableUserData(ScriptPathBeforeRunTaskProvider.SCRIPT_PATH_KEY);
+        Path scriptPath = scriptPathRef == null ? null : scriptPathRef.get();
+        if (scriptPath == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Missing --script_path"));
+        }
+        List<String> additionalScriptParameters;
+        try {
+            additionalScriptParameters = JvmRunHandler.getAdditionalJvmRunParameters(getEnvironment(), mySettings.getDebugPort());
+        }
+        catch (ExecutionException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        return RunWithScriptPath.runWithScriptPath(
+            getTaskGroupId().task("jvm-run"),
+            scriptPath,
+            getEnvironment().getProject(),
+            pidDeferred,
+            handler,
+            mySettings.getEnv().getEnvs(),
+            /* additionalScriptParameters = */ additionalScriptParameters,
+            /* isTest = */ false,
+            /* isPassParentEnvs = */ mySettings.getEnv().isPassParentEnvs(),
+            /* testFilter = */ null,
+            processHandler -> {
+                JvmRunHandler.attachJvmRunExtensions(getEnvironment(), processHandler);
+                return CompletableFuture.completedFuture(null);
+            }
+        );
+    }
 }

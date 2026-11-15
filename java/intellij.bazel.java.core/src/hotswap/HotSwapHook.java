@@ -1,12 +1,15 @@
-package org.jetbrains.bazel.hotswap
+package org.jetbrains.bazel.hotswap;
 
-import com.intellij.debugger.impl.DebuggerSession
-import com.intellij.openapi.extensions.ExtensionPointName
+import com.intellij.java.debugger.impl.DebuggerSession;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
 
-interface HotSwapHook {
-  suspend fun onHotSwap(sessions: List<DebuggerSession>)
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
-  companion object {
-    val EP_NAME: ExtensionPointName<HotSwapHook> = ExtensionPointName.create("org.jetbrains.bazel.hotSwapHook")
-  }
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface HotSwapHook {
+    CompletableFuture<?> onHotSwap(List<DebuggerSession> sessions);
+
+    // consulo: upstream EP_NAME is replaced by Application.get().getExtensionList(HotSwapHook.class)
 }

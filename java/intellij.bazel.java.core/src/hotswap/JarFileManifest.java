@@ -13,106 +13,136 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.hotswap
+package org.jetbrains.bazel.hotswap;
 
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.util.containers.MultiMap
-import java.io.IOException
-import java.nio.file.Path
-import java.nio.file.attribute.FileTime
-import java.util.jar.JarFile
+import consulo.logging.Logger;
+import consulo.util.collection.MultiMap;
+import org.jspecify.annotations.Nullable;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 /**
  * A manifest of .class file hashes for jars needed at runtime. Used for HotSwapping.
  * The implementation assumes the source for .class file can be found exclusively from jar files.
- * */
-class JarFileManifest private constructor(
-  // jar file timestamps
-  private val jarFileState: Map<Path, FileTime>,
-  // per-jar manifest of .class file hashes
-  private val jarManifests: Map<Path, JarManifest>,
-) {
-  data class Diff(val perJarModifiedFiles: MultiMap<Path, String>)
+ */
+public class JarFileManifest {
+    // jar file timestamps
+    private final Map<Path, FileTime> myJarFileState;
+    // per-jar manifest of .class file hashes
+    private final Map<Path, JarManifest> myJarManifests;
 
-  /** file manifest for a single jar.  */
-  private data class JarManifest(val jar: Path, val nameToHash: Map<String, Long>) {
-    companion object {
-      fun build(file: Path): JarManifest? {
-        try {
-          val jar = JarFile(file.toFile())
-          return JarManifest(
-            file,
-            jar
-              .entries()
-              .asSequence()
-              .filter { entry -> !entry.isDirectory }
-              .associateBy(
-                keySelector = { it.name },
-                valueTransform = { it.crc },
-              ),
-          )
-        }
-        catch (e: IOException) {
-          logger.warn(
-            "Error reading jar file: $file",
-            e,
-          )
-          return null
-        }
-      }
-
-      /** Returns the list of files changed in the new manifest. */
-      fun diff(oldManifest: JarManifest?, newManifest: JarManifest): List<String> =
-        newManifest
-          .nameToHash
-          .entries
-          .filter {
-            val oldHash = oldManifest?.nameToHash[it.key]
-            it.value != oldHash
-          }
-          .map { it.key }
-    }
-  }
-
-  companion object {
-    private val logger: Logger =
-      Logger.getInstance(JarFileManifest::class.java)
-
-    /** Returns a per-jar map of files changed in the new manifest  */
-    fun diffJarManifests(oldManifest: JarFileManifest?, newManifest: JarFileManifest): Diff {
-      val changedFilesMap = MultiMap<Path, String>()
-      for (entry in newManifest.jarManifests.entries) {
-        // quick test for object equality -- jars are often not rebuilt
-        val old = oldManifest?.jarManifests[entry.key]
-        if (old == entry.value) {
-          continue
-        }
-        val changedFiles =
-          JarManifest.diff(
-            old,
-            entry.value,
-          )
-        if (!changedFiles.isEmpty()) {
-          changedFilesMap.put(entry.key, changedFiles)
-        }
-      }
-      return Diff(perJarModifiedFiles = changedFilesMap)
+    private JarFileManifest(
+        Map<Path, FileTime> jarFileState,
+        Map<Path, JarManifest> jarManifests
+    ) {
+        myJarFileState = jarFileState;
+        myJarManifests = jarManifests;
     }
 
-    fun build(jars: Collection<Path>, previousManifest: JarFileManifest?): JarFileManifest {
-      val diff = FilesDiff.diffFileTimestamps(previousManifest?.jarFileState, jars)
-      val jarManifests = mutableMapOf<Path, JarManifest>()
-      for (file in jars) {
-        if (!diff.updatedFiles.contains(file)) {
-          previousManifest?.jarManifests?.get(file)?.let { jarManifests[file] = it }
-        }
-      }
-      for (m in buildJarManifests(diff.updatedFiles)) {
-        jarManifests[m.jar] = m
-      }
-      return JarFileManifest(diff.newFileState, jarManifests)
+    public record Diff(MultiMap<Path, String> perJarModifiedFiles) {
     }
 
-    private fun buildJarManifests(jars: Collection<Path>): List<JarManifest> = jars.mapNotNull { jar -> JarManifest.build(jar) }
-  }
+    /**
+     * file manifest for a single jar.
+     */
+    private record JarManifest(Path jar, Map<String, Long> nameToHash) {
+        static @Nullable JarManifest build(Path file) {
+            try {
+                JarFile jar = new JarFile(file.toFile());
+                Map<String, Long> nameToHash = new LinkedHashMap<>();
+                for (JarEntry entry : Collections.list(jar.entries())) {
+                    if (!entry.isDirectory()) {
+                        nameToHash.put(entry.getName(), entry.getCrc());
+                    }
+                }
+                return new JarManifest(file, nameToHash);
+            }
+            catch (IOException e) {
+                logger.warn(
+                    "Error reading jar file: " + file,
+                    e
+                );
+                return null;
+            }
+        }
+
+        /**
+         * Returns the list of files changed in the new manifest.
+         */
+        static List<String> diff(@Nullable JarManifest oldManifest, JarManifest newManifest) {
+            List<String> result = new ArrayList<>();
+            for (Map.Entry<String, Long> it : newManifest.nameToHash().entrySet()) {
+                Long oldHash = oldManifest == null ? null : oldManifest.nameToHash().get(it.getKey());
+                if (!Objects.equals(it.getValue(), oldHash)) {
+                    result.add(it.getKey());
+                }
+            }
+            return result;
+        }
+    }
+
+    private static final Logger logger =
+        Logger.getInstance(JarFileManifest.class);
+
+    /**
+     * Returns a per-jar map of files changed in the new manifest
+     */
+    public static Diff diffJarManifests(@Nullable JarFileManifest oldManifest, JarFileManifest newManifest) {
+        MultiMap<Path, String> changedFilesMap = new MultiMap<>();
+        for (Map.Entry<Path, JarManifest> entry : newManifest.myJarManifests.entrySet()) {
+            // quick test for object equality -- jars are often not rebuilt
+            JarManifest old = oldManifest == null ? null : oldManifest.myJarManifests.get(entry.getKey());
+            if (Objects.equals(old, entry.getValue())) {
+                continue;
+            }
+            List<String> changedFiles =
+                JarManifest.diff(
+                    old,
+                    entry.getValue()
+                );
+            if (!changedFiles.isEmpty()) {
+                changedFilesMap.put(entry.getKey(), changedFiles);
+            }
+        }
+        return new Diff(/* perJarModifiedFiles = */ changedFilesMap);
+    }
+
+    public static JarFileManifest build(Collection<Path> jars, @Nullable JarFileManifest previousManifest) {
+        FilesDiff diff = FilesDiff.diffFileTimestamps(previousManifest == null ? null : previousManifest.myJarFileState, jars);
+        Map<Path, JarManifest> jarManifests = new LinkedHashMap<>();
+        for (Path file : jars) {
+            if (!diff.updatedFiles().contains(file)) {
+                JarManifest it = previousManifest == null ? null : previousManifest.myJarManifests.get(file);
+                if (it != null) {
+                    jarManifests.put(file, it);
+                }
+            }
+        }
+        for (JarManifest m : buildJarManifests(diff.updatedFiles())) {
+            jarManifests.put(m.jar(), m);
+        }
+        return new JarFileManifest(diff.newFileState(), jarManifests);
+    }
+
+    private static List<JarManifest> buildJarManifests(Collection<Path> jars) {
+        List<JarManifest> result = new ArrayList<>();
+        for (Path jar : jars) {
+            JarManifest manifest = JarManifest.build(jar);
+            if (manifest != null) {
+                result.add(manifest);
+            }
+        }
+        return result;
+    }
 }

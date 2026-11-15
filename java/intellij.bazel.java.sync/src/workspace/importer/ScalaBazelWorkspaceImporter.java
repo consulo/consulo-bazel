@@ -1,72 +1,89 @@
-package org.jetbrains.bazel.workspace.importer
+package org.jetbrains.bazel.workspace.importer;
 
-import com.intellij.openapi.application.edtWriteAction
-import com.intellij.openapi.externalSystem.service.project.IdeModifiableModelsProviderImpl
-import org.jetbrains.bazel.commons.getLocalRepositories
-import org.jetbrains.bazel.scala.sdk.ScalaSdk
-import org.jetbrains.bazel.scala.sdk.scalaSdkExtension
-import org.jetbrains.bazel.scala.sdk.scalaSdkExtensionExists
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporterFactory
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterContext
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterPhase
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterResult
-import org.jetbrains.bazel.sync.workspace.languages.jvm.extractScalaBuildTarget
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RepoMapping.LocalRepositoryMapping;
+import org.jetbrains.bazel.scala.sdk.ScalaSdk;
+import org.jetbrains.bazel.scala.sdk.ScalaSdkExtension;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget.ScalaBuildTarget;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-internal class ScalaBazelWorkspaceImporter(val context: WorkspaceImporterContext) : BazelWorkspaceImporter {
-  class Factory : BazelWorkspaceImporterFactory {
-    override fun createWorkspaceImporter(context: WorkspaceImporterContext): BazelWorkspaceImporter =
-      ScalaBazelWorkspaceImporter(context)
-  }
+import java.nio.file.Path;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
-  private var scalaSdks: Set<ScalaSdk>? = null
+public class ScalaBazelWorkspaceImporter implements BazelWorkspaceImporter {
+    // consulo: the upstream nested `Factory` is the top-level ScalaBazelWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
-  override suspend fun import(phase: WorkspaceImporterPhase, snapshot: WorkspaceSnapshot, taskId: TaskId): Result<WorkspaceImporterResult> {
-    when (phase) {
-      is WorkspaceImporterPhase.Initialize -> {
-        if (!scalaSdkExtensionExists()) {
-          return Result.success(WorkspaceImporterResult.Abort)
-        }
-        scalaSdks = calculateAllScalaSdkInfos(context, snapshot)
-      }
+    private final WorkspaceImporterContext myContext;
 
-      WorkspaceImporterPhase.PostProcessing -> {
-        scalaSdkExtension()?.let { extension ->
-          val modifiableProvider = IdeModifiableModelsProviderImpl(context.project)
-          edtWriteAction {
-            scalaSdks?.forEach { extension.addScalaSdk(it, modifiableProvider) }
-            modifiableProvider.commit()
-          }
-        }
-      }
+    private @Nullable Set<ScalaSdk> myScalaSdks = null;
 
-      else -> {
-        /* noop */
-      }
+    public ScalaBazelWorkspaceImporter(WorkspaceImporterContext context) {
+        myContext = context;
     }
 
-    return Result.success(WorkspaceImporterResult.Success)
-  }
+    public WorkspaceImporterContext getContext() {
+        return myContext;
+    }
 
-  private fun calculateAllScalaSdkInfos(context: WorkspaceImporterContext, snapshot: WorkspaceSnapshot): Set<ScalaSdk> {
-    val localRepositories = snapshot.repoMapping.getLocalRepositories()
-    return snapshot.targets.allTargets()
-      .mapNotNull { target -> createScalaSdk(target) { context.outputResolver.resolve(it, localRepositories) } }
-      .toSet()
-  }
+    @Override
+    public CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId) {
+        if (phase instanceof WorkspaceImporterPhase.Initialize) {
+            if (!ScalaSdkExtension.scalaSdkExtensionExists()) {
+                return CompletableFuture.completedFuture(WorkspaceImporterResult.Abort);
+            }
+            myScalaSdks = calculateAllScalaSdkInfos(myContext, snapshot);
+        }
+        else if (phase instanceof WorkspaceImporterPhase.WorkspaceApply apply) {
+            // consulo: upstream adds the Scala SDKs in PostProcessing through its own IdeModifiableModelsProviderImpl, committed in
+            // edtWriteAction. A separate BazelModelBuilder would remove the Bazel-owned modules of this sync on commit, so the SDKs
+            // are added to the shared builder of WorkspaceApply, which is committed together with the project model.
+            ScalaSdkExtension extension = ScalaSdkExtension.scalaSdkExtension();
+            if (extension != null && myScalaSdks != null) {
+                for (ScalaSdk it : myScalaSdks) {
+                    extension.addScalaSdk(it, apply.builder());
+                }
+            }
+        }
+        else if (phase instanceof WorkspaceImporterPhase.PostProcessing) {
+            // consulo: the Scala SDKs are added in WorkspaceApply (see above)
+        }
+        else {
+            /* noop */
+        }
 
-  private fun createScalaSdk(target: BuildTarget, resolveLocation: (OutputLocation) -> Path?): ScalaSdk? =
-    extractScalaBuildTarget(target)
-      ?.let { scalaBuildTarget ->
-        ScalaSdk(
-          name = scalaBuildTarget.scalaVersion.scalaVersionToScalaSdkName(),
-          scalaVersion = scalaBuildTarget.scalaVersion,
-          sdkJars = scalaBuildTarget.sdkJars.resolvePaths(resolveLocation).map { path -> path.toUri() },
-        )
-      }
+        return CompletableFuture.completedFuture(WorkspaceImporterResult.Success);
+    }
+
+    private Set<ScalaSdk> calculateAllScalaSdkInfos(WorkspaceImporterContext context, WorkspaceSnapshot snapshot) {
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        Set<ScalaSdk> result = new LinkedHashSet<>();
+        snapshot.targets().allTargets().forEach(target -> {
+            ScalaSdk sdk = createScalaSdk(target, it -> context.outputResolver().resolve(it, localRepositories));
+            if (sdk != null) {
+                result.add(sdk);
+            }
+        });
+        return result;
+    }
+
+    private static @Nullable ScalaSdk createScalaSdk(BuildTarget target, Function<OutputLocation, @Nullable Path> resolveLocation) {
+        ScalaBuildTarget scalaBuildTarget = JvmBuildTarget.extractScalaBuildTarget(target);
+        if (scalaBuildTarget == null) {
+            return null;
+        }
+        return new ScalaSdk(
+            JvmTargetEntitiesBuilder.scalaVersionToScalaSdkName(scalaBuildTarget.scalaVersion()),
+            scalaBuildTarget.scalaVersion(),
+            JvmTargetEntitiesBuilder.resolvePaths(scalaBuildTarget.sdkJars(), resolveLocation).stream().map(Path::toUri).toList()
+        );
+    }
 }

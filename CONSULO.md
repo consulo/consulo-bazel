@@ -285,7 +285,9 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | converted, builds (project model on the classic API) |
 | `intellij.bazel.core`, `intellij.bazel.bazelisk` | `consulo.bazel.base` | converted, builds, sync tested (C++ project) |
-| `java/*`, `kotlin/*` | `bazel` module in consulo-java / consulo-kotlin | not started |
+| `java/intellij.bazel.java.{common,sync,core,coverage}` | `consulo.bazel.java` (`consulo-bazel-java/`, optional library, needs consulo.java) | converted, builds |
+| `java/intellij.bazel.java.profiler` | - | not ported (IntelliJ Ultimate profiler API), stays `.kt` |
+| `kotlin/*` | optional library, needs consulo-kotlin | not started |
 | `golang/*` | `bazel` module in consulo-google-go | not started |
 | `python/*` | `bazel` module in consulo-python | not started |
 | `clion/*` | `bazel` module in incubating-consulo-cpp | not started |
@@ -328,6 +330,11 @@ classes under other names, the Java file is renamed. Upstream diffs of the left 
 | `intellij.bazel.core/.../ui/widgets/BazelJumpToBuildFileAction.kt` (`XmlRegistered`) | `BazelJumpToBuildFileAction.java` + `BazelJumpToBuildFileActionXmlRegistered.java` |
 | `intellij.bazel.core/.../ui/widgets/LabelSearchEverywhereContributor.kt` (`Factory`) | `LabelSearchEverywhereContributor.java` + `LabelSearchEverywhereContributorFactory.java` |
 | `intellij.bazel.core/.../workspace/fileEvents/BazelFileEventProcessor.kt` | `BazelFileEventProcessor.java`, `BazelFileEventProcessorResult.java`, `DefaultBazelFileEventProcessor.java` |
+| `java/intellij.bazel.java.sync/.../importer/JavaBazelWorkspaceImporter.kt` (`Factory`) | `JavaBazelWorkspaceImporter.java` + `JavaBazelWorkspaceImporterFactory.java` |
+| `java/intellij.bazel.java.sync/.../importer/ScalaBazelWorkspaceImporter.kt` (`Factory`) | `ScalaBazelWorkspaceImporter.java` + `ScalaBazelWorkspaceImporterFactory.java` |
+| `java/intellij.bazel.java.core/.../fastbuild/ToolchainInfoSyncHook.kt` (the service) | `ToolchainInfoSyncHook.java` + `JvmToolchainInfoService.java` |
+| `java/intellij.bazel.java.core/.../jvm/run/JvmRunHandler.kt` (the provider) | `JvmRunHandler.java` + `JvmRunHandlerProvider.java` |
+| `java/intellij.bazel.java.core/.../jvm/run/JvmTestHandler.kt` (the provider) | `JvmTestHandler.java` + `JvmTestHandlerProvider.java` |
 
 `KnownFlags.kt` is generated upstream and was converted mechanically: re-run the conversion when it changes
 (fields named after Java keywords - `long`, `null`, `short` - get a trailing underscore).

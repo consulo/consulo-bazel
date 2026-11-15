@@ -1,578 +1,664 @@
-package org.jetbrains.bazel.fastbuild
+package org.jetbrains.bazel.fastbuild;
 
-import com.intellij.compiler.CompilerMessageImpl
-import com.intellij.compiler.impl.CompileContextImpl
-import com.intellij.compiler.impl.ExitStatus
-import com.intellij.compiler.impl.OneProjectItemCompileScope
-import com.intellij.compiler.progress.CompilerTask
-import com.intellij.debugger.DebuggerManagerEx
-import com.intellij.debugger.impl.DebuggerSession
-import com.intellij.debugger.impl.HotSwapFile
-import com.intellij.debugger.impl.HotSwapManager
-import com.intellij.debugger.settings.DebuggerSettings
-import com.intellij.debugger.ui.HotSwapProgressImpl
-import com.intellij.debugger.ui.HotSwapUIImpl
-import com.intellij.debugger.ui.RunHotswapDialog
-import com.intellij.execution.ExecutionException
-import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.process.OSProcessHandler
-import com.intellij.execution.process.ProcessEvent
-import com.intellij.execution.process.ProcessListener
-import com.intellij.execution.process.ProcessOutputType
-import com.intellij.icons.AllIcons
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.writeIntentReadAction
-import com.intellij.openapi.compiler.CompilerMessageCategory
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.Task
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.io.toCanonicalPath
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.task.ProjectTaskRunner
-import com.intellij.task.TaskRunnerResults
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.jetbrains.bazel.commons.ExecUtils
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import org.jetbrains.bazel.server.tasks.runBuildTargetTask
-import org.jetbrains.bazel.sync.workspace.snapshot.workspaceSnapshotOrNull
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bsp.protocol.id
-import org.jetbrains.concurrency.AsyncPromise
-import org.jetbrains.concurrency.Promise
-import java.io.BufferedReader
-import java.io.File
-import java.io.OutputStreamWriter
-import java.nio.file.Files
-import java.nio.file.Path
-import java.util.zip.ZipFile
-import kotlin.io.path.name
-import kotlin.io.path.notExists
-import kotlin.io.path.outputStream
-import kotlin.io.path.pathString
-import kotlin.io.path.reader
-import kotlin.io.path.relativeTo
-import kotlin.io.path.writer
+import com.intellij.java.debugger.impl.DebuggerManagerEx;
+import com.intellij.java.debugger.impl.DebuggerSession;
+import com.intellij.java.debugger.impl.HotSwapFile;
+import com.intellij.java.debugger.impl.HotSwapManager;
+import com.intellij.java.debugger.impl.settings.DebuggerSettings;
+import com.intellij.java.debugger.impl.ui.HotSwapProgressImpl;
+import com.intellij.java.debugger.impl.ui.RunHotswapDialog;
+import com.intellij.java.debugger.localize.JavaDebuggerLocalize;
+import consulo.application.Application;
+import consulo.application.progress.ProgressIndicator;
+import consulo.application.progress.ProgressManager;
+import consulo.application.progress.Task;
+import consulo.bazel.core.BazelNotificationGroupContributor;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.compiler.CompilerManager;
+import consulo.compiler.CompilerMessageCategory;
+import consulo.compiler.scope.CompileScope;
+import consulo.document.FileDocumentManager;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.process.ExecutionException;
+import consulo.process.ProcessHandler;
+import consulo.process.ProcessHandlerBuilderFactory;
+import consulo.process.ProcessOutputType;
+import consulo.process.cmd.GeneralCommandLine;
+import consulo.process.event.ProcessEvent;
+import consulo.process.event.ProcessListener;
+import consulo.project.Project;
+import consulo.project.ui.notification.NotificationService;
+import consulo.util.dataholder.Key;
+import consulo.util.io.FileUtil;
+import consulo.util.lang.StringUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.commons.ExecUtils;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.server.tasks.BuildTargetTask;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.JvmToolchainInfo;
+import org.jspecify.annotations.Nullable;
 
-internal object FastBuildUtils {
-  private val logger = Logger.getInstance(FastBuildUtils::class.java)
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
-  fun fastBuildFilesPromise(project: Project, files: List<VirtualFile>): Promise<ProjectTaskRunner.Result> {
-    val promise = AsyncPromise<ProjectTaskRunner.Result>()
-    val fastBuildService = FastBuildStatusService.getInstance(project)
-    BazelCoroutineService.getInstance(project).start {
-      try {
-        fastBuildService.startFastBuild()
-        fastBuildFiles(project, files)
-        promise.setResult(TaskRunnerResults.SUCCESS)
-      }
-      catch (e: Exception) {
-        promise.setResult(TaskRunnerResults.FAILURE)
-        NotificationGroupManager
-          .getInstance()
-          .getNotificationGroup("HotSwap Messages")
-          .createNotification(
-            BazelPluginBundle.message("widget.fastbuild.error.title"),
-            e.localizedMessage,
-            NotificationType.ERROR,
-          ).setImportant(true)
-          .notify(project)
-      }
-    }
-    promise
-      .onSuccess {
-        fastBuildService.finishFastBuild(
-          FastBuildStatus(workspaceRoot = project.rootDir.toNioPath(), status = FastBuildActionStatus.SUCCESS),
-        )
-      }.onError {
-        fastBuildService.finishFastBuild(FastBuildStatus(workspaceRoot = project.rootDir.toNioPath(), status = FastBuildActionStatus.ERROR))
-      }
-    return promise
-  }
-
-  suspend fun fastBuildFiles(project: Project, files: List<VirtualFile>) {
-    val workspaceRoot = project.rootDir.toNioPath()
-    val targetUtils = project.targetStorage
-    val fastBuildService = FastBuildStatusService.getInstance(project)
-    val buildInfos =
-      files
-        .mapNotNull { file ->
-          val targetForFile = targetUtils.getTargetsForFile(file).firstOrNull() ?: return@mapNotNull null
-          targetUtils.getTargetSummary(targetForFile)?.let { file to it }
-        }.toMap()
-
-    if (buildInfos.isEmpty()) {
-      throw ExecutionException(BazelPluginBundle.message("widget.fastbuild.error.no.targets"))
+public final class FastBuildUtils {
+    private FastBuildUtils() {
     }
 
-    for (entry in buildInfos) {
-      val inputFile = entry.key
-      val canonicalFilePath = inputFile.canonicalPath
-      val canonicalWorkspaceRootPath = workspaceRoot.toCanonicalPath()
-      if (!(canonicalFilePath?.startsWith(canonicalWorkspaceRootPath) ?: false)) {
-        throw ExecutionException(
-          BazelPluginBundle.message(
-            "widget.fastbuild.error.wrong.canonical.path",
-            canonicalFilePath.orEmpty(),
-            canonicalWorkspaceRootPath,
-          ),
-        )
-      }
-      // bazel-bin mirrors the package path of a main workspace target
-      if (!entry.value.id.isMainWorkspace) continue
-      val relativePath = entry.value.id.packagePath.toString()
-      val isLib = targetUtils.isLibrary(entry.value.id)
-      val bazelBin =
-        project.workspaceSnapshotOrNull?.bazelInfo?.bazelBin
-        ?: throw ExecutionException(BazelPluginBundle.message("widget.fastbuild.error.missing.path"))
-      val targetJar = Path.of("$bazelBin/$relativePath/${if (isLib) "lib" else ""}${entry.value.id.targetName}.jar")
+    private static final Logger logger = Logger.getInstance(FastBuildUtils.class);
 
-      var fastBuildTargetStatus: FastBuildTargetStatus? = null
-      fastBuildService.startFastBuildTarget()
-
-      val originalParamsFile = targetJar.parent.resolve(targetJar.fileName.name + "-0.params")
-      val originalParamsFile1 = targetJar.parent.resolve(targetJar.fileName.name + "-1.params")
-
-      if (originalParamsFile.notExists()) {
-        BazelCoroutineService.getInstance(project).start {
-          runBuildTargetTask(buildInfos.values.map { it.id }, project)
-        }
-        throw ExecutionException(BazelPluginBundle.message("widget.fastbuild.error.params.not.found"))
-      }
-
-      withContext(Dispatchers.EDT) {
-        writeIntentReadAction {
-          FileDocumentManager.getInstance().saveAllDocuments()
-        }
-      }
-
-      val compileTask = CompilerTask(project, BazelPluginBundle.message("widget.fastbuild.recompile"), false, false, true, false)
-      val compileScope = OneProjectItemCompileScope(project, inputFile)
-      val compileContext = CompileContextImpl(project, compileTask, compileScope, true, false)
-      compileTask.start(
-        {
-          try {
-            val indicator = ProgressManager.getInstance().progressIndicator
-
-            indicator.checkCanceled()
-
-            val tempDir = Files.createTempDirectory("cdb-fast-compile")
-            logger.debug("Using '$tempDir' for fast compile")
-            val outputJar = tempDir.resolve("output.jar")
-
-            val paramsFile0 =
-              updateAndWriteCompile0Params(
-                originalParamsFile,
-                tempDir,
-                outputJar,
-                Path.of(inputFile.canonicalPath),
-                Path.of(workspaceRoot.toCanonicalPath()),
-                targetJar,
-              )
-            val paramsFile1 =
-              updateAndWriteCompile1Params(
-                originalParamsFile1,
-                tempDir,
-              )
-
-            indicator.checkCanceled()
-
-            val toolchainInfo =
-              try {
-                ToolchainInfoSyncHook.JvmToolchainInfoService
-                  .getInstance(project)
-                  .getOrQueryJvmToolchainInfo(project, entry.value.id)
-              }
-              catch (e: Exception) {
-                throw ExecutionException(BazelPluginBundle.message("widget.fastbuild.error.null.jvm.toolchain"))
-              }
-
-            val arguments =
-              buildList {
-                add(toolchainInfo.java_home + File.separator + "bin" + File.separator + ExecUtils.calculateExecutableName("java"))
-                toolchainInfo.jvm_opts.forEach { add(it) }
-                add("-jar")
-                add(toolchainInfo.toolchain_path)
-                add("@${paramsFile0.pathString}")
-                add("@${paramsFile1.pathString}")
-              }
-
-            val command =
-              GeneralCommandLine(arguments).apply {
-                withWorkingDirectory(
-                  project.workspaceSnapshotOrNull?.bazelInfo?.execRoot
-                  ?: throw ExecutionException(BazelPluginBundle.message("widget.fastbuild.error.null.bazel.exec.path")),
-                )
-              }
-            val handler = OSProcessHandler(command)
-            handler.addProcessListener(
-              object : ProcessListener {
-                // TODO: adapt EclipseOutputParser and JavacOutputParser and group parse errors properly
-                val JAVAC_WARNING = "warning:"
-                val JAVAC_ERROR = "error:"
-                val ECLIPSE_PROBLEM_SEPARATOR = "----------"
-                val ECLIPSE_WARNING = ". WARNING in "
-                val ECLIPSE_ERROR = ". ERROR in "
-
-                var isWarning = false
-
-                override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
-                  if (outputType == ProcessOutputType.STDERR) {
-                    if (ECLIPSE_PROBLEM_SEPARATOR in event.text) return
-                    if (JAVAC_WARNING in event.text || ECLIPSE_WARNING in event.text) {
-                      isWarning = true
-                    }
-                    else if (JAVAC_ERROR in event.text || ECLIPSE_ERROR in event.text) {
-                      isWarning = false
-                    }
-                    val compilerCategory = if (isWarning) CompilerMessageCategory.WARNING else CompilerMessageCategory.ERROR
-
-                    val parts = event.text.split(':')
-                    val line = parts.firstOrNull()?.trim()?.toIntOrNull()
-                    if (parts.size >= 4 && line != null) {
-                      val error = parts[3]
-                      compileContext.addMessage(
-                        CompilerMessageImpl(
-                          project,
-                          compilerCategory,
-                          error,
-                          inputFile,
-                          line,
-                          0,
-                          null,
-                        ),
-                      )
-                    }
-                    else {
-                      compileContext.addMessage(
-                        CompilerMessageImpl(
-                          project,
-                          compilerCategory,
-                          event.text,
-                        ),
-                      )
-                    }
-                  }
-                  else if (outputType == ProcessOutputType.STDOUT) {
-                    compileContext.addMessage(
-                      CompilerMessageImpl(
-                        project,
-                        CompilerMessageCategory.INFORMATION,
-                        event.text,
-                      ),
-                    )
-                  }
+    // consulo: upstream returns Promise<ProjectTaskRunner.Result>; Consulo has no ProjectTaskRunner, the future completes with true
+    // for TaskRunnerResults.SUCCESS and false for TaskRunnerResults.FAILURE
+    public static CompletableFuture<Boolean> fastBuildFilesPromise(Project project, List<VirtualFile> files) {
+        CompletableFuture<Boolean> promise = new CompletableFuture<>();
+        FastBuildStatusService fastBuildService = FastBuildStatusService.getInstance(project);
+        BazelCoroutineService.getInstance(project).start(() -> {
+            CompletableFuture<?> build;
+            try {
+                fastBuildService.startFastBuild();
+                build = fastBuildFiles(project, files);
+            }
+            catch (Exception e) {
+                build = CompletableFuture.failedFuture(e);
+            }
+            return build.<@Nullable Object>handle((result, error) -> {
+                if (error == null) {
+                    promise.complete(true);
                 }
-              },
-            )
-            handler.startNotify()
-            if (!handler.waitFor() || handler.exitCode != 0) {
-              compileTask.setEndCompilationStamp(ExitStatus.ERRORS, System.currentTimeMillis())
-              // tempDir.delete()
-              fastBuildTargetStatus =
-                FastBuildTargetStatus(
-                  inputFile = inputFile,
-                  targetJar = targetJar,
-                  status = FastBuildActionStatus.ERROR,
-                )
-              return@start
-            }
-            compileTask.setEndCompilationStamp(ExitStatus.SUCCESS, System.currentTimeMillis())
-            fastBuildTargetStatus =
-              FastBuildTargetStatus(
-                inputFile = inputFile,
-                targetJar = targetJar,
-                status = FastBuildActionStatus.SUCCESS,
-              )
-            processAndHotswapOutput(tempDir, outputJar, project)
-          }
-          catch (e: ExecutionException) {
-            compileContext.addMessage(
-              CompilerMessageImpl(
-                project,
-                CompilerMessageCategory.ERROR,
-                e.message,
-              ),
-            )
-            fastBuildTargetStatus =
-              FastBuildTargetStatus(
-                inputFile = inputFile,
-                targetJar = targetJar,
-                status = FastBuildActionStatus.ERROR,
-              )
-            compileTask.setEndCompilationStamp(ExitStatus.ERRORS, System.currentTimeMillis())
-            return@start
-          }
-          finally {
-            if (fastBuildTargetStatus == null) {
-              fastBuildTargetStatus =
-                FastBuildTargetStatus(
-                  inputFile = inputFile,
-                  targetJar = targetJar,
-                  status = FastBuildActionStatus.UNKNOWN,
-                )
-            }
-            fastBuildService.finishFastBuildTarget(fastBuildTargetStatus)
-          }
-        },
-        null,
-      )
-    }
-  }
-
-  /**
-   * Copies the original params file updating certain fields to reduce compile time
-   * and point to a different output
-   */
-  fun updateAndWriteCompile0Params(
-    originalParams: Path,
-    tempDir: Path,
-    outputJar: Path,
-    inputFile: Path,
-    workspaceRoot: Path,
-    targetJar: Path,
-  ): Path =
-    updateAndWriteCompileParams("compile.jar-0.params", originalParams, tempDir) { ips: BufferedReader, os: OutputStreamWriter ->
-      var line = ips.readLine()
-      val sourceFile = inputFile.relativeTo(workspaceRoot)
-
-      fun OutputStreamWriter.writeLn(line: String) = write("$line\n")
-      while (line != null) {
-        when (line) {
-          "--output" -> {
-            os.writeLn(line)
-            os.writeLn(outputJar.pathString)
-            ips.readLine()
-          }
-
-          "--native_header_output" -> {
-            os.writeLn(line)
-            os.writeLn(tempDir.resolve("output-native-header.jar").pathString)
-            ips.readLine()
-          }
-
-          "--generated_sources_output" -> {
-            os.writeLn(line)
-            os.writeLn(tempDir.resolve("output-generated-sources.jar").pathString)
-            ips.readLine()
-          }
-
-          "--output_manifest_proto" -> {
-            os.writeLn(line)
-            os.writeLn(tempDir.resolve("output.jar_manifest_proto").pathString)
-            ips.readLine()
-          }
-
-          "--output_deps_proto" -> {
-            os.writeLn(line)
-            os.writeLn(tempDir.resolve("output.jdeps").pathString)
-            ips.readLine()
-          }
-
-          "--sources" -> {
-            os.writeLn(line)
-            line = ips.readLine()
-            os.writeLn(sourceFile.pathString)
-            while (line?.startsWith("--") == false) {
-              line = ips.readLine()
-            }
-            continue
-          }
-
-          "--source_jars" -> {
-            line = ips.readLine()
-            while (line?.startsWith("--") == false) {
-              line = ips.readLine()
-            }
-            continue
-          }
-
-          "--strict_java_deps" -> {
-            line = ips.readLine()
-            while (line?.startsWith("--") == false) {
-              line = ips.readLine()
-            }
-            continue
-          }
-
-          else -> {
-            line = processLine(line)
-            os.writeLn(line)
-          }
-        }
-        line = ips.readLine()
-      }
-
-      os.writeLn("--classpath")
-      // Add the modules jar to the dependencies
-      if (targetJar.notExists()) {
-        logger.error("Bazel module jar not found: $targetJar")
-      }
-      os.writeLn(targetJar.pathString)
-    }
-
-  fun updateAndWriteCompile1Params(originalParams: Path, tempDir: Path): Path =
-    updateAndWriteCompileParams("compile.jar-1.params", originalParams, tempDir) { ips: BufferedReader, os: OutputStreamWriter ->
-      var line = ips.readLine()
-
-      fun OutputStreamWriter.writeLn(line: String) = write("$line\n")
-      while (line != null) {
-        line = processLine(line)
-        os.writeLn(line)
-        line = ips.readLine()
-      }
-    }
-
-  fun updateAndWriteCompileParams(
-    paramFileName: String,
-    originalParams: Path,
-    tempDir: Path,
-    handleParamsFile: (ips: BufferedReader, os: OutputStreamWriter) -> Unit,
-  ): Path {
-    val params = tempDir.resolve(paramFileName)
-    originalParams.reader().buffered().use { ips ->
-      params.writer().use { os ->
-        handleParamsFile(ips, os)
-      }
-    }
-    return params
-  }
-
-  private fun processLine(line: String): String {
-    var resultLine = line
-    val jarSuffix = ".jar"
-    val hjarSuffix = "-hjar" + jarSuffix
-    val expectedIndex = resultLine.length - hjarSuffix.length
-    val actualIndex = resultLine.indexOf(hjarSuffix, expectedIndex)
-    if (actualIndex >= 0 && actualIndex == expectedIndex) {
-      resultLine = resultLine.dropLast(resultLine.length - actualIndex) + jarSuffix
-    }
-    return resultLine
-  }
-
-  /**
-   * Unzips the jar and uses the files within to hotswap
-   */
-  fun processAndHotswapOutput(
-    tempDir: Path,
-    outputJar: Path,
-    project: Project,
-  ) {
-    ProgressManager.getInstance().run(
-      object : Task.Backgroundable(project, BazelPluginBundle.message("widget.fastbuild.hotswaping"), true) {
-        override fun run(indicator: ProgressIndicator) {
-          val unzip = tempDir.resolve("unzip").also { it.toFile().mkdir() }
-          val files =
-            buildList<String> {
-              ZipFile(outputJar.toFile()).use { zipFile ->
-                zipFile.entries().iterator().forEach {
-                  if (it.isDirectory || !it.name.endsWith(".class")) {
-                    return@forEach
-                  }
-                  val output = unzip.resolve(it.name)
-                  output.parent.toFile().mkdirs()
-                  zipFile.getInputStream(it).copyTo(output.outputStream())
-                  add(it.name)
+                else {
+                    Throwable e = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+                    promise.complete(false);
+                    // consulo: the "HotSwap Messages" group of consulo-java (HotSwapProgressImpl.NOTIFICATION_GROUP) is not public
+                    NotificationService.getInstance()
+                        .newError(BazelNotificationGroupContributor.BAZEL)
+                        .title(BazelPluginLocalize.widgetFastbuildErrorTitle())
+                        .content(LocalizeValue.ofNullable(e.getLocalizedMessage()))
+                        .important(true)
+                        .notify(project);
                 }
-              }
-            }.associate {
-              it.replace(File.separatorChar, '.').let {
-                if (it.endsWith(".class")) {
-                  return@let it.substringBeforeLast('.')
+                return null;
+            });
+        });
+        promise
+            .whenComplete((result, error) -> {
+                if (error == null) {
+                    fastBuildService.finishFastBuild(
+                        new FastBuildStatus(
+                            /* workspaceRoot = */ org.jetbrains.bazel.config.project.getRootDir(project).toNioPath(),
+                            /* status = */ FastBuildActionStatus.SUCCESS
+                        )
+                    );
                 }
-                it
-              } to HotSwapFile(unzip.resolve(it).toFile())
+                else {
+                    fastBuildService.finishFastBuild(
+                        new FastBuildStatus(
+                            /* workspaceRoot = */ org.jetbrains.bazel.config.project.getRootDir(project).toNioPath(),
+                            /* status = */ FastBuildActionStatus.ERROR
+                        )
+                    );
+                }
+            });
+        return promise;
+    }
+
+    public static CompletableFuture<?> fastBuildFiles(Project project, List<VirtualFile> files) {
+        Path workspaceRoot = org.jetbrains.bazel.config.project.getRootDir(project).toNioPath();
+        TargetStorage targetUtils = TargetStorage.getTargetStorage(project);
+        FastBuildStatusService fastBuildService = FastBuildStatusService.getInstance(project);
+        Map<VirtualFile, BuildTarget> buildInfos = new LinkedHashMap<>();
+        for (VirtualFile file : files) {
+            List<Label> targetsForFile = targetUtils.getTargetsForFile(file);
+            if (targetsForFile.isEmpty()) {
+                continue;
+            }
+            BuildTarget targetSummary = targetUtils.getTargetSummary(targetsForFile.get(0));
+            if (targetSummary != null) {
+                buildInfos.put(file, targetSummary);
+            }
+        }
+
+        if (buildInfos.isEmpty()) {
+            return CompletableFuture.failedFuture(new ExecutionException(BazelPluginLocalize.widgetFastbuildErrorNoTargets()));
+        }
+
+        // consulo: the suspend loop is a chain of futures, one per entry; a thrown ExecutionException fails the chain (wrapped in a
+        // CompletionException)
+        CompletableFuture<?> chain = CompletableFuture.completedFuture(null);
+        for (Map.Entry<VirtualFile, BuildTarget> entry : buildInfos.entrySet()) {
+            chain = chain.thenCompose(ignored -> {
+                VirtualFile inputFile = entry.getKey();
+                Label id = BuildTarget.getId(entry.getValue());
+                String canonicalFilePath = inputFile.getCanonicalPath();
+                String canonicalWorkspaceRootPath = Objects.requireNonNull(FileUtil.toCanonicalPath(workspaceRoot.toString()));
+                if (!(canonicalFilePath != null && canonicalFilePath.startsWith(canonicalWorkspaceRootPath))) {
+                    throw new CompletionException(
+                        new ExecutionException(
+                            BazelPluginLocalize.widgetFastbuildErrorWrongCanonicalPath(
+                                canonicalFilePath == null ? "" : canonicalFilePath,
+                                canonicalWorkspaceRootPath
+                            )
+                        )
+                    );
+                }
+                // bazel-bin mirrors the package path of a main workspace target
+                if (!id.isMainWorkspace()) {
+                    return CompletableFuture.completedFuture(Boolean.TRUE);
+                }
+                String relativePath = id.packagePath().toString();
+                boolean isLib = targetUtils.isLibrary(id);
+                WorkspaceSnapshot snapshot = WorkspaceHelpers.getWorkspaceSnapshotOrNull(project);
+                Path bazelBin = snapshot == null ? null : snapshot.bazelInfo().bazelBin();
+                if (bazelBin == null) {
+                    throw new CompletionException(new ExecutionException(BazelPluginLocalize.widgetFastbuildErrorMissingPath()));
+                }
+                Path targetJar = Path.of(bazelBin + "/" + relativePath + "/" + (isLib ? "lib" : "") + id.getTargetName() + ".jar");
+
+                fastBuildService.startFastBuildTarget();
+
+                Path targetJarParent = Objects.requireNonNull(targetJar.getParent());
+                Path originalParamsFile = targetJarParent.resolve(targetJar.getFileName().toString() + "-0.params");
+                Path originalParamsFile1 = targetJarParent.resolve(targetJar.getFileName().toString() + "-1.params");
+
+                if (Files.notExists(originalParamsFile)) {
+                    List<Label> ids = new ArrayList<>();
+                    for (BuildTarget it : buildInfos.values()) {
+                        ids.add(BuildTarget.getId(it));
+                    }
+                    BazelCoroutineService.getInstance(project).start(() -> BuildTargetTask.runBuildTargetTask(ids, project));
+                    throw new CompletionException(new ExecutionException(BazelPluginLocalize.widgetFastbuildErrorParamsNotFound()));
+                }
+
+                // consulo: upstream withContext(Dispatchers.EDT) { writeIntentReadAction { saveAllDocuments() } }; the compile task is
+                // started on the UI thread too, because CompilerManager.executeTask() saves the documents itself
+                return project.getUIAccess().<Boolean>giveAsync(() -> {
+                    FileDocumentManager.getInstance().saveAllDocuments();
+
+                    // consulo: upstream CompilerTask/CompileContextImpl/OneProjectItemCompileScope are internal in Consulo, the public
+                    // CompilerManager.executeTask() creates them for a CompileTask
+                    CompileScope compileScope =
+                        CompilerManager.getInstance(project).createFilesCompileScope(List.of(inputFile.toNioPath()));
+                    CompilerManager.getInstance(project).executeTask(
+                        compileContext -> {
+                            // consulo: upstream `var fastBuildTargetStatus: FastBuildTargetStatus? = null` captured by the task
+                            FastBuildStatus.@Nullable FastBuildTargetStatus[] fastBuildTargetStatus =
+                                new FastBuildStatus.FastBuildTargetStatus[1];
+                            try {
+                                // consulo: upstream ProgressManager.getInstance().progressIndicator
+                                ProgressIndicator indicator = compileContext.getProgressIndicator();
+
+                                indicator.checkCanceled();
+
+                                Path tempDir = Files.createTempDirectory("cdb-fast-compile");
+                                logger.debug("Using '" + tempDir + "' for fast compile");
+                                Path outputJar = tempDir.resolve("output.jar");
+
+                                Path paramsFile0 =
+                                    updateAndWriteCompile0Params(
+                                        originalParamsFile,
+                                        tempDir,
+                                        outputJar,
+                                        Path.of(Objects.requireNonNull(inputFile.getCanonicalPath())),
+                                        Path.of(canonicalWorkspaceRootPath),
+                                        targetJar
+                                    );
+                                Path paramsFile1 =
+                                    updateAndWriteCompile1Params(
+                                        originalParamsFile1,
+                                        tempDir
+                                    );
+
+                                indicator.checkCanceled();
+
+                                JvmToolchainInfo toolchainInfo;
+                                try {
+                                    toolchainInfo =
+                                        JvmToolchainInfoService
+                                            .getInstance(project)
+                                            .getOrQueryJvmToolchainInfo(project, id);
+                                }
+                                catch (Exception e) {
+                                    throw new ExecutionException(BazelPluginLocalize.widgetFastbuildErrorNullJvmToolchain());
+                                }
+
+                                List<String> arguments = new ArrayList<>();
+                                arguments.add(
+                                    toolchainInfo.java_home() + File.separator + "bin" + File.separator +
+                                        ExecUtils.calculateExecutableName("java")
+                                );
+                                arguments.addAll(toolchainInfo.jvm_opts());
+                                arguments.add("-jar");
+                                arguments.add(toolchainInfo.toolchain_path());
+                                arguments.add("@" + paramsFile0);
+                                arguments.add("@" + paramsFile1);
+
+                                WorkspaceSnapshot workspaceSnapshot = WorkspaceHelpers.getWorkspaceSnapshotOrNull(project);
+                                BazelInfo bazelInfo = workspaceSnapshot == null ? null : workspaceSnapshot.bazelInfo();
+                                if (bazelInfo == null) {
+                                    throw new ExecutionException(BazelPluginLocalize.widgetFastbuildErrorNullBazelExecPath());
+                                }
+                                GeneralCommandLine command =
+                                    new GeneralCommandLine(arguments).withWorkingDirectory(bazelInfo.execRoot());
+                                // consulo: upstream OSProcessHandler is internal in Consulo
+                                ProcessHandler handler =
+                                    Application.get().getInstance(ProcessHandlerBuilderFactory.class).newBuilder(command).build();
+                                handler.addProcessListener(
+                                    new ProcessListener() {
+                                        // TODO: adapt EclipseOutputParser and JavacOutputParser and group parse errors properly
+                                        final String JAVAC_WARNING = "warning:";
+                                        final String JAVAC_ERROR = "error:";
+                                        final String ECLIPSE_PROBLEM_SEPARATOR = "----------";
+                                        final String ECLIPSE_WARNING = ". WARNING in ";
+                                        final String ECLIPSE_ERROR = ". ERROR in ";
+
+                                        boolean isWarning = false;
+
+                                        @Override
+                                        public void onTextAvailable(ProcessEvent event, Key outputType) {
+                                            if (outputType == ProcessOutputType.STDERR) {
+                                                if (event.getText().contains(ECLIPSE_PROBLEM_SEPARATOR)) {
+                                                    return;
+                                                }
+                                                if (event.getText().contains(JAVAC_WARNING) || event.getText().contains(ECLIPSE_WARNING)) {
+                                                    isWarning = true;
+                                                }
+                                                else if (event.getText().contains(JAVAC_ERROR) || event.getText().contains(ECLIPSE_ERROR)) {
+                                                    isWarning = false;
+                                                }
+                                                CompilerMessageCategory compilerCategory =
+                                                    isWarning ? CompilerMessageCategory.WARNING : CompilerMessageCategory.ERROR;
+
+                                                String[] parts = event.getText().split(":", -1);
+                                                Integer line = null;
+                                                try {
+                                                    line = parts.length > 0 ? Integer.parseInt(parts[0].trim()) : null;
+                                                }
+                                                catch (NumberFormatException ignored) {
+                                                    // consulo: upstream toIntOrNull()
+                                                }
+                                                if (parts.length >= 4 && line != null) {
+                                                    String error = parts[3];
+                                                    // consulo: upstream CompilerMessageImpl(project, category, error, inputFile, line, 0, null)
+                                                    compileContext.newMessage(compilerCategory, LocalizeValue.of(error))
+                                                        .url(inputFile.getUrl())
+                                                        .position(line, 0)
+                                                        .add();
+                                                }
+                                                else {
+                                                    // consulo: upstream CompilerMessageImpl(project, category, event.text)
+                                                    compileContext.newMessage(compilerCategory, LocalizeValue.of(event.getText())).add();
+                                                }
+                                            }
+                                            else if (outputType == ProcessOutputType.STDOUT) {
+                                                compileContext.newMessage(
+                                                    CompilerMessageCategory.INFORMATION,
+                                                    LocalizeValue.of(event.getText())
+                                                ).add();
+                                            }
+                                        }
+                                    }
+                                );
+                                handler.startNotify();
+                                Integer exitCode = null;
+                                if (handler.waitFor()) {
+                                    exitCode = handler.getExitCode();
+                                }
+                                if (exitCode == null || exitCode != 0) {
+                                    // consulo: CompilerManager.executeTask() sets the end compilation stamp from the error count
+                                    // compileTask.setEndCompilationStamp(ExitStatus.ERRORS, System.currentTimeMillis())
+                                    // tempDir.delete()
+                                    fastBuildTargetStatus[0] =
+                                        new FastBuildStatus.FastBuildTargetStatus(
+                                            /* inputFile = */ inputFile,
+                                            /* targetJar = */ targetJar,
+                                            /* status = */ FastBuildActionStatus.ERROR
+                                        );
+                                    return true;
+                                }
+                                // compileTask.setEndCompilationStamp(ExitStatus.SUCCESS, System.currentTimeMillis())
+                                fastBuildTargetStatus[0] =
+                                    new FastBuildStatus.FastBuildTargetStatus(
+                                        /* inputFile = */ inputFile,
+                                        /* targetJar = */ targetJar,
+                                        /* status = */ FastBuildActionStatus.SUCCESS
+                                    );
+                                processAndHotswapOutput(tempDir, outputJar, project);
+                            }
+                            catch (ExecutionException e) {
+                                // consulo: upstream CompilerMessageImpl(project, CompilerMessageCategory.ERROR, e.message)
+                                compileContext.newMessage(
+                                    CompilerMessageCategory.ERROR,
+                                    LocalizeValue.ofNullable(e.getMessage())
+                                ).add();
+                                fastBuildTargetStatus[0] =
+                                    new FastBuildStatus.FastBuildTargetStatus(
+                                        /* inputFile = */ inputFile,
+                                        /* targetJar = */ targetJar,
+                                        /* status = */ FastBuildActionStatus.ERROR
+                                    );
+                                // compileTask.setEndCompilationStamp(ExitStatus.ERRORS, System.currentTimeMillis())
+                                return true;
+                            }
+                            catch (IOException e) {
+                                throw new UncheckedIOException(e);
+                            }
+                            finally {
+                                if (fastBuildTargetStatus[0] == null) {
+                                    fastBuildTargetStatus[0] =
+                                        new FastBuildStatus.FastBuildTargetStatus(
+                                            /* inputFile = */ inputFile,
+                                            /* targetJar = */ targetJar,
+                                            /* status = */ FastBuildActionStatus.UNKNOWN
+                                        );
+                                }
+                                fastBuildService.finishFastBuildTarget(Objects.requireNonNull(fastBuildTargetStatus[0]));
+                            }
+                            return true;
+                        },
+                        compileScope,
+                        BazelPluginLocalize.widgetFastbuildRecompile(),
+                        null
+                    );
+                    return Boolean.TRUE;
+                });
+            });
+        }
+        return chain;
+    }
+
+    // consulo: Kotlin function type (ips: BufferedReader, os: OutputStreamWriter) -> Unit that may throw IOException
+    @FunctionalInterface
+    public interface ParamsFileHandler {
+        void handle(BufferedReader ips, OutputStreamWriter os) throws IOException;
+    }
+
+    // consulo: upstream local extension fun OutputStreamWriter.writeLn(line: String) of both params writers
+    private static void writeLn(OutputStreamWriter receiver, String line) throws IOException {
+        receiver.write(line + "\n");
+    }
+
+    /**
+     * Copies the original params file updating certain fields to reduce compile time
+     * and point to a different output
+     */
+    public static Path updateAndWriteCompile0Params(
+        Path originalParams,
+        Path tempDir,
+        Path outputJar,
+        Path inputFile,
+        Path workspaceRoot,
+        Path targetJar
+    ) throws IOException {
+        return updateAndWriteCompileParams("compile.jar-0.params", originalParams, tempDir, (BufferedReader ips, OutputStreamWriter os) -> {
+            String line = ips.readLine();
+            Path sourceFile = workspaceRoot.relativize(inputFile);
+
+            while (line != null) {
+                switch (line) {
+                    case "--output" -> {
+                        writeLn(os, line);
+                        writeLn(os, outputJar.toString());
+                        ips.readLine();
+                    }
+
+                    case "--native_header_output" -> {
+                        writeLn(os, line);
+                        writeLn(os, tempDir.resolve("output-native-header.jar").toString());
+                        ips.readLine();
+                    }
+
+                    case "--generated_sources_output" -> {
+                        writeLn(os, line);
+                        writeLn(os, tempDir.resolve("output-generated-sources.jar").toString());
+                        ips.readLine();
+                    }
+
+                    case "--output_manifest_proto" -> {
+                        writeLn(os, line);
+                        writeLn(os, tempDir.resolve("output.jar_manifest_proto").toString());
+                        ips.readLine();
+                    }
+
+                    case "--output_deps_proto" -> {
+                        writeLn(os, line);
+                        writeLn(os, tempDir.resolve("output.jdeps").toString());
+                        ips.readLine();
+                    }
+
+                    case "--sources" -> {
+                        writeLn(os, line);
+                        line = ips.readLine();
+                        writeLn(os, sourceFile.toString());
+                        while (line != null && !line.startsWith("--")) {
+                            line = ips.readLine();
+                        }
+                        continue;
+                    }
+
+                    case "--source_jars" -> {
+                        line = ips.readLine();
+                        while (line != null && !line.startsWith("--")) {
+                            line = ips.readLine();
+                        }
+                        continue;
+                    }
+
+                    case "--strict_java_deps" -> {
+                        line = ips.readLine();
+                        while (line != null && !line.startsWith("--")) {
+                            line = ips.readLine();
+                        }
+                        continue;
+                    }
+
+                    default -> {
+                        line = processLine(line);
+                        writeLn(os, line);
+                    }
+                }
+                line = ips.readLine();
             }
 
-          indicator.checkCanceled()
+            writeLn(os, "--classpath");
+            // Add the modules jar to the dependencies
+            if (Files.notExists(targetJar)) {
+                logger.error("Bazel module jar not found: " + targetJar);
+            }
+            writeLn(os, targetJar.toString());
+        });
+    }
 
-          hotswapFile(project, files, tempDir.toFile())
+    public static Path updateAndWriteCompile1Params(Path originalParams, Path tempDir) throws IOException {
+        return updateAndWriteCompileParams("compile.jar-1.params", originalParams, tempDir, (BufferedReader ips, OutputStreamWriter os) -> {
+            String line = ips.readLine();
+
+            while (line != null) {
+                line = processLine(line);
+                writeLn(os, line);
+                line = ips.readLine();
+            }
+        });
+    }
+
+    public static Path updateAndWriteCompileParams(
+        String paramFileName,
+        Path originalParams,
+        Path tempDir,
+        ParamsFileHandler handleParamsFile
+    ) throws IOException {
+        Path params = tempDir.resolve(paramFileName);
+        try (BufferedReader ips = Files.newBufferedReader(originalParams, StandardCharsets.UTF_8)) {
+            try (OutputStreamWriter os = new OutputStreamWriter(Files.newOutputStream(params), StandardCharsets.UTF_8)) {
+                handleParamsFile.handle(ips, os);
+            }
         }
-      },
-    )
-  }
+        return params;
+    }
 
-  fun hotswapFile(
-    project: Project,
-    hotswapMap: Map<String, HotSwapFile>,
-    tempDir: File,
-  ) {
-    ApplicationManager.getApplication().invokeLater {
-      val sessionsToHotswap = getSessionsToHotswap(project)
-      val progress = HotSwapProgressImpl(project)
-      ApplicationManager.getApplication().executeOnPooledThread {
+    private static String processLine(String line) {
+        String resultLine = line;
+        String jarSuffix = ".jar";
+        String hjarSuffix = "-hjar" + jarSuffix;
+        int expectedIndex = resultLine.length() - hjarSuffix.length();
+        int actualIndex = resultLine.indexOf(hjarSuffix, expectedIndex);
+        if (actualIndex >= 0 && actualIndex == expectedIndex) {
+            resultLine = resultLine.substring(0, actualIndex) + jarSuffix;
+        }
+        return resultLine;
+    }
+
+    /**
+     * Unzips the jar and uses the files within to hotswap
+     */
+    public static void processAndHotswapOutput(
+        Path tempDir,
+        Path outputJar,
+        Project project
+    ) {
+        ProgressManager.getInstance().run(
+            new Task.Backgroundable(project, BazelPluginLocalize.widgetFastbuildHotswaping(), true) {
+                @Override
+                public void run(ProgressIndicator indicator) {
+                    Path unzip = tempDir.resolve("unzip");
+                    unzip.toFile().mkdir();
+                    List<String> names = new ArrayList<>();
+                    try (ZipFile zipFile = new ZipFile(outputJar.toFile())) {
+                        for (ZipEntry it : Collections.list(zipFile.entries())) {
+                            if (it.isDirectory() || !it.getName().endsWith(".class")) {
+                                continue;
+                            }
+                            Path output = unzip.resolve(it.getName());
+                            Objects.requireNonNull(output.getParent()).toFile().mkdirs();
+                            zipFile.getInputStream(it).transferTo(Files.newOutputStream(output));
+                            names.add(it.getName());
+                        }
+                    }
+                    catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                    Map<String, HotSwapFile> files = new LinkedHashMap<>();
+                    for (String it : names) {
+                        String key = it.replace(File.separatorChar, '.');
+                        if (key.endsWith(".class")) {
+                            key = StringUtil.substringBeforeLast(key, ".");
+                        }
+                        // consulo: HotSwapFile takes a Path
+                        files.put(key, new HotSwapFile(unzip.resolve(it)));
+                    }
+
+                    indicator.checkCanceled();
+
+                    hotswapFile(project, files, tempDir.toFile());
+                }
+            }
+        );
+    }
+
+    public static void hotswapFile(
+        Project project,
+        Map<String, HotSwapFile> hotswapMap,
+        File tempDir
+    ) {
+        Application.get().invokeLater(() -> {
+            Collection<DebuggerSession> sessionsToHotswap = getSessionsToHotswap(project);
+            // consulo: HotSwapProgressImpl needs the ProgressIndicator of a running task (upstream creates it on the EDT and runs the
+            // reload on a pooled thread), so the reload runs in a Task.Backgroundable
+            Task.Backgroundable.queue(project, JavaDebuggerLocalize.progressHotSwapTitle(), progressIndicator -> {
+                HotSwapProgressImpl progress = new HotSwapProgressImpl(project, progressIndicator);
+                try {
+                    Map<DebuggerSession, Map<String, HotSwapFile>> sessionMap = new LinkedHashMap<>();
+                    for (DebuggerSession session : sessionsToHotswap) {
+                        sessionMap.put(session, hotswapMap);
+                    }
+                    ProgressManager.getInstance().runProcess(
+                        () -> {
+                            HotSwapManager.reloadModifiedClasses(sessionMap, progress);
+                        },
+                        progress.getProgressIndicator()
+                    );
+                }
+                finally {
+                    triggerHotswapSuccessNotification(project, progress);
+                    progress.finished();
+                    tempDir.delete();
+                }
+            });
+        });
+    }
+
+    private static void triggerHotswapSuccessNotification(Project project, HotSwapProgressImpl progress) {
         try {
-          val sessionMap = sessionsToHotswap.associateWith { hotswapMap }
-          ProgressManager.getInstance().runProcess(
-            {
-              HotSwapManager.reloadModifiedClasses(sessionMap, progress)
-            },
-            progress.progressIndicator,
-          )
+            // TODO consulo: Consulo's HotSwapProgressImpl has no hasErrors(), the reflective call fails and only logs a warning
+            Method hasErrorsMethod = HotSwapProgressImpl.class.getDeclaredMethod("hasErrors");
+            hasErrorsMethod.setAccessible(true);
+            boolean hasErrorsResult = (Boolean) hasErrorsMethod.invoke(progress);
+            // Send notifications for hotswap completed without errors
+            if (!hasErrorsResult) {
+                // consulo: the "HotSwap Messages" group of consulo-java (HotSwapProgressImpl.NOTIFICATION_GROUP) is not public
+                NotificationService.getInstance()
+                    .newInfo(BazelNotificationGroupContributor.BAZEL)
+                    .title(BazelPluginLocalize.widgetFastbuildCompletedTitle())
+                    .content(BazelPluginLocalize.widgetFastbuildCompletedDescription())
+                    .important(false)
+                    .icon(PlatformIconGroup.statusSuccess())
+                    .notify(project);
+            }
         }
-        finally {
-          triggerHotswapSuccessNotification(project, progress)
-          progress.finished()
-          tempDir.delete()
+        catch (Exception e) {
+            logger.warn("Failed to trigger hotswap completed notification", e);
         }
-      }
     }
-  }
 
-  private fun triggerHotswapSuccessNotification(project: Project, progress: HotSwapProgressImpl) {
-    try {
-      val hasErrorsMethod = HotSwapProgressImpl::class.java.getDeclaredMethod("hasErrors")
-      hasErrorsMethod.setAccessible(true)
-      val hasErrorsResult: Boolean = hasErrorsMethod.invoke(progress) as Boolean
-      // Send notifications for hotswap completed without errors
-      if (!hasErrorsResult) {
-        NotificationGroupManager
-          .getInstance()
-          .getNotificationGroup("HotSwap Messages")
-          .createNotification(
-            BazelPluginBundle.message("widget.fastbuild.completed.title"),
-            BazelPluginBundle.message("widget.fastbuild.completed.description"),
-            NotificationType.INFORMATION,
-          ).setImportant(false)
-          .setIcon(AllIcons.Status.Success)
-          .notify(project)
-      }
-    }
-    catch (e: Exception) {
-      logger.warn("Failed to trigger hotswap completed notification", e)
-    }
-  }
+    private static Collection<DebuggerSession> getSessionsToHotswap(Project project) {
+        List<DebuggerSession> sessions = getDebugSessions(project);
+        if (sessions.isEmpty()) {
+            return sessions;
+        }
+        if (DebuggerSettings.RUN_HOTSWAP_ASK.equals(DebuggerSettings.getInstance().RUN_HOTSWAP_AFTER_COMPILE)) {
+            RunHotswapDialog runHotswapDialog = new RunHotswapDialog(project, sessions, false);
+            if (!runHotswapDialog.showAndGet()) {
+                return List.of();
+            }
 
-  private fun getSessionsToHotswap(project: Project): Collection<DebuggerSession> {
-    val sessions = getDebugSessions(project)
-    if (sessions.isEmpty()) return sessions
-    if (DebuggerSettings.getInstance().RUN_HOTSWAP_AFTER_COMPILE == DebuggerSettings.RUN_HOTSWAP_ASK) {
-      val runHotswapDialog = RunHotswapDialog(project, sessions, false)
-      if (!runHotswapDialog.showAndGet()) {
-        return emptyList()
-      }
-
-      return runHotswapDialog.sessionsToReload
+            return runHotswapDialog.getSessionsToReload();
+        }
+        else {
+            return sessions;
+        }
     }
-    else {
-      return sessions
-    }
-  }
 
-  private fun getDebugSessions(project: Project) =
-    DebuggerManagerEx
-      .getInstanceEx(project)
-      .sessions
-      .stream()
-      .filter { debuggerSession: DebuggerSession? -> HotSwapUIImpl.canHotSwap(debuggerSession!!) }
-      .toList()
+    private static List<DebuggerSession> getDebugSessions(Project project) {
+        return DebuggerManagerEx
+            .getInstanceEx(project)
+            .getSessions()
+            .stream()
+            // consulo: HotSwapUIImpl.canHotSwap(session) is missing, Consulo's HotSwapUIImplListeners checks the same
+            .filter(debuggerSession -> debuggerSession.isAttached() && debuggerSession.getProcess().canRedefineClasses())
+            .toList();
+    }
 }

@@ -1,50 +1,62 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.debugger.DefaultDebugEnvironment
-import com.intellij.execution.Executor
-import com.intellij.execution.JavaRunConfigurationExtensionManager
-import com.intellij.execution.configurations.RemoteConnection
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.execution.ui.ConsoleView
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.BazelCommandLineStateBase
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
+import com.intellij.java.debugger.impl.DefaultDebugEnvironment;
+import com.intellij.java.execution.configurations.RemoteConnection;
+import com.intellij.java.execution.impl.JavaRunConfigurationExtensionManager;
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.execution.ui.console.ConsoleView;
+import consulo.process.ExecutionException;
+import org.jetbrains.bazel.run.BazelCommandLineStateBase;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-abstract class JvmDebuggableCommandLineState(
-  environment: ExecutionEnvironment,
-  private val port: Int,
-  private val configuration: BazelRunConfiguration,
-) : BazelCommandLineStateBase(environment) {
-  fun createDebugEnvironment(environment: ExecutionEnvironment): DefaultDebugEnvironment {
-    // create remote connection with client mode
-    val remoteConnection =
-      RemoteConnection(
-        true,
-        "localhost",
-        port.toString(), // this is the port used
-        false,
-      )
-    environment
-      .runProfile
-      .let { it as? RunConfigurationBase<*> }
-      ?.let(::attachCoroutinesDebuggerConnection)
-    return DefaultDebugEnvironment(
-      environment,
-      this,
-      remoteConnection,
-      true,
-    )
-  }
+public abstract class JvmDebuggableCommandLineState extends BazelCommandLineStateBase {
+    private final int myPort;
+    private final BazelRunConfiguration myConfiguration;
 
-  override fun createConsole(executor: Executor): ConsoleView? {
-    val console = super.createConsole(executor)
-    return JavaRunConfigurationExtensionManager.instance.decorateExecutionConsole(
-      configuration,
-      runnerSettings,
-      console ?: return null,
-      executor,
-    )
-  }
+    protected JvmDebuggableCommandLineState(
+        ExecutionEnvironment environment,
+        int port,
+        BazelRunConfiguration configuration
+    ) {
+        super(environment);
+        myPort = port;
+        myConfiguration = configuration;
+    }
+
+    public DefaultDebugEnvironment createDebugEnvironment(ExecutionEnvironment environment) {
+        // create remote connection with client mode
+        RemoteConnection remoteConnection =
+            new RemoteConnection(
+                true,
+                "localhost",
+                String.valueOf(myPort), // this is the port used
+                false
+            );
+        if (environment.getRunProfile() instanceof RunConfigurationBase runConfigurationBase) {
+            KotlinCoroutineLibraryFinderBeforeRunTaskProvider.attachCoroutinesDebuggerConnection(runConfigurationBase);
+        }
+        return new DefaultDebugEnvironment(
+            environment,
+            this,
+            remoteConnection,
+            true
+        );
+    }
+
+    @Override
+    protected @Nullable ConsoleView createConsole(Executor executor) throws ExecutionException {
+        ConsoleView console = super.createConsole(executor);
+        if (console == null) {
+            return null;
+        }
+        return JavaRunConfigurationExtensionManager.getInstance().decorateExecutionConsole(
+            myConfiguration,
+            getRunnerSettings(),
+            console,
+            executor
+        );
+    }
 }

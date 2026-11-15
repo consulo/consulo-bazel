@@ -1,16 +1,33 @@
-package org.jetbrains.bazel.java.ui.notifications
+package org.jetbrains.bazel.java.ui.notifications;
 
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiJavaFile
-import org.jetbrains.bazel.ui.notifications.UnresolvedImportChecker
+import com.intellij.java.language.psi.PsiImportList;
+import com.intellij.java.language.psi.PsiImportStatementBase;
+import com.intellij.java.language.psi.PsiJavaCodeReferenceElement;
+import com.intellij.java.language.psi.PsiJavaFile;
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiFile;
+import consulo.project.Project;
+import org.jetbrains.bazel.ui.notifications.BuildAndResyncOnUnresolvedImportNotificationsProvider.UnresolvedImportChecker;
 
-internal class JavaUnresolvedImportChecker : UnresolvedImportChecker {
-  override fun hasUnresolvedImport(project: Project, psiFile: PsiFile): Boolean {
-    val javaPsiFile = psiFile as? PsiJavaFile ?: return false
-    val importList = javaPsiFile.importList ?: return false
-    return importList.allImportStatements
-      .mapNotNull { it.importReference }
-      .any { it.multiResolve(false).isEmpty() }
-  }
+import java.util.Arrays;
+import java.util.Objects;
+
+@ExtensionImpl
+public class JavaUnresolvedImportChecker implements UnresolvedImportChecker {
+    @Override
+    @RequiredReadAction
+    public boolean hasUnresolvedImport(Project project, PsiFile psiFile) {
+        if (!(psiFile instanceof PsiJavaFile javaPsiFile)) {
+            return false;
+        }
+        PsiImportList importList = javaPsiFile.getImportList();
+        if (importList == null) {
+            return false;
+        }
+        return Arrays.stream(importList.getAllImportStatements())
+            .map(PsiImportStatementBase::getImportReference)
+            .filter(Objects::nonNull)
+            .anyMatch((PsiJavaCodeReferenceElement it) -> it.multiResolve(false).length == 0);
+    }
 }

@@ -1,49 +1,88 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bazel.run.task.BazelTestTaskListener
-import org.jetbrains.bazel.taskEvents.BazelTaskListener
-import org.jetbrains.bsp.protocol.TestParams
-import java.nio.file.Path
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.project.Project;
+import consulo.util.lang.Pair;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bazel.run.task.BazelTestTaskListener;
+import org.jetbrains.bazel.taskEvents.BazelTaskListener;
+import org.jetbrains.bsp.protocol.TestParams;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface JvmTestRunnerExtension {
-  fun isApplicable(project: Project, targets: List<Label>): Boolean
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.function.Consumer;
 
-  val isIdBasedTestTree: Boolean
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface JvmTestRunnerExtension {
+    boolean isApplicable(Project project, List<Label> targets);
 
-  val testRunnerEmitsServiceMessages: Boolean
+    boolean isIdBasedTestTree();
 
-  fun transformTestParams(params: TestParams): TestParams
+    boolean getTestRunnerEmitsServiceMessages();
 
-  fun transformScriptPathEnvAndTestFilter(env: Map<String, String>, testFilter: String?): Pair<Map<String, String>, String?>
+    TestParams transformTestParams(TestParams params);
 
-  fun createTaskListener(handler: BazelProcessHandler, coverageReportListener: ((Path) -> Unit)?): BazelTaskListener
+    Pair<Map<String, String>, @Nullable String> transformScriptPathEnvAndTestFilter(Map<String, String> env, @Nullable String testFilter);
 
-  companion object {
-    val ep: ExtensionPointName<JvmTestRunnerExtension> = ExtensionPointName("org.jetbrains.bazel.jvmTestRunnerExtension")
+    BazelTaskListener createTaskListener(BazelProcessHandler handler, @Nullable Consumer<Path> coverageReportListener);
 
-    fun getInstance(project: Project, targets: List<Label>): JvmTestRunnerExtension =
-      ep.extensionList.first { it.isApplicable(project, targets) }
-  }
+    // consulo: upstream `ep`, served by the Consulo extension point
+    static List<JvmTestRunnerExtension> getEp() {
+        return Application.get().getExtensionList(JvmTestRunnerExtension.class);
+    }
+
+    static JvmTestRunnerExtension getInstance(Project project, List<Label> targets) {
+        for (JvmTestRunnerExtension it : getEp()) {
+            if (it.isApplicable(project, targets)) {
+                return it;
+            }
+        }
+        throw new NoSuchElementException("Collection contains no element matching the predicate.");
+    }
 }
 
-internal class DefaultJvmTestRunnerExtension : JvmTestRunnerExtension {
-  override fun isApplicable(project: Project, targets: List<Label>): Boolean = true
+@ExtensionImpl(order = "last")
+class DefaultJvmTestRunnerExtension implements JvmTestRunnerExtension {
+    public DefaultJvmTestRunnerExtension() {
+    }
 
-  override val isIdBasedTestTree: Boolean get() = false
+    @Override
+    public boolean isApplicable(Project project, List<Label> targets) {
+        return true;
+    }
 
-  override val testRunnerEmitsServiceMessages: Boolean get() = false
+    @Override
+    public boolean isIdBasedTestTree() {
+        return false;
+    }
 
-  override fun transformTestParams(params: TestParams): TestParams = params
+    @Override
+    public boolean getTestRunnerEmitsServiceMessages() {
+        return false;
+    }
 
-  override fun transformScriptPathEnvAndTestFilter(env: Map<String, String>, testFilter: String?): Pair<Map<String, String>, String?> =
-    env to testFilter
+    @Override
+    public TestParams transformTestParams(TestParams params) {
+        return params;
+    }
 
-  override fun createTaskListener(handler: BazelProcessHandler, coverageReportListener: ((Path) -> Unit)?): BazelTaskListener =
-    BazelTestTaskListener(handler, coverageReportListener)
+    @Override
+    public Pair<Map<String, String>, @Nullable String> transformScriptPathEnvAndTestFilter(
+        Map<String, String> env,
+        @Nullable String testFilter
+    ) {
+        return Pair.create(env, testFilter);
+    }
+
+    @Override
+    public BazelTaskListener createTaskListener(BazelProcessHandler handler, @Nullable Consumer<Path> coverageReportListener) {
+        return new BazelTestTaskListener(handler, coverageReportListener);
+    }
 }

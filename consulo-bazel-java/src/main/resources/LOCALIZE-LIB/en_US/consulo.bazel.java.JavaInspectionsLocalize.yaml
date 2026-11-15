@@ -1,0 +1,6 @@
+bazel.inspection.group.name:
+    text: "Bazel"
+inspections.display.name.javastrictdeps:
+    text: "Check Java strict dependencies"
+java.strict.deps.indirect.dependency:
+    text: "Using type {0} from an indirect dependency {1}"

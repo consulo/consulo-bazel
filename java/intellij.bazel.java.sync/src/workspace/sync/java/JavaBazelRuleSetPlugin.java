@@ -1,19 +1,28 @@
-package org.jetbrains.bazel.sync.workspace.languages.java
+package org.jetbrains.bazel.sync.workspace.languages.java;
 
-import com.intellij.aspect.lib.Rules
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.util.BazelRuleSet
-import org.jetbrains.bazel.util.BazelRuleSetProvider
+import com.intellij.aspect.lib.Rules;
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.util.BazelRuleSetProvider;
+import org.jetbrains.bazel.util.BazelRuleSetProvider.BazelRuleSet;
 
-@ApiStatus.Internal
-val JavaRuleSet: BazelRuleSet = BazelRuleSet(
-  aspectLanguage = Rules.JAVA,
-  rulesetNames = listOf("rules_java"),
-  isBundled = true,
-  autoloadHints = listOf("JavaInfo", "java_common", "JavaPluginInfo", "java_binary", "java_library"),
-  hostLocations = listOf("https://github.com/bazelbuild/rules_java/"),
-)
+import java.util.List;
 
-internal class JavaBazelRuleSetPlugin : BazelRuleSetProvider {
-  override fun ruleSets(): List<BazelRuleSet> = listOf(JavaRuleSet)
+@ExtensionImpl
+public class JavaBazelRuleSetPlugin implements BazelRuleSetProvider {
+    // consulo: upstream top-level val JavaRuleSet
+    public static final BazelRuleSet JavaRuleSet = new BazelRuleSet(
+        Rules.JAVA,
+        List.of("rules_java"),
+        true,
+        List.of("JavaInfo", "java_common", "JavaPluginInfo", "java_binary", "java_library"),
+        List.of("https://github.com/bazelbuild/rules_java/")
+    );
+
+    public JavaBazelRuleSetPlugin() {
+    }
+
+    @Override
+    public List<BazelRuleSet> ruleSets() {
+        return List.of(JavaRuleSet);
+    }
 }

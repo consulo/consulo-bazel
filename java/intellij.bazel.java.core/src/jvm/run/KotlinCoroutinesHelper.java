@@ -1,17 +1,21 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.project.Project;
+
+import java.util.List;
 
 // TODO: remove this, it's only being used to get rid of
 //   `intellij.kotlin.jvm.debugger.coroutines` dependency from `bazel.java.common`
-@ApiStatus.Internal
-interface KotlinCoroutinesHelper {
-  fun attachCoroutinesDebuggerConnection(project: Project, runConfiguration: RunConfigurationBase<*>)
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface KotlinCoroutinesHelper {
+    void attachCoroutinesDebuggerConnection(Project project, RunConfigurationBase runConfiguration);
 
-  companion object {
-    val ep: ExtensionPointName<KotlinCoroutinesHelper> = ExtensionPointName.create("org.jetbrains.bazel.coroutinesHelper")
-  }
+    // consulo: upstream `ep`, served by the Consulo extension point
+    static List<KotlinCoroutinesHelper> getEp() {
+        return Application.get().getExtensionList(KotlinCoroutinesHelper.class);
+    }
 }

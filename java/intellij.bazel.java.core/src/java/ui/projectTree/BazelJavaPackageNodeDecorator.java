@@ -1,36 +1,59 @@
-package org.jetbrains.bazel.java.ui.projectTree
+package org.jetbrains.bazel.java.ui.projectTree;
 
-import com.intellij.ide.projectView.PresentationData
-import com.intellij.ide.projectView.ProjectViewNode
-import com.intellij.ide.projectView.ProjectViewNodeDecorator
-import com.intellij.ide.projectView.impl.nodes.PsiDirectoryNode
-import com.intellij.ide.util.treeView.TreeViewUtil
-import com.intellij.openapi.project.Project
-import com.intellij.psi.JavaPsiFacade
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.ui.projectTree.BazelProjectViewDirectoryHelper
+import com.intellij.java.language.psi.JavaPsiFacade;
+import com.intellij.java.language.psi.PsiJavaPackage;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiDirectory;
+import consulo.project.Project;
+import consulo.project.ui.view.tree.ProjectViewNode;
+import consulo.project.ui.view.tree.ProjectViewNodeDecorator;
+import consulo.project.ui.view.tree.PsiDirectoryNode;
+import consulo.project.ui.view.tree.TreeViewUtil;
+import consulo.ui.ex.tree.PresentationData;
+import jakarta.inject.Inject;
+import org.jetbrains.bazel.ui.projectTree.BazelProjectViewDirectoryHelper;
 
-internal class BazelJavaPackageNodeDecorator(private val project: Project) : ProjectViewNodeDecorator {
-  override fun decorate(node: ProjectViewNode<*>, data: PresentationData) {
-    if (project.isBazelProject && node is PsiDirectoryNode && node.settings.isFlattenPackages) {
-      val directory = node.value ?: return
-      val parentDirectory = directory.parentDirectory ?: return
-      val helper = BazelProjectViewDirectoryHelper(project)
-      if (helper.getPackageName(parentDirectory) == null) {
-        return
-      }
+@ExtensionImpl(order = "first")
+public class BazelJavaPackageNodeDecorator implements ProjectViewNodeDecorator {
+    private final Project myProject;
 
-      val packageName = helper.getPackageName(directory) ?: return
-      if (packageName.isEmpty()) {
-        return
-      }
-
-      data.clearText()
-      val psiPackage =
-        if (node.settings.isAbbreviatePackageNames) {
-          JavaPsiFacade.getInstance(project).findPackage(packageName)
-        } else null
-      data.presentableText = psiPackage?.let { TreeViewUtil.calcAbbreviatedPackageFQName(it) } ?: packageName
+    @Inject
+    public BazelJavaPackageNodeDecorator(Project project) {
+        myProject = project;
     }
-  }
+
+    @Override
+    public void decorate(ProjectViewNode node, PresentationData data) {
+        if (org.jetbrains.bazel.config.project.isBazelProject(myProject)
+            && node instanceof PsiDirectoryNode directoryNode
+            && directoryNode.getSettings().isFlattenPackages()) {
+            PsiDirectory directory = directoryNode.getValue();
+            if (directory == null) {
+                return;
+            }
+            PsiDirectory parentDirectory = directory.getParentDirectory();
+            if (parentDirectory == null) {
+                return;
+            }
+            BazelProjectViewDirectoryHelper helper = new BazelProjectViewDirectoryHelper(myProject);
+            if (helper.getPackageName(parentDirectory) == null) {
+                return;
+            }
+
+            String packageName = helper.getPackageName(directory);
+            if (packageName == null) {
+                return;
+            }
+            if (packageName.isEmpty()) {
+                return;
+            }
+
+            data.clearText();
+            PsiJavaPackage psiPackage =
+                directoryNode.getSettings().isAbbreviatePackageNames()
+                    ? JavaPsiFacade.getInstance(myProject).findPackage(packageName)
+                    : null;
+            data.setPresentableText(psiPackage != null ? TreeViewUtil.calcAbbreviatedPackageFQName(psiPackage) : packageName);
+        }
+    }
 }

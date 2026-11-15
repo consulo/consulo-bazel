@@ -1,71 +1,32 @@
-package org.jetbrains.bazel.fastbuild
+package org.jetbrains.bazel.fastbuild;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.runBlocking
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.server.connection
-import org.jetbrains.bazel.sync.ProjectSyncHook
-import org.jetbrains.bsp.protocol.JvmToolchainInfo
+import consulo.annotation.component.ExtensionImpl;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.sync.ProjectSyncHook;
 
-internal class ToolchainInfoSyncHook : ProjectSyncHook {
-  override fun isEnabled(project: Project): Boolean = BazelFeatureFlags.fastBuildEnabled
+import java.util.concurrent.CompletableFuture;
 
-  override suspend fun onSync(environment: ProjectSyncHook.ProjectSyncHookEnvironment) {
-    val service = JvmToolchainInfoService.getInstance(environment.project)
-
-    // clear per-target cache to ensure fresh toolchain info after sync
-    // this is important in case javac configuration has changed
-    logger.info("Clearing previously saved toolchains")
-    service.clearPerTargetCache()
-  }
-
-  @Service(Service.Level.PROJECT)
-  class JvmToolchainInfoService {
-    private val perTargetToolchainInfo = mutableMapOf<Label, JvmToolchainInfo>()
-
-    fun getJvmToolchainInfo(target: Label): JvmToolchainInfo? = perTargetToolchainInfo[target]
-
-    fun setJvmToolchainInfo(toolchainInfo: JvmToolchainInfo, target: Label) {
-      perTargetToolchainInfo[target] = toolchainInfo
+// consulo: the nested upstream service ToolchainInfoSyncHook.JvmToolchainInfoService has its own file (nested @ServiceImpl
+// classes are not supported by the annotation processor), see JvmToolchainInfoService
+@ExtensionImpl
+public class ToolchainInfoSyncHook implements ProjectSyncHook {
+    @Override
+    public boolean isEnabled(Project project) {
+        return BazelFeatureFlags.getFastBuildEnabled();
     }
 
-    fun clearPerTargetCache() {
-      perTargetToolchainInfo.clear()
+    @Override
+    public CompletableFuture<Void> onSync(ProjectSyncHook.ProjectSyncHookEnvironment environment) {
+        JvmToolchainInfoService service = JvmToolchainInfoService.getInstance(environment.project());
+
+        // clear per-target cache to ensure fresh toolchain info after sync
+        // this is important in case javac configuration has changed
+        logger.info("Clearing previously saved toolchains");
+        service.clearPerTargetCache();
+        return CompletableFuture.completedFuture(null);
     }
 
-    fun getOrQueryJvmToolchainInfo(project: Project, target: Label): JvmToolchainInfo {
-      // first try to get cached toolchain info
-      val cachedInfo = getJvmToolchainInfo(target)
-      if (cachedInfo != null) {
-        logger.info("Using cached toolchain for ${target.targetName}")
-        return cachedInfo
-      }
-
-      // query the server for per-target toolchain info
-      val toolchainInfo =
-        runBlocking {
-          project.connection.runWithServer { server ->
-            logger.info("Fetching toolchain for ${target.targetName}")
-            server.jvmToolchainInfoForTarget(target)
-          }
-        }
-
-      // cache the result
-      logger.info("Storing toolchain for ${target.targetName}")
-      setJvmToolchainInfo(toolchainInfo, target)
-      return toolchainInfo
-    }
-
-    companion object {
-      fun getInstance(project: Project) = project.service<JvmToolchainInfoService>()
-    }
-  }
-
-  companion object {
-    private val logger = Logger.getInstance(ToolchainInfoSyncHook::class.java)
-  }
+    static final Logger logger = Logger.getInstance(ToolchainInfoSyncHook.class);
 }

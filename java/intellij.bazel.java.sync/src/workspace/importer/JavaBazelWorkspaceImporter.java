@@ -1,199 +1,287 @@
-package org.jetbrains.bazel.workspace.importer
+package org.jetbrains.bazel.workspace.importer;
 
-import com.intellij.compiler.impl.javaCompiler.javac.JavacConfiguration
-import com.intellij.openapi.util.NlsContexts
-import com.intellij.platform.diagnostic.telemetry.helpers.use
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.entities
-import org.jetbrains.bazel.commons.getLocalRepositories
-import org.jetbrains.bazel.config.BazelJavaBackendBundle
-import org.jetbrains.bazel.config.bazelProjectName
-import org.jetbrains.bazel.performance.bspTracer
-import org.jetbrains.bazel.progress.withSubtask
-import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporterFactory
-import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext
-import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContextBuilder
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterContext
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterPhase
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterResult
-import org.jetbrains.bazel.sync.workspace.languages.java.JavaWorkspaceSyncConfig
-import org.jetbrains.bazel.sync.workspace.languages.jvm.extractJvmBuildTarget
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions
-import org.jetbrains.bazel.sync.workspace.snapshot.CommonWorkspaceSyncConfig
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.workspace.ProjectViewGlobSet
-import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
+import consulo.bazel.java.localize.BazelJavaBackendLocalize;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.bazel.workspace.BazelProjectModelService;
+import consulo.content.bundle.Sdk;
+import consulo.java.language.module.extension.JavaMutableModuleExtension;
+import consulo.localize.LocalizeValue;
+import consulo.module.Module;
+import consulo.process.cmd.ParametersListUtil;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RepoMapping.LocalRepositoryMapping;
+import org.jetbrains.bazel.config.project;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.GlobalNamingContextBuilder;
+import org.jetbrains.bazel.sync.workspace.languages.java.JavaWorkspaceSyncConfig;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.workspace.ProjectViewGlobSet;
+import org.jetbrains.bazel.workspace.importer.JvmTargetEntitiesBuilder.ImportContext;
+import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource;
+import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jetbrains.bsp.protocol.StringsCollection;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-internal class JavaBazelWorkspaceImporter(val context: WorkspaceImporterContext) : BazelWorkspaceImporter, BazelWorkspaceImporter.Named {
-  class Factory : BazelWorkspaceImporterFactory {
-    override fun createWorkspaceImporter(context: WorkspaceImporterContext): BazelWorkspaceImporter =
-      JavaBazelWorkspaceImporter(context)
-  }
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
-  private var javacOptions: Map<String, String>? = null
-  private lateinit var moduleTargets: List<BuildTarget>
-  private lateinit var targets: List<BuildTarget>
-  private lateinit var jvmResolved: Map<WorkspaceTargetKey, JvmResolvedTarget>
-  private lateinit var plan: JvmImportPlan
-  private lateinit var uniqueJavaHomes: Set<Path>
-  private lateinit var commonSyncConfig: CommonWorkspaceSyncConfig
-  private lateinit var javaSyncConfig: JavaWorkspaceSyncConfig
-  private var defaultJdkName: String? = null
+public class JavaBazelWorkspaceImporter implements BazelWorkspaceImporter, BazelWorkspaceImporter.Named {
+    // consulo: the upstream nested `Factory` is the top-level JavaBazelWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
-  override val importerName: @NlsContexts.ProgressTitle String
-    get() = BazelJavaBackendBundle.message("workspace.java.importer.name")
+    private final WorkspaceImporterContext myContext;
 
-  override suspend fun import(phase: WorkspaceImporterPhase, snapshot: WorkspaceSnapshot, taskId: TaskId): Result<WorkspaceImporterResult> = runCatching {
-    when (phase) {
-      is WorkspaceImporterPhase.Initialize -> onInitialize(snapshot, phase.naming)
-      is WorkspaceImporterPhase.WorkspaceApply -> onWorkspaceApply(snapshot, phase.builder, phase.entitySource, phase.naming, taskId)
-      WorkspaceImporterPhase.Finalize -> onFinalize(snapshot)
-      WorkspaceImporterPhase.PostProcessing -> onPostProcessing(snapshot)
+    private @Nullable Map<String, String> myJavacOptions = null;
+    private List<BuildTarget> myModuleTargets = List.of();
+    private List<BuildTarget> myTargets = List.of();
+    private Map<WorkspaceTargetKey, JvmResolvedTarget> myJvmResolved = Map.of();
+    private @Nullable JvmImportPlan myPlan;
+    private Set<Path> myUniqueJavaHomes = Set.of();
+    private @Nullable CommonWorkspaceSyncConfig myCommonSyncConfig;
+    private @Nullable JavaWorkspaceSyncConfig myJavaSyncConfig;
+    private @Nullable String myDefaultJdkName = null;
+
+    public JavaBazelWorkspaceImporter(WorkspaceImporterContext context) {
+        myContext = context;
     }
-  }
 
-  fun onInitialize(
-    snapshot: WorkspaceSnapshot,
-    naming: GlobalNamingContextBuilder,
-  ): WorkspaceImporterResult {
-    commonSyncConfig = snapshot.syncConfigs.filterIsInstance<CommonWorkspaceSyncConfig>()
-                         .firstOrNull() ?: throw IllegalStateException()
-    javaSyncConfig = snapshot.syncConfigs.filterIsInstance<JavaWorkspaceSyncConfig>()
-                       .firstOrNull() ?: throw IllegalStateException()
-
-    moduleTargets = snapshot.targetGraph.findAllTargetsAtDepth(
-      maxDepth = commonSyncConfig.importDepth,
-      useRelaxedDependencyExpansion = true,
-    ).mapNotNull { snapshot.targets.findTargetByKey(it, TargetLoadOptions.ALL) }.toList()
-    targets = moduleTargets
-    val resolveLocation = locationResolver(context, snapshot)
-    jvmResolved = JvmBuildTargetResolver(
-      allTargets = snapshot.targets.allTargets().associateBy { it.key },
-      targetsToImport = moduleTargets.associateBy { it.key },
-      javaSyncConfig = snapshot.syncConfigs.filterIsInstance<JavaWorkspaceSyncConfig>().first(),
-      repoMapping = snapshot.repoMapping,
-      resolveLocation = resolveLocation,
-      resolveExecrootLocation = execrootLocationResolver(context, snapshot),
-    ).resolveAll()
-
-    plan = JvmImportPlan(rawTargets = moduleTargets, jvmResolved = jvmResolved, resolveLocation = resolveLocation)
-    plan.declareNames(naming)
-
-    // TODO: check why is this even needed - can't we just write SdkEntity into the project workspace model
-    //  and avoid the global JDK table altogether?
-    uniqueJavaHomes = jvmResolved.values.mapNotNull { it.javaHome }.toSet()
-    defaultJdkName = if (uniqueJavaHomes.isNotEmpty()) {
-      context.project.bazelProjectName.projectNameToJdkName(uniqueJavaHomes.first())
+    public WorkspaceImporterContext getContext() {
+        return myContext;
     }
-    else {
-      SdkUtils.getProjectJdkOrMostRecentJdk(context.project)?.name
-    }
-    return WorkspaceImporterResult.Success
-  }
 
-  suspend fun onWorkspaceApply(
-    snapshot: WorkspaceSnapshot,
-    builder: MutableEntityStorage, entitySource: EntitySource,
-    naming: GlobalNamingContext,
-    taskId: TaskId,
-  ): WorkspaceImporterResult {
-    context.taskConsole.withSubtask(
-      taskId.subTask("update-internal-model"),
-      BazelJavaBackendBundle.message("workspace.java.importer.update.internal.model"),
+    @Override
+    public LocalizeValue getImporterName() {
+        return BazelJavaBackendLocalize.workspaceJavaImporterName();
+    }
+
+    @Override
+    public CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId) {
+        // consulo: Kotlin runCatching -> a failed future
+        try {
+            if (phase instanceof WorkspaceImporterPhase.Initialize initialize) {
+                return CompletableFuture.completedFuture(onInitialize(snapshot, initialize.naming()));
+            }
+            else if (phase instanceof WorkspaceImporterPhase.WorkspaceApply apply) {
+                return onWorkspaceApply(snapshot, apply.builder(), apply.entitySource(), apply.naming(), taskId);
+            }
+            else if (phase instanceof WorkspaceImporterPhase.Finalize) {
+                return CompletableFuture.completedFuture(onFinalize(snapshot));
+            }
+            else {
+                return onPostProcessing(snapshot);
+            }
+        }
+        catch (Throwable e) {
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    public WorkspaceImporterResult onInitialize(
+        WorkspaceSnapshot snapshot,
+        GlobalNamingContextBuilder naming
     ) {
-      updateInternalModelSubtask(snapshot, builder, entitySource, naming)
+        CommonWorkspaceSyncConfig commonSyncConfig = snapshot.syncConfigs().stream()
+            .filter(CommonWorkspaceSyncConfig.class::isInstance)
+            .map(CommonWorkspaceSyncConfig.class::cast)
+            .findFirst()
+            .orElseThrow(IllegalStateException::new);
+        myCommonSyncConfig = commonSyncConfig;
+        JavaWorkspaceSyncConfig javaSyncConfig = snapshot.syncConfigs().stream()
+            .filter(JavaWorkspaceSyncConfig.class::isInstance)
+            .map(JavaWorkspaceSyncConfig.class::cast)
+            .findFirst()
+            .orElseThrow(IllegalStateException::new);
+        myJavaSyncConfig = javaSyncConfig;
+
+        int importDepth = commonSyncConfig.importDepth();
+        myModuleTargets = snapshot.targetGraph().findAllTargetsAtDepth(
+                importDepth,
+                importDepth < 0,
+                true
+            )
+            .map(it -> snapshot.targets().findTargetByKey(it, TargetLoadOptions.ALL))
+            .filter(Objects::nonNull)
+            .toList();
+        myTargets = myModuleTargets;
+        Function<OutputLocation, @Nullable Path> resolveLocation = locationResolver(myContext, snapshot);
+        Map<WorkspaceTargetKey, BuildTarget> allTargets = new LinkedHashMap<>();
+        snapshot.targets().allTargets().forEach(it -> allTargets.put(it.getKey(), it));
+        Map<WorkspaceTargetKey, BuildTarget> targetsToImport = new LinkedHashMap<>();
+        for (BuildTarget it : myModuleTargets) {
+            targetsToImport.put(it.getKey(), it);
+        }
+        myJvmResolved = new JvmBuildTargetResolver(
+            allTargets,
+            targetsToImport,
+            javaSyncConfig,
+            snapshot.repoMapping(),
+            resolveLocation,
+            execrootLocationResolver(myContext, snapshot)
+        ).resolveAll();
+
+        JvmImportPlan plan = new JvmImportPlan(myModuleTargets, myJvmResolved, resolveLocation);
+        myPlan = plan;
+        plan.declareNames(naming);
+
+        // TODO: check why is this even needed - can't we just write SdkEntity into the project workspace model
+        //  and avoid the global JDK table altogether?
+        Set<Path> uniqueJavaHomes = new LinkedHashSet<>();
+        for (JvmResolvedTarget it : myJvmResolved.values()) {
+            if (it.javaHome() != null) {
+                uniqueJavaHomes.add(it.javaHome());
+            }
+        }
+        myUniqueJavaHomes = uniqueJavaHomes;
+        if (!myUniqueJavaHomes.isEmpty()) {
+            myDefaultJdkName = JvmTargetEntitiesBuilder.projectNameToJdkName(
+                project.getBazelProjectName(myContext.project()),
+                myUniqueJavaHomes.iterator().next()
+            );
+        }
+        else {
+            Sdk sdk = SdkUtils.getProjectJdkOrMostRecentJdk(myContext.project());
+            myDefaultJdkName = sdk != null ? sdk.getName() : null;
+        }
+        return WorkspaceImporterResult.Success;
     }
-    return WorkspaceImporterResult.Success
-  }
 
-  fun onFinalize(snapshot: WorkspaceSnapshot): WorkspaceImporterResult {
-    return WorkspaceImporterResult.Success
-  }
-
-  suspend fun onPostProcessing(snapshot: WorkspaceSnapshot): WorkspaceImporterResult {
-    SdkUtils.cleanUpInvalidJdks(context.project)
-    uniqueJavaHomes.forEach {
-      SdkUtils.addJdkIfNeeded(
-        projectName = context.project.bazelProjectName,
-        javaHome = it,
-      )
+    public CompletableFuture<WorkspaceImporterResult> onWorkspaceApply(
+        WorkspaceSnapshot snapshot,
+        BazelModelBuilder builder, BazelEntitySource entitySource,
+        GlobalNamingContext naming,
+        TaskId taskId
+    ) {
+        return util.withSubtask(
+                myContext.taskConsole(),
+                taskId.subTask("update-internal-model"),
+                BazelJavaBackendLocalize.workspaceJavaImporterUpdateInternalModel(),
+                subtaskId -> updateInternalModelSubtask(snapshot, builder, entitySource, naming)
+            )
+            .thenApply(ignored -> WorkspaceImporterResult.Success);
     }
 
-    JavacConfiguration.getOptions(context.project, JavacConfiguration::class.java).ADDITIONAL_OPTIONS_OVERRIDE =
-      requireNotNull(this.javacOptions) {
-        "javacOptions is null but expected to be computed"
-      }
-    return WorkspaceImporterResult.Success
-  }
-
-  private suspend fun updateInternalModelSubtask(
-    snapshot: WorkspaceSnapshot,
-    builder: MutableEntityStorage,
-    entitySource: EntitySource,
-    naming: GlobalNamingContext,
-  ) {
-    val resolveLocation = locationResolver(context, snapshot)
-
-    val importContext = ImportContext(
-      plan = plan,
-      naming = naming,
-      jvmResolved = jvmResolved,
-      repoMapping = snapshot.repoMapping,
-      projectName = commonSyncConfig.projectName,
-      projectBasePath = commonSyncConfig.projectRootDir,
-      defaultJdkName = defaultJdkName,
-      testSourcesGlob = ProjectViewGlobSet.of(commonSyncConfig.projectRootDir, javaSyncConfig.testSourcesPatterns),
-      fileToTargets = snapshot.fileToTarget,
-      virtualFileUrlManager = context.vfuManager,
-      entitySource = entitySource,
-      excludeCompiledSourceCodeInsideJars = javaSyncConfig.excludeCompiledSourceCodeInsideJars,
-      currentCompiledSourceExcludeEntity = context.currentSnapshot
-        .entities<CompiledSourceCodeInsideJarExcludeEntity>()
-        .firstOrNull(),
-      resolveLocation = resolveLocation,
-      resolveExecrootLocation = execrootLocationResolver(context, snapshot),
-    )
-
-    bspTracer.spanBuilder("load.modules.ms").use {
-      JvmTargetEntitiesBuilder(importContext).writeAll(builder)
+    public WorkspaceImporterResult onFinalize(WorkspaceSnapshot snapshot) {
+        return WorkspaceImporterResult.Success;
     }
 
-    javacOptions = calculateAllJavacOptions(importContext)
-  }
+    public CompletableFuture<WorkspaceImporterResult> onPostProcessing(WorkspaceSnapshot snapshot) {
+        CompletableFuture<Void> result = SdkUtils.cleanUpInvalidJdks(myContext.project());
+        for (Path it : myUniqueJavaHomes) {
+            result = result.thenCompose(ignored -> SdkUtils.addJdkIfNeeded(
+                project.getBazelProjectName(myContext.project()),
+                it
+            ));
+        }
 
-  private fun locationResolver(context: WorkspaceImporterContext, snapshot: WorkspaceSnapshot): (OutputLocation) -> Path? {
-    val localRepositories = snapshot.repoMapping.getLocalRepositories()
-    return { context.outputResolver.resolve(it, localRepositories) }
-  }
-
-  private fun execrootLocationResolver(context: WorkspaceImporterContext, snapshot: WorkspaceSnapshot): (OutputLocation) -> Path? {
-    val localRepositories = snapshot.repoMapping.getLocalRepositories()
-    val resolver = DefaultOutputLocationResolver.createExecrootResolving(context.bazelInfo)
-    return { resolver.resolve(it, localRepositories) }
-  }
-
-  private fun calculateAllJavacOptions(ctx: ImportContext): HashMap<String, String> {
-    val result = HashMap<String, String>()
-    for (target in ctx.targets) {
-      val jvm = extractJvmBuildTarget(target) ?: continue
-      val options = jvm.javacOpts
-      if (options.isEmpty()) {
-        continue
-      }
-      if (options.size == 1 && options[0] == "-proc:none") {
-        continue
-      }
-      val moduleName = ctx.moduleNamesByKey[target.key] ?: continue
-      result[moduleName] = options.asList().joinToString(" ")
+        return result.thenApply(ignored -> {
+            // consulo: upstream sets JavacConfiguration.ADDITIONAL_OPTIONS_OVERRIDE here; Consulo keeps the javac options
+            // per module in the Java module extension, they are applied to the root models in updateInternalModelSubtask
+            Objects.requireNonNull(myJavacOptions, "javacOptions is null but expected to be computed");
+            return WorkspaceImporterResult.Success;
+        });
     }
-    return result
-  }
+
+    private CompletableFuture<Void> updateInternalModelSubtask(
+        WorkspaceSnapshot snapshot,
+        BazelModelBuilder builder,
+        BazelEntitySource entitySource,
+        GlobalNamingContext naming
+    ) {
+        Function<OutputLocation, @Nullable Path> resolveLocation = locationResolver(myContext, snapshot);
+        CommonWorkspaceSyncConfig commonSyncConfig = Objects.requireNonNull(myCommonSyncConfig);
+        JavaWorkspaceSyncConfig javaSyncConfig = Objects.requireNonNull(myJavaSyncConfig);
+
+        ImportContext importContext = new ImportContext(
+            Objects.requireNonNull(myPlan),
+            naming,
+            myJvmResolved,
+            snapshot.repoMapping(),
+            commonSyncConfig.projectName(),
+            commonSyncConfig.projectRootDir(),
+            myDefaultJdkName,
+            ProjectViewGlobSet.of(commonSyncConfig.projectRootDir(), javaSyncConfig.testSourcesPatterns()),
+            snapshot.fileToTarget(),
+            entitySource,
+            javaSyncConfig.excludeCompiledSourceCodeInsideJars(),
+            // consulo: upstream reads the entity from the current workspace model snapshot
+            BazelProjectModelService.getInstance(myContext.project()).getProjectData(CompiledSourceCodeInsideJarExcludeEntity.class),
+            resolveLocation,
+            execrootLocationResolver(myContext, snapshot),
+            null
+        );
+
+        // consulo: telemetry is not ported (bspTracer span "load.modules.ms")
+        return new JvmTargetEntitiesBuilder(importContext).writeAll(builder).thenRun(() -> {
+            Map<String, String> javacOptions = calculateAllJavacOptions(importContext);
+            myJavacOptions = javacOptions;
+            applyJavacOptions(builder, javacOptions);
+        });
+    }
+
+    // consulo: JavacConfiguration.ADDITIONAL_OPTIONS_OVERRIDE (module name -> javac options) does not exist,
+    // the options become the compiler arguments of the Java module extension of the module
+    private static void applyJavacOptions(BazelModelBuilder builder, Map<String, String> javacOptions) {
+        for (Map.Entry<String, String> entry : javacOptions.entrySet()) {
+            Module module = builder.findModule(entry.getKey());
+            if (module == null) {
+                continue;
+            }
+            JavaMutableModuleExtension<?> javaExtension = builder.getRootModel(module).getExtensionWithoutCheck(JavaMutableModuleExtension.class);
+            if (javaExtension != null) {
+                javaExtension.setCompilerArguments(ParametersListUtil.parse(entry.getValue()));
+            }
+        }
+    }
+
+    private static Function<OutputLocation, @Nullable Path> locationResolver(WorkspaceImporterContext context, WorkspaceSnapshot snapshot) {
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        return it -> context.outputResolver().resolve(it, localRepositories);
+    }
+
+    private static Function<OutputLocation, @Nullable Path> execrootLocationResolver(WorkspaceImporterContext context, WorkspaceSnapshot snapshot) {
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        OutputLocationResolver resolver = DefaultOutputLocationResolver.createExecrootResolving(context.bazelInfo());
+        return it -> resolver.resolve(it, localRepositories);
+    }
+
+    private static HashMap<String, String> calculateAllJavacOptions(ImportContext ctx) {
+        HashMap<String, String> result = new HashMap<>();
+        for (BuildTarget target : ctx.getTargets()) {
+            JvmBuildTarget jvm = JvmBuildTarget.extractJvmBuildTarget(target);
+            if (jvm == null) {
+                continue;
+            }
+            StringsCollection options = jvm.javacOpts();
+            if (options.isEmpty()) {
+                continue;
+            }
+            if (options.getSize() == 1 && options.get(0).equals("-proc:none")) {
+                continue;
+            }
+            String moduleName = ctx.getModuleNamesByKey().get(target.getKey());
+            if (moduleName == null) {
+                continue;
+            }
+            result.put(moduleName, String.join(" ", options.asList()));
+        }
+        return result;
+    }
 }

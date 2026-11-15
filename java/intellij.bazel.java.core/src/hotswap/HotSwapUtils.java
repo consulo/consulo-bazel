@@ -13,17 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.hotswap
+package org.jetbrains.bazel.hotswap;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.settings.bazel.bazelJVMProjectSettings
+import consulo.project.Project;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.settings.bazel.BazelJVMProjectSettings;
 
-/** Helper methods for HotSwapping  */
-internal object HotSwapUtils {
-  fun isHotSwapEligible(project: Project): Boolean =
-    project.isBazelProject &&
-      project.bazelJVMProjectSettings.hotSwapEnabled &&
-      !BazelFeatureFlags.fastBuildEnabled
+/**
+ * Helper methods for HotSwapping
+ */
+public final class HotSwapUtils {
+    private HotSwapUtils() {
+    }
+
+    public static boolean isHotSwapEligible(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project) &&
+            BazelJVMProjectSettings.getBazelJVMProjectSettings(project).hotSwapEnabled() &&
+            !BazelFeatureFlags.getFastBuildEnabled();
+    }
 }

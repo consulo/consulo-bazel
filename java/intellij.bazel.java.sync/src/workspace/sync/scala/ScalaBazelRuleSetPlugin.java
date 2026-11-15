@@ -1,17 +1,28 @@
-package org.jetbrains.bazel.sync.workspace.languages.scala
+package org.jetbrains.bazel.sync.workspace.languages.scala;
 
-import com.intellij.aspect.lib.Rules
-import org.jetbrains.bazel.util.BazelRuleSet
-import org.jetbrains.bazel.util.BazelRuleSetProvider
+import com.intellij.aspect.lib.Rules;
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.util.BazelRuleSetProvider;
+import org.jetbrains.bazel.util.BazelRuleSetProvider.BazelRuleSet;
 
-private val ScalaRuleSet = BazelRuleSet(
-  aspectLanguage = Rules.SCALA,
-  rulesetNames = listOf("rules_scala", "io_bazel_rules_scala"),
-  isBundled = false,
-  autoloadHints = listOf(),
-  hostLocations = listOf("https://github.com/bazel-contrib/rules_scala/"),
-)
+import java.util.List;
 
-internal class ScalaBazelRuleSetPlugin : BazelRuleSetProvider {
-  override fun ruleSets(): List<BazelRuleSet> = listOf(ScalaRuleSet)
+@ExtensionImpl
+public class ScalaBazelRuleSetPlugin implements BazelRuleSetProvider {
+    // consulo: upstream private top-level val ScalaRuleSet
+    private static final BazelRuleSet SCALA_RULE_SET = new BazelRuleSet(
+        Rules.SCALA,
+        List.of("rules_scala", "io_bazel_rules_scala"),
+        false,
+        List.of(),
+        List.of("https://github.com/bazel-contrib/rules_scala/")
+    );
+
+    public ScalaBazelRuleSetPlugin() {
+    }
+
+    @Override
+    public List<BazelRuleSet> ruleSets() {
+        return List.of(SCALA_RULE_SET);
+    }
 }

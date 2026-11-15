@@ -1,132 +1,246 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.debugger.engine.AsyncStacksUtils.addDebuggerAgent
-import com.intellij.execution.BeforeRunTask
-import com.intellij.execution.BeforeRunTaskProvider
-import com.intellij.execution.configurations.JavaParameters
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.components.service
-import com.intellij.openapi.progress.runBlockingMaybeCancellable
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.OrderEnumerator
-import com.intellij.openapi.roots.OrderRootType
-import com.intellij.openapi.util.Key
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.ide.progress.withBackgroundProgress
-import com.intellij.util.PathsList
-import com.intellij.util.text.SemVer
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.settings.bazel.bazelJVMProjectSettings
-import org.jetbrains.bazel.sync.includesKotlin
-import org.jetbrains.bazel.target.ModuleTargetService
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bsp.protocol.id
+import com.intellij.java.debugger.impl.engine.AsyncStacksUtils;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.dataContext.DataContext;
+import consulo.execution.BeforeRunFragment;
+import consulo.execution.BeforeRunTask;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.java.execution.configurations.OwnJavaParameters;
+import consulo.localize.LocalizeValue;
+import consulo.module.Module;
+import consulo.module.content.layer.OrderEnumerator;
+import consulo.project.Project;
+import consulo.ui.UIAccess;
+import consulo.ui.image.Image;
+import consulo.util.dataholder.Key;
+import consulo.util.lang.Pair;
+import consulo.util.lang.SemVer;
+import consulo.util.lang.StringUtil;
+import consulo.util.lang.ref.SimpleReference;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.PathsList;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.settings.bazel.BazelJVMProjectSettings;
+import org.jetbrains.bazel.sync.java.JavaLanguageClass;
+import org.jetbrains.bazel.target.ModuleTargetService;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-private const val PROVIDER_NAME = "KotlinCoroutineLibraryFinderBeforeRunTaskProvider"
+import java.util.ArrayList;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
-private val PROVIDER_ID = Key.create<KotlinCoroutineLibraryFinderBeforeRunTaskProvider.Task>(PROVIDER_NAME)
+// consulo: IntelliJ BeforeRunTaskProvider is Consulo's BeforeRunFragment (stepsBeforeRunProvider -> project @ExtensionImpl)
+@ExtensionImpl
+public class KotlinCoroutineLibraryFinderBeforeRunTaskProvider
+    implements BeforeRunFragment<KotlinCoroutineLibraryFinderBeforeRunTaskProvider.Task> {
+    private static final String PROVIDER_NAME = "KotlinCoroutineLibraryFinderBeforeRunTaskProvider";
 
-@ApiStatus.Internal
-class KotlinCoroutineLibraryFinderBeforeRunTaskProvider :
-  BeforeRunTaskProvider<KotlinCoroutineLibraryFinderBeforeRunTaskProvider.Task>() {
-  override fun getId(): Key<Task> = PROVIDER_ID
+    // consulo: Consulo before run tasks are identified by their state class, the key is kept for upstream callers
+    @SuppressWarnings("unused")
+    private static final Key<Task> PROVIDER_ID = Key.create(PROVIDER_NAME);
 
-  override fun getName(): String = PROVIDER_NAME
-
-  class Task : BeforeRunTask<Task>(PROVIDER_ID)
-
-  override fun createTask(runConfiguration: RunConfiguration): Task? {
-    if (runConfiguration !is BazelRunConfiguration) return null
-    val project = runConfiguration.project
-    if (!project.bazelJVMProjectSettings.enableKotlinCoroutineDebug) return null
-    return Task()
-  }
-
-  /**
-   * always return true for this task as it is just an add-on and should not block the debugging process
-   */
-  override fun executeTask(
-    context: DataContext,
-    configuration: RunConfiguration,
-    environment: ExecutionEnvironment,
-    task: Task,
-  ): Boolean {
-    val runConfiguration = BazelRunConfiguration.get(environment)
-    // skipping this task for non-debugging run config
-    if (environment.executor !is DefaultDebugExecutor) return true
-    val project = environment.project
-    val target = runConfiguration.targets.single()
-    val targetInfo = project.targetStorage.getTargetSummary(target) ?: return true
-    if (!targetInfo.kind.includesKotlin() || !targetInfo.kind.isExecutable) return true
-    runBlockingMaybeCancellable {
-      withBackgroundProgress(project, BazelPluginBundle.message("background.task.description.preparing.for.debugging.kotlin", target)) {
-        val result = project.findClassPathByTargetLabel(targetInfo.id)
-        val coroutinesJarPath = result.findLatestCoroutinesJarRootRelativePath() ?: return@withBackgroundProgress
-        calculateKotlinCoroutineParams(environment, coroutinesJarPath.path)
-      }
-    }
-    return true
-  }
-
-  private fun calculateKotlinCoroutineParams(environment: ExecutionEnvironment, coroutinesJarPath: String) {
-    val parameters = JavaParameters()
-    addDebuggerAgent(parameters, environment.project, false)
-    parameters.vmParametersList.add("-javaagent:${coroutinesJarPath}")
-    environment.getCopyableUserData(COROUTINE_JVM_FLAGS_KEY)
-      ?.set(parameters.vmParametersList.parameters)
-  }
-}
-
-internal fun retrieveKotlinCoroutineParams(environment: ExecutionEnvironment, project: Project): List<String> {
-  if (!project.bazelJVMProjectSettings.enableKotlinCoroutineDebug) return emptyList()
-  return environment.getCopyableUserData(COROUTINE_JVM_FLAGS_KEY)?.get() ?: emptyList()
-}
-
-internal fun attachCoroutinesDebuggerConnection(runConfiguration: RunConfigurationBase<*>) {
-  KotlinCoroutinesHelper.ep.extensionList.forEach { it.attachCoroutinesDebuggerConnection(runConfiguration.project, runConfiguration) }
-}
-
-private val MIN_COROUTINES_VERSION = SemVer.parseFromText("1.3.8")
-
-private fun Project.findClassPathByTargetLabel(label: Label): List<VirtualFile> =
-  service<ModuleTargetService>()
-    .findLegacyModulesByLabel(label = label)
-    .flatMap { module ->
-      val jars = PathsList()
-      OrderEnumerator
-        .orderEntries(module)
-        .recursively()
-        .withoutSdk()
-        .roots(OrderRootType.CLASSES)
-        .collectPaths(jars)
-      jars.virtualFiles
+    public KotlinCoroutineLibraryFinderBeforeRunTaskProvider() {
     }
 
-private fun List<VirtualFile>.findLatestCoroutinesJarRootRelativePath(): VirtualFile? {
-  val (path, version) = findLatestJarByName("kotlinx-coroutines-core-jvm")
-                        ?: findLatestJarByName("kotlin-coroutines-core")
-                        ?: return null
-  if (version < MIN_COROUTINES_VERSION) return null
-  return path
-}
+    @Override
+    public String getId() {
+        return PROVIDER_NAME;
+    }
 
-private fun List<VirtualFile>.findLatestJarByName(name: String): Pair<VirtualFile, SemVer>? {
-  return this
-    .mapNotNull { it.extractPathWithVersionBy(name) }
-    .maxByOrNull { (_, version) -> version }
-}
+    @Override
+    public LocalizeValue getName() {
+        return LocalizeValue.of(PROVIDER_NAME);
+    }
 
-private fun VirtualFile.extractPathWithVersionBy(expectedName: String): Pair<VirtualFile, SemVer>? {
-  val name = this.name
-  if (!name.contains(expectedName)) return null
-  val rawVersion = name.substringAfterLast("$expectedName-").substringBefore(".jar")
-  val version = SemVer.parseFromText(rawVersion) ?: return null
-  return this to version
+    // consulo: BeforeRunFragment requires an icon, upstream BeforeRunTaskProvider has none by default
+    @Override
+    public @Nullable Image getIcon(RunConfiguration configuration) {
+        return null;
+    }
+
+    @Override
+    public Class<Task> getStateClass() {
+        return Task.class;
+    }
+
+    // consulo: upstream BeforeRunTask<Task>(PROVIDER_ID); Consulo before run tasks are identified by their class
+    public static class Task extends BeforeRunTask {
+    }
+
+    @Override
+    public @Nullable Task createTask(RunConfiguration runConfiguration) {
+        if (!(runConfiguration instanceof BazelRunConfiguration bazelRunConfiguration)) {
+            return null;
+        }
+        Project project = bazelRunConfiguration.getProject();
+        if (!BazelJVMProjectSettings.getBazelJVMProjectSettings(project).enableKotlinCoroutineDebug()) {
+            return null;
+        }
+        return new Task();
+    }
+
+    // consulo: BeforeRunFragment.executeAsync() replaces executeTask()
+    @Override
+    public CompletableFuture<?> executeAsync(
+        UIAccess uiAccess,
+        DataContext context,
+        RunConfiguration configuration,
+        ExecutionEnvironment environment,
+        Task task
+    ) {
+        return executeTask(context, configuration, environment, task);
+    }
+
+    /**
+     * always return true for this task as it is just an add-on and should not block the debugging process
+     */
+    // consulo: upstream returns a Boolean after runBlockingMaybeCancellable { withBackgroundProgress { } }, here the future of it
+    public CompletableFuture<Boolean> executeTask(
+        DataContext context,
+        RunConfiguration configuration,
+        ExecutionEnvironment environment,
+        Task task
+    ) {
+        BazelRunConfiguration runConfiguration = BazelRunConfiguration.get(environment);
+        // skipping this task for non-debugging run config
+        if (!(environment.getExecutor() instanceof DefaultDebugExecutor)) {
+            return CompletableFuture.completedFuture(true);
+        }
+        Project project = environment.getProject();
+        List<Label> targets = runConfiguration.getTargets();
+        // consulo: Kotlin List.single()
+        if (targets.isEmpty()) {
+            throw new NoSuchElementException("List is empty.");
+        }
+        if (targets.size() != 1) {
+            throw new IllegalArgumentException("List has more than one element.");
+        }
+        Label target = targets.get(0);
+        BuildTarget targetInfo = TargetStorage.getTargetStorage(project).getTargetSummary(target);
+        if (targetInfo == null) {
+            return CompletableFuture.completedFuture(true);
+        }
+        if (!JavaLanguageClass.includesKotlin(targetInfo.getKind()) || !targetInfo.getKind().isExecutable()) {
+            return CompletableFuture.completedFuture(true);
+        }
+        // consulo: withBackgroundProgress -> Task.Backgroundable.queue
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        // consulo: the nested state class Task shadows consulo.application.progress.Task
+        LocalizeValue title = BazelPluginLocalize.backgroundTaskDescriptionPreparingForDebuggingKotlin(target);
+        consulo.application.progress.Task.Backgroundable.queue(project, title, indicator -> {
+            try {
+                List<VirtualFile> classPath = findClassPathByTargetLabel(project, BuildTarget.getId(targetInfo));
+                VirtualFile coroutinesJarPath = findLatestCoroutinesJarRootRelativePath(classPath);
+                if (coroutinesJarPath != null) {
+                    calculateKotlinCoroutineParams(environment, coroutinesJarPath.getPath());
+                }
+                result.complete(true);
+            }
+            catch (Throwable e) {
+                result.completeExceptionally(e);
+            }
+        });
+        return result;
+    }
+
+    private void calculateKotlinCoroutineParams(ExecutionEnvironment environment, String coroutinesJarPath) {
+        OwnJavaParameters parameters = new OwnJavaParameters();
+        AsyncStacksUtils.addDebuggerAgent(parameters, environment.getProject(), false);
+        parameters.getVMParametersList().add("-javaagent:" + coroutinesJarPath);
+        SimpleReference<List<String>> flags = environment.getCopyableUserData(JvmRunHandler.COROUTINE_JVM_FLAGS_KEY);
+        if (flags != null) {
+            flags.set(parameters.getVMParametersList().getParameters());
+        }
+    }
+
+    // consulo: upstream top-level functions of KotlinCoroutineLibraryFinderBeforeRunTaskProvider.kt
+
+    public static List<String> retrieveKotlinCoroutineParams(ExecutionEnvironment environment, Project project) {
+        if (!BazelJVMProjectSettings.getBazelJVMProjectSettings(project).enableKotlinCoroutineDebug()) {
+            return List.of();
+        }
+        SimpleReference<List<String>> flags = environment.getCopyableUserData(JvmRunHandler.COROUTINE_JVM_FLAGS_KEY);
+        List<String> value = flags == null ? null : flags.get();
+        return value == null ? List.of() : value;
+    }
+
+    public static void attachCoroutinesDebuggerConnection(RunConfigurationBase runConfiguration) {
+        for (KotlinCoroutinesHelper it : KotlinCoroutinesHelper.getEp()) {
+            it.attachCoroutinesDebuggerConnection(runConfiguration.getProject(), runConfiguration);
+        }
+    }
+
+    private static final SemVer MIN_COROUTINES_VERSION = Objects.requireNonNull(SemVer.parseFromText("1.3.8"));
+
+    private static List<VirtualFile> findClassPathByTargetLabel(Project receiver, Label label) {
+        List<VirtualFile> result = new ArrayList<>();
+        for (Module module : receiver.getInstance(ModuleTargetService.class).findLegacyModulesByLabel(/* label = */ label)) {
+            PathsList jars = new PathsList();
+            // consulo: OrderEnumerator.roots(OrderRootType.CLASSES) is classes()
+            OrderEnumerator
+                .orderEntries(module)
+                .recursively()
+                .withoutSdk()
+                .classes()
+                .collectPaths(jars);
+            result.addAll(jars.getVirtualFiles());
+        }
+        return result;
+    }
+
+    private static @Nullable VirtualFile findLatestCoroutinesJarRootRelativePath(List<VirtualFile> receiver) {
+        Pair<VirtualFile, SemVer> found = findLatestJarByName(receiver, "kotlinx-coroutines-core-jvm");
+        if (found == null) {
+            found = findLatestJarByName(receiver, "kotlin-coroutines-core");
+        }
+        if (found == null) {
+            return null;
+        }
+        VirtualFile path = found.getFirst();
+        SemVer version = found.getSecond();
+        if (version.compareTo(MIN_COROUTINES_VERSION) < 0) {
+            return null;
+        }
+        return path;
+    }
+
+    private static @Nullable Pair<VirtualFile, SemVer> findLatestJarByName(List<VirtualFile> receiver, String name) {
+        Pair<VirtualFile, SemVer> max = null;
+        for (VirtualFile it : receiver) {
+            Pair<VirtualFile, SemVer> pathWithVersion = extractPathWithVersionBy(it, name);
+            if (pathWithVersion != null && (max == null || pathWithVersion.getSecond().compareTo(max.getSecond()) > 0)) {
+                max = pathWithVersion;
+            }
+        }
+        return max;
+    }
+
+    private static @Nullable Pair<VirtualFile, SemVer> extractPathWithVersionBy(VirtualFile receiver, String expectedName) {
+        String name = receiver.getName();
+        if (!name.contains(expectedName)) {
+            return null;
+        }
+        String afterName = StringUtil.substringAfterLast(name, expectedName + "-");
+        // consulo: Kotlin substringAfterLast/substringBefore return the whole string when the delimiter is missing
+        String rawVersion = afterName == null ? name : afterName;
+        int jarIndex = rawVersion.indexOf(".jar");
+        if (jarIndex != -1) {
+            rawVersion = rawVersion.substring(0, jarIndex);
+        }
+        SemVer version = SemVer.parseFromText(rawVersion);
+        if (version == null) {
+            return null;
+        }
+        return Pair.create(receiver, version);
+    }
 }

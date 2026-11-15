@@ -1,17 +1,18 @@
-package org.jetbrains.bazel.fastbuild
+package org.jetbrains.bazel.fastbuild;
 
-import com.intellij.util.messages.Topic
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.TopicAPI;
 
-interface FastBuildStatusListener {
-  fun fastBuildStarted()
+@TopicAPI(ComponentScope.PROJECT)
+public interface FastBuildStatusListener {
+    void fastBuildStarted();
 
-  fun fastBuildFinished(fastBuildStatus: FastBuildStatus)
+    void fastBuildFinished(FastBuildStatus fastBuildStatus);
 
-  fun fastBuildTargetStarted()
+    void fastBuildTargetStarted();
 
-  fun fastBuildTargetFinished(fastBuildTargetStatus: FastBuildTargetStatus)
+    void fastBuildTargetFinished(FastBuildStatus.FastBuildTargetStatus fastBuildTargetStatus);
 
-  companion object {
-    val TOPIC: Topic<FastBuildStatusListener> = Topic(FastBuildStatusListener::class.java)
-  }
+    // consulo: Consulo topics are identified by the listener class
+    Class<FastBuildStatusListener> TOPIC = FastBuildStatusListener.class;
 }

@@ -1,91 +1,126 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.debugger.DebuggerManagerEx
-import com.intellij.debugger.engine.JavaDebugProcess
-import com.intellij.debugger.impl.DebuggerSession
-import com.intellij.execution.DefaultExecutionResult
-import com.intellij.execution.ExecutionException
-import com.intellij.execution.configurations.RunProfile
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.configurations.RunnerSettings
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.execution.runners.GenericProgramRunner
-import com.intellij.execution.ui.RunContentDescriptor
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.progress.ProcessCanceledException
-import com.intellij.xdebugger.XDebugProcess
-import com.intellij.xdebugger.XDebugProcessStarter
-import com.intellij.xdebugger.XDebugSession
-import com.intellij.xdebugger.XDebuggerManager
-import com.intellij.xdebugger.impl.XDebugSessionImpl
-import org.jdom.Element
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import java.util.concurrent.atomic.AtomicReference
+import com.intellij.java.debugger.impl.DebuggerManagerEx;
+import com.intellij.java.debugger.impl.DebuggerSession;
+import com.intellij.java.debugger.impl.DefaultDebugEnvironment;
+import com.intellij.java.debugger.impl.engine.DebugProcessImpl;
+import com.intellij.java.debugger.impl.engine.JavaDebugProcess;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.component.ProcessCanceledException;
+import consulo.execution.DefaultExecutionResult;
+import consulo.execution.ExecutionResult;
+import consulo.execution.configuration.RunProfile;
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.configuration.RunnerSettings;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.debug.XDebugProcess;
+import consulo.execution.debug.XDebugProcessStarter;
+import consulo.execution.debug.XDebugSession;
+import consulo.execution.debug.XDebuggerManager;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.execution.runner.GenericProgramRunner;
+import consulo.execution.ui.RunContentDescriptor;
+import consulo.process.ExecutionException;
+import consulo.project.Project;
+import org.jdom.Element;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class BazelJvmDebugRunner : GenericProgramRunner<BazelDebugRunnerSetting>() {
-  override fun getRunnerId(): String = "BazelJvmDebugRunner"
+import java.util.concurrent.atomic.AtomicReference;
 
-  override fun canRun(executorId: String, profile: RunProfile): Boolean {
-    // if target cannot be debugged, do not offer debugging it
-    if (executorId != DefaultDebugExecutor.EXECUTOR_ID) return false
-    if (profile !is BazelRunConfiguration) return false
-    if (profile.targets.size != 1) return false
-    return profile.handler is JvmRunHandler || profile.handler is JvmTestHandler
-  }
-
-  override fun doExecute(state: RunProfileState, environment: ExecutionEnvironment): RunContentDescriptor {
-    // cast should always succeed, because canRun(...) checks for a compatible profile
-    state as JvmDebuggableCommandLineState
-
-    val ex = AtomicReference<ExecutionException>()
-    val result = AtomicReference<RunContentDescriptor>()
-    val project = environment.project
-    ApplicationManager.getApplication().invokeAndWait {
-      val debugEnvironment = state.createDebugEnvironment(environment)
-      try {
-        val debuggerSession =
-          DebuggerManagerEx
-            .getInstanceEx(project)
-            .attachVirtualMachine(debugEnvironment)
-            ?: error("VM attachment failed")
-        val descriptor = XDebuggerManager.getInstance(project)
-          .newSessionBuilder(BspDebugProcessStarter(debuggerSession))
-          .environment(environment)
-          .startSession().runContentDescriptor
-        result.set(descriptor)
-      } catch (_: ProcessCanceledException) {
-        // ignore
-      } catch (e: ExecutionException) {
-        ex.set(e)
-      }
+@ExtensionImpl
+public class BazelJvmDebugRunner extends GenericProgramRunner<BazelJvmDebugRunner.BazelDebugRunnerSetting> {
+    @Override
+    public String getRunnerId() {
+        return "BazelJvmDebugRunner";
     }
-    return ex.get()?.let { throw it } ?: result.get()
-  }
-}
 
-@ApiStatus.Internal
-class BazelDebugRunnerSetting : RunnerSettings {
-  override fun readExternal(element: Element?) {
-    // empty settings, don't do anything
-  }
-
-  override fun writeExternal(element: Element?) {
-    // empty settings, don't do anything
-  }
-}
-
-private class BspDebugProcessStarter(private val debuggerSession: DebuggerSession) : XDebugProcessStarter() {
-  override fun start(session: XDebugSession): XDebugProcess {
-    val debugProcess = debuggerSession.process
-    val sessionImpl = session as XDebugSessionImpl
-    val executionResult = debugProcess.executionResult
-    sessionImpl.addExtraActions(*executionResult.actions)
-    (executionResult as? DefaultExecutionResult)?.let {
-      sessionImpl.addRestartActions(*it.restartActions)
+    @Override
+    public boolean canRun(String executorId, RunProfile profile) {
+        // if target cannot be debugged, do not offer debugging it
+        if (!executorId.equals(DefaultDebugExecutor.EXECUTOR_ID)) {
+            return false;
+        }
+        if (!(profile instanceof BazelRunConfiguration configuration)) {
+            return false;
+        }
+        if (configuration.getTargets().size() != 1) {
+            return false;
+        }
+        BazelRunHandler handler = configuration.getHandler();
+        return handler instanceof JvmRunHandler || handler instanceof JvmTestHandler;
     }
-    return JavaDebugProcess.create(session, debuggerSession)
-  }
+
+    @Override
+    protected @Nullable RunContentDescriptor doExecute(RunProfileState state, ExecutionEnvironment environment) throws ExecutionException {
+        // cast should always succeed, because canRun(...) checks for a compatible profile
+        JvmDebuggableCommandLineState debuggableState = (JvmDebuggableCommandLineState) state;
+
+        AtomicReference<@Nullable ExecutionException> ex = new AtomicReference<>();
+        AtomicReference<@Nullable RunContentDescriptor> result = new AtomicReference<>();
+        Project project = environment.getProject();
+        Application.get().invokeAndWait(() -> {
+            DefaultDebugEnvironment debugEnvironment = debuggableState.createDebugEnvironment(environment);
+            try {
+                DebuggerSession debuggerSession =
+                    DebuggerManagerEx
+                        .getInstanceEx(project)
+                        .attachVirtualMachine(debugEnvironment);
+                if (debuggerSession == null) {
+                    throw new IllegalStateException("VM attachment failed");
+                }
+                // consulo: upstream newSessionBuilder(starter).environment(environment).startSession()
+                RunContentDescriptor descriptor = XDebuggerManager.getInstance(project)
+                    .startSession(environment, new BspDebugProcessStarter(debuggerSession))
+                    .getRunContentDescriptor();
+                result.set(descriptor);
+            }
+            catch (ProcessCanceledException ignored) {
+                // ignore
+            }
+            catch (ExecutionException e) {
+                ex.set(e);
+            }
+        });
+        ExecutionException exception = ex.get();
+        if (exception != null) {
+            throw exception;
+        }
+        return result.get();
+    }
+
+    // consulo: upstream public top-level class of BazelJvmDebugRunner.kt
+    public static class BazelDebugRunnerSetting implements RunnerSettings {
+        @Override
+        public void readExternal(Element element) {
+            // empty settings, don't do anything
+        }
+
+        @Override
+        public void writeExternal(Element element) {
+            // empty settings, don't do anything
+        }
+    }
+
+    private static class BspDebugProcessStarter implements XDebugProcessStarter {
+        private final DebuggerSession myDebuggerSession;
+
+        BspDebugProcessStarter(DebuggerSession debuggerSession) {
+            myDebuggerSession = debuggerSession;
+        }
+
+        @Override
+        public XDebugProcess start(XDebugSession session) {
+            DebugProcessImpl debugProcess = myDebuggerSession.getProcess();
+            // consulo: XDebugSession has addExtraActions/addRestartActions, no cast to XDebugSessionImpl is needed
+            ExecutionResult executionResult = debugProcess.getExecutionResult();
+            session.addExtraActions(executionResult.getActions());
+            if (executionResult instanceof DefaultExecutionResult defaultExecutionResult) {
+                session.addRestartActions(defaultExecutionResult.getRestartActions());
+            }
+            return JavaDebugProcess.create(session, myDebuggerSession);
+        }
+    }
 }

@@ -1,26 +1,33 @@
-package org.jetbrains.bazel.languages.starlark.bazel
+// consulo: package org.jetbrains.bazel.languages.starlark.bazel is also a package of consulo.bazel.base (JPMS split package)
+package org.jetbrains.bazel.languages.starlark.bazel.java;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.annotation.component.ExtensionImpl;
 
-@ApiStatus.Internal
-interface StarlarkClassParametersProvider {
-  companion object {
-    val EP_NAME: ExtensionPointName<StarlarkClassParametersProvider> =
-      ExtensionPointName.create("org.jetbrains.bazel.starlarkClassParametersProvider")
-  }
+import java.util.List;
 
-  fun getClassnameParameters(): List<String>
+// consulo: upstream EP_NAME (org.jetbrains.bazel.starlarkClassParametersProvider) ->
+//   Application.get().getExtensionList(StarlarkClassParametersProvider.class)
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface StarlarkClassParametersProvider {
+    List<String> getClassnameParameters();
 }
 
-internal class DefaultStarlarkClassParametersProvider : StarlarkClassParametersProvider {
-  override fun getClassnameParameters(): List<String> =
-    listOf(
-      "classname",
-      "main_class",
-      "test_class",
-      "processor_class",
-      "genclass",
-      "tag_class",
-    )
+@ExtensionImpl
+class DefaultStarlarkClassParametersProvider implements StarlarkClassParametersProvider {
+    public DefaultStarlarkClassParametersProvider() {
+    }
+
+    @Override
+    public List<String> getClassnameParameters() {
+        return List.of(
+            "classname",
+            "main_class",
+            "test_class",
+            "processor_class",
+            "genclass",
+            "tag_class"
+        );
+    }
 }

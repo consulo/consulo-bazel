@@ -1,34 +1,43 @@
-package org.jetbrains.bazel.sync.workspace.languages.java.sourceRoot.prefix
+package org.jetbrains.bazel.sync.workspace.languages.java.sourceRoot.prefix;
 
-import org.jetbrains.annotations.ApiStatus
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Predicate;
 
-@ApiStatus.Internal
-object SourcePatternEval {
-  data class PatternEvalResult<T>(val included: List<T>, val excluded: List<T>)
-
-  fun <T> eval(
-    items: Iterable<T>,
-    includes: List<(item: T) -> Boolean>,
-    excludes: List<(item: T) -> Boolean>,
-  ): PatternEvalResult<T> {
-    val matched = mutableListOf<T>()
-    val unmatched = mutableListOf<T>()
-    for (item in items) {
-      val excluded = if (includes.isEmpty()) {
-        false
-      } else {
-        excludes.any { it(item) }
-      }
-      if (excluded) {
-        unmatched.add(item)
-      } else {
-        if (includes.any { it(item) }) {
-          matched.add(item)
-        } else {
-          unmatched.add(item)
-        }
-      }
+public final class SourcePatternEval {
+    private SourcePatternEval() {
     }
-    return PatternEvalResult(matched, unmatched)
-  }
+
+    public record PatternEvalResult<T>(List<T> included, List<T> excluded) {
+    }
+
+    public static <T> PatternEvalResult<T> eval(
+        Iterable<T> items,
+        List<Predicate<T>> includes,
+        List<Predicate<T>> excludes
+    ) {
+        List<T> matched = new ArrayList<>();
+        List<T> unmatched = new ArrayList<>();
+        for (T item : items) {
+            boolean excluded;
+            if (includes.isEmpty()) {
+                excluded = false;
+            }
+            else {
+                excluded = excludes.stream().anyMatch(it -> it.test(item));
+            }
+            if (excluded) {
+                unmatched.add(item);
+            }
+            else {
+                if (includes.stream().anyMatch(it -> it.test(item))) {
+                    matched.add(item);
+                }
+                else {
+                    unmatched.add(item);
+                }
+            }
+        }
+        return new PatternEvalResult<>(matched, unmatched);
+    }
 }

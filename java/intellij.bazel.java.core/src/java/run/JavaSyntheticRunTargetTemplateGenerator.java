@@ -1,36 +1,51 @@
-package org.jetbrains.bazel.java.run
+package org.jetbrains.bazel.java.run;
 
-import com.intellij.lang.jvm.util.JvmClassUtil
-import com.intellij.psi.PsiClass
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.PsiTreeUtil
-import org.intellij.lang.annotations.Language
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.synthetic.MainClassSyntheticRunTargetTemplateGenerator
-import org.jetbrains.bazel.sync.isJvmTarget
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
+import com.intellij.java.language.JavaLanguage;
+import com.intellij.java.language.psi.PsiClass;
+import com.intellij.java.language.psi.util.ClassUtil;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.run.synthetic.MainClassSyntheticRunTargetTemplateGenerator;
+import org.jetbrains.bazel.sync.java.JavaLanguageClass;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class JavaSyntheticRunTargetTemplateGenerator : MainClassSyntheticRunTargetTemplateGenerator() {
-  override fun isSupported(target: BuildTarget): Boolean = target.kind.isJvmTarget()
+@ExtensionImpl
+public class JavaSyntheticRunTargetTemplateGenerator extends MainClassSyntheticRunTargetTemplateGenerator {
+    @Override
+    public boolean isSupported(BuildTarget target) {
+        return JavaLanguageClass.isJvmTarget(target.getKind());
+    }
 
-  override fun getMainClass(element: PsiElement): String? {
-    val psiClass = PsiTreeUtil.getNonStrictParentOfType(element, PsiClass::class.java) ?: return null
-    return JvmClassUtil.getJvmClassName(psiClass)
-  }
+    @Override
+    protected @Nullable String getMainClass(PsiElement element) {
+        PsiClass psiClass = PsiTreeUtil.getNonStrictParentOfType(element, PsiClass.class);
+        if (psiClass == null) {
+            return null;
+        }
+        // consulo: JvmClassUtil.getJvmClassName -> ClassUtil.getJVMClassName
+        return ClassUtil.getJVMClassName(psiClass);
+    }
 
-  override fun getBuildContent(target: BuildTarget, syntheticTarget: String, mainClass: String): String {
-    @Language("starlark") val build = """
-      load("@rules_java//java:defs.bzl", "java_binary")
+    @Override
+    protected String getBuildContent(BuildTarget target, String syntheticTarget, String mainClass) {
+        // consulo: upstream @Language("starlark") annotated local
+        String build = """
+            load("@rules_java//java:defs.bzl", "java_binary")
 
-      java_binary(
-        name = "$syntheticTarget",
-        main_class = "${mainClass}",
-        runtime_deps = ["${target.id}"],
-      )
-    """.trimIndent()
-    return build
-  }
+            java_binary(
+              name = "%s",
+              main_class = "%s",
+              runtime_deps = ["%s"],
+            )""".formatted(syntheticTarget, mainClass, BuildTarget.getId(target));
+        return build;
+    }
 
+    // consulo: language-bound extension (upstream XML language="JAVA")
+    @Override
+    public Language getLanguage() {
+        return JavaLanguage.INSTANCE;
+    }
 }

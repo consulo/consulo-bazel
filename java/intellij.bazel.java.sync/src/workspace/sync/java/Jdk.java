@@ -1,5 +1,6 @@
-package org.jetbrains.bazel.sync.workspace.languages.java
+package org.jetbrains.bazel.sync.workspace.languages.java;
 
-import java.nio.file.Path
+import java.nio.file.Path;
 
-internal data class Jdk(val javaHome: Path)
+public record Jdk(Path javaHome) {
+}

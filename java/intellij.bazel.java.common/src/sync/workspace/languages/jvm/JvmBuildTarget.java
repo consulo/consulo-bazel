@@ -1,98 +1,157 @@
-package org.jetbrains.bazel.sync.workspace.languages.jvm
+package org.jetbrains.bazel.sync.workspace.languages.jvm;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.DependencyLabel
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.BuildTargetData
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bsp.protocol.StrictDependencyCheckedType
-import org.jetbrains.bsp.protocol.StringsCollection
-import org.jetbrains.bsp.protocol.extractData
+import org.jetbrains.bazel.label.DependencyLabel;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.BuildTarget.StrictDependencyCheckedType;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jetbrains.bsp.protocol.StringsCollection;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-data class JvmBuildTarget(
-  val javacOpts: StringsCollection = StringsCollection.EMPTY,
-  val binaryOutputs: OutputLocationCollection = OutputLocationCollection.EMPTY,
+import java.util.List;
+import java.util.Map;
 
-  val environmentVariables: Map<String, String> = mapOf(),
-  val mainClass: String? = null,
-  val jvmArgs: StringsCollection = StringsCollection.EMPTY,
-  val programArgs: StringsCollection = StringsCollection.EMPTY,
-  val resolvedResourceStripPrefix: OutputLocation? = null,
-  val outputInterfaceJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val outputSourceJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val generatedJars: List<JvmOutputs> = emptyList(),
-  val jdepsJars: List<JdepsJar> = emptyList(),
-  val intellijPluginJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val hasExecutableInfo: Boolean = false,
-  val checkStrictDependencies: StrictDependencyCheckedType = StrictDependencyCheckedType.OFF,
-) : BuildTargetData
+// consulo: the other top-level declarations of upstream JvmBuildTarget.kt are nested here
+public record JvmBuildTarget(
+    StringsCollection javacOpts,
+    OutputLocationCollection binaryOutputs,
 
-@ApiStatus.Internal
-data class KotlinBuildTarget(
-  val languageVersion: String?,
-  val apiVersion: String?,
-  val kotlincOptions: StringsCollection,
-  val associates: List<WorkspaceTargetKey>,
-  val moduleName: String? = null,
-  val stdlibJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val stdlibInferredSourceJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val exportedCompilerPluginTargetsList: List<WorkspaceTargetKey> = emptyList(),
-  val kspSourceJars: OutputLocationCollection = OutputLocationCollection.EMPTY
-) : BuildTargetData
+    Map<String, String> environmentVariables,
+    @Nullable String mainClass,
+    StringsCollection jvmArgs,
+    StringsCollection programArgs,
+    @Nullable OutputLocation resolvedResourceStripPrefix,
+    OutputLocationCollection outputInterfaceJars,
+    OutputLocationCollection outputSourceJars,
+    List<JvmOutputs> generatedJars,
+    List<JdepsJar> jdepsJars,
+    OutputLocationCollection intellijPluginJars,
+    boolean hasExecutableInfo,
+    StrictDependencyCheckedType checkStrictDependencies
+) implements BuildTargetData {
+    // consulo: upstream default values of all parameters
+    public JvmBuildTarget() {
+        this(
+            StringsCollection.EMPTY,
+            OutputLocationCollection.EMPTY,
+            Map.of(),
+            null,
+            StringsCollection.EMPTY,
+            StringsCollection.EMPTY,
+            null,
+            OutputLocationCollection.EMPTY,
+            OutputLocationCollection.EMPTY,
+            List.of(),
+            List.of(),
+            OutputLocationCollection.EMPTY,
+            false,
+            StrictDependencyCheckedType.OFF
+        );
+    }
 
-@ApiStatus.Internal
-data class ScalaBuildTarget(
-  val scalaVersion: String,
-  val sdkJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val scalacOptions: StringsCollection,
-  val scalatestClasspathTargets: List<Label> = emptyList(),
-) : BuildTargetData
+    public record KotlinBuildTarget(
+        @Nullable String languageVersion,
+        @Nullable String apiVersion,
+        StringsCollection kotlincOptions,
+        List<WorkspaceTargetKey> associates,
+        @Nullable String moduleName,
+        OutputLocationCollection stdlibJars,
+        OutputLocationCollection stdlibInferredSourceJars,
+        List<WorkspaceTargetKey> exportedCompilerPluginTargetsList,
+        OutputLocationCollection kspSourceJars
+    ) implements BuildTargetData {
+        // consulo: upstream default values of moduleName, stdlibJars, stdlibInferredSourceJars,
+        // exportedCompilerPluginTargetsList and kspSourceJars
+        public KotlinBuildTarget(
+            @Nullable String languageVersion,
+            @Nullable String apiVersion,
+            StringsCollection kotlincOptions,
+            List<WorkspaceTargetKey> associates
+        ) {
+            this(
+                languageVersion,
+                apiVersion,
+                kotlincOptions,
+                associates,
+                null,
+                OutputLocationCollection.EMPTY,
+                OutputLocationCollection.EMPTY,
+                List.of(),
+                OutputLocationCollection.EMPTY
+            );
+        }
+    }
 
-@ApiStatus.Internal
-data class JvmOutputs(
-  val binaryJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val interfaceJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val sourceJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-)
+    public record ScalaBuildTarget(
+        String scalaVersion,
+        OutputLocationCollection sdkJars,
+        StringsCollection scalacOptions,
+        List<Label> scalatestClasspathTargets
+    ) implements BuildTargetData {
+    }
 
-@ApiStatus.Internal
-data class JdepsJar(
-  val syntheticLabel: Label,
-  val jar: OutputLocation,
-)
+    public record JvmOutputs(
+        OutputLocationCollection binaryJars,
+        OutputLocationCollection interfaceJars,
+        OutputLocationCollection sourceJars
+    ) {
+        // consulo: upstream default values of all parameters
+        public JvmOutputs() {
+            this(OutputLocationCollection.EMPTY, OutputLocationCollection.EMPTY, OutputLocationCollection.EMPTY);
+        }
+    }
 
-@ApiStatus.Internal
-data class JavaProviderData(
-  val fullCompileJars: OutputLocationCollection = OutputLocationCollection.EMPTY,
-  val hasApiGeneratingPlugins: Boolean = false,
-) : BuildTargetData
+    public record JdepsJar(
+        Label syntheticLabel,
+        OutputLocation jar
+    ) {
+    }
 
-@ApiStatus.Internal
-data class JavaToolchainData(
-  val sourceVersion: String? = null,
-  val targetVersion: String? = null,
-  val javaHome: OutputLocation? = null,
-  val bootClasspathJavaHome: OutputLocation? = null,
-  val isExecConfig: Boolean = false,
-) : BuildTargetData
+    public record JavaProviderData(
+        OutputLocationCollection fullCompileJars,
+        boolean hasApiGeneratingPlugins
+    ) implements BuildTargetData {
+        // consulo: upstream default values of all parameters
+        public JavaProviderData() {
+            this(OutputLocationCollection.EMPTY, false);
+        }
+    }
 
-@ApiStatus.Internal
-sealed interface JvmDependency {
-  val dependency: DependencyLabel
+    public record JavaToolchainData(
+        @Nullable String sourceVersion,
+        @Nullable String targetVersion,
+        @Nullable OutputLocation javaHome,
+        @Nullable OutputLocation bootClasspathJavaHome,
+        boolean isExecConfig
+    ) implements BuildTargetData {
+        // consulo: upstream default values of all parameters
+        public JavaToolchainData() {
+            this(null, null, null, null, false);
+        }
+    }
 
-  data class LibraryDependency(override val dependency: DependencyLabel) : JvmDependency
-  data class ModuleDependency(override val dependency: DependencyLabel) : JvmDependency
+    public sealed interface JvmDependency permits JvmDependency.LibraryDependency, JvmDependency.ModuleDependency {
+        DependencyLabel dependency();
+
+        record LibraryDependency(DependencyLabel dependency) implements JvmDependency {
+        }
+
+        record ModuleDependency(DependencyLabel dependency) implements JvmDependency {
+        }
+    }
+
+    public static @Nullable JvmBuildTarget extractJvmBuildTarget(BuildTarget target) {
+        return BuildTarget.extractData(target, JvmBuildTarget.class);
+    }
+
+    public static @Nullable ScalaBuildTarget extractScalaBuildTarget(BuildTarget target) {
+        return BuildTarget.extractData(target, ScalaBuildTarget.class);
+    }
+
+    public static @Nullable KotlinBuildTarget extractKotlinBuildTarget(BuildTarget target) {
+        return BuildTarget.extractData(target, KotlinBuildTarget.class);
+    }
 }
-
-@ApiStatus.Internal
-fun extractJvmBuildTarget(target: BuildTarget): JvmBuildTarget? = target.extractData()
-
-@ApiStatus.Internal
-fun extractScalaBuildTarget(target: BuildTarget): ScalaBuildTarget? = target.extractData()
-
-@ApiStatus.Internal
-fun extractKotlinBuildTarget(target: BuildTarget): KotlinBuildTarget? = target.extractData()

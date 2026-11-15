@@ -1,133 +1,167 @@
-package org.jetbrains.bazel.ui.notifications
+// consulo: package org.jetbrains.bazel.ui.notifications is also a package of consulo.bazel.base (JPMS split package)
+package org.jetbrains.bazel.ui.notifications.java;
 
-import com.intellij.codeInsight.AttachSourcesProvider
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.WriteAction
-import com.intellij.openapi.application.invokeAndWaitIfNeeded
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.LibraryOrderEntry
-import com.intellij.openapi.roots.OrderRootType
-import com.intellij.openapi.roots.libraries.Library
-import com.intellij.openapi.roots.ui.configuration.LibrarySourceRootDetectorUtil
-import com.intellij.openapi.util.ActionCallback
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.workspace.jps.entities.LibraryEntity
-import com.intellij.platform.workspace.jps.entities.LibraryRootTypeId
-import com.intellij.psi.PsiFile
-import com.intellij.util.ThrowableRunnable
-import com.intellij.workspaceModel.ide.legacyBridge.findLibraryBridge
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.isBazelProject
+import com.intellij.java.impl.codeInsight.AttachSourcesProvider;
+import com.intellij.java.impl.openapi.roots.ui.configuration.PathUIUtils;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.application.WriteAction;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.content.base.SourcesOrderRootType;
+import consulo.content.library.Library;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import consulo.module.content.layer.orderEntry.LibraryOrderEntry;
+import consulo.project.Project;
+import consulo.ui.Component;
+import consulo.ui.event.ComponentEvent;
+import consulo.util.lang.Pair;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.ui.notifications.BazelBalloonNotifier;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * See https://github.com/bazelbuild/bazel/issues/10692
  */
-internal class BazelAttachSourcesProvider() : AttachSourcesProvider {
-  private class BazelAttachSourcesAction() : AttachSourcesProvider.AttachSourcesAction {
-    override fun getName(): String = BazelPluginBundle.message("sources.attach.action.text")
+@ExtensionImpl
+public class BazelAttachSourcesProvider implements AttachSourcesProvider {
+    // consulo: ActionCallback -> CompletableFuture (Consulo AttachSourcesAction API)
+    private static class BazelAttachSourcesAction implements AttachSourcesProvider.AttachSourcesAction {
+        BazelAttachSourcesAction() {
+        }
 
-    override fun getBusyText(): String = BazelPluginBundle.message("sources.pending.text")
+        @Override
+        public LocalizeValue getName() {
+            return BazelPluginLocalize.sourcesAttachActionText();
+        }
 
-    override fun perform(orderEntries: List<LibraryOrderEntry>): ActionCallback
-    = performInternal(orderEntries.mapNotNull { it.library }.distinct())
+        @Override
+        public LocalizeValue getBusyText() {
+            return BazelPluginLocalize.sourcesPendingText();
+        }
 
-    override fun perform(libraryEntities: Collection<LibraryEntity>, project: Project): ActionCallback {
-      val currentSnapshot = WorkspaceModel.getInstance(project).currentSnapshot
-      return performInternal(libraryEntities.mapNotNull { it.findLibraryBridge(currentSnapshot) })
-    }
+        @Override
+        public CompletableFuture<?> perform(List<LibraryOrderEntry> orderEntries, ComponentEvent<Component> e) {
+            List<Library> libraries = new ArrayList<>(new LinkedHashSet<>(
+                orderEntries.stream().map(LibraryOrderEntry::getLibrary).filter(Objects::nonNull).toList()
+            ));
+            return performInternal(libraries);
+        }
 
-    private fun performInternal(libraries: List<Library>): ActionCallback {
-      return ActionCallback().apply {
-        ApplicationManager.getApplication().executeOnPooledThread {
-          try {
-            val (libsWithEmptySources, libsWithSources) = libraries.partition { library ->
-              library.getFiles(OrderRootType.SOURCES).isEmpty()
-            }
-            if (libsWithEmptySources.isNotEmpty()) {
-              val missingSources = libsWithEmptySources.joinToString(",\n") { it.name.orEmpty() }
-              showError(missingSources)
-            }
-            val modelsToCommit = mutableListOf<Pair<Library.ModifiableModel, Array<out VirtualFile>>>()
-            libsWithSources.forEach { library ->
-              val availableSources = library.getFiles(OrderRootType.SOURCES)
-              library.obtainModelWithAddedSources(availableSources)?.let {
-                modelsToCommit.add(it)
-              }
-            }
-            if (modelsToCommit.isNotEmpty()) {
-              WriteAction.run(
-                ThrowableRunnable {
-                  modelsToCommit.forEach { (model, roots) ->
-                    roots.forEach {
-                      model.addRoot(it.url, OrderRootType.SOURCES)
+        // consulo: upstream perform(libraryEntities: Collection<LibraryEntity>, project) is the workspace model variant,
+        //   not used by Consulo
+
+        private CompletableFuture<?> performInternal(List<Library> libraries) {
+            CompletableFuture<@Nullable Void> result = new CompletableFuture<>();
+            Application.get().executeOnPooledThread(() -> {
+                try {
+                    List<Library> libsWithEmptySources = new ArrayList<>();
+                    List<Library> libsWithSources = new ArrayList<>();
+                    for (Library library : libraries) {
+                        if (library.getFiles(SourcesOrderRootType.ID).length == 0) {
+                            libsWithEmptySources.add(library);
+                        }
+                        else {
+                            libsWithSources.add(library);
+                        }
                     }
-                    model.commit()
-                  }
-                  setDone()
-                },
-              )
-            } else {
-              setDone()
+                    if (!libsWithEmptySources.isEmpty()) {
+                        String missingSources = libsWithEmptySources.stream()
+                            .map(it -> Objects.requireNonNullElse(it.getName(), ""))
+                            .collect(Collectors.joining(",\n"));
+                        showError(missingSources);
+                    }
+                    List<Pair<Library.ModifiableModel, VirtualFile[]>> modelsToCommit = new ArrayList<>();
+                    for (Library library : libsWithSources) {
+                        VirtualFile[] availableSources = library.getFiles(SourcesOrderRootType.ID);
+                        Pair<Library.ModifiableModel, VirtualFile[]> it = obtainModelWithAddedSources(library, availableSources);
+                        if (it != null) {
+                            modelsToCommit.add(it);
+                        }
+                    }
+                    if (!modelsToCommit.isEmpty()) {
+                        // consulo: WriteAction.run -> WriteAction.runAndWait (we are on a pooled thread)
+                        WriteAction.runAndWait(() -> {
+                            for (Pair<Library.ModifiableModel, VirtualFile[]> pair : modelsToCommit) {
+                                Library.ModifiableModel model = pair.getFirst();
+                                for (VirtualFile it : pair.getSecond()) {
+                                    model.addRoot(it.getUrl(), SourcesOrderRootType.ID);
+                                }
+                                model.commit();
+                            }
+                            result.complete(null);
+                        });
+                    }
+                    else {
+                        result.complete(null);
+                    }
+                }
+                catch (Exception e) {
+                    result.completeExceptionally(e);
+                }
+            });
+            return result;
+        }
+
+        private void showError(String target) {
+            BazelBalloonNotifier.error(
+                BazelPluginLocalize.sourcesFilesNotResolved(),
+                BazelPluginLocalize.errorMessageFailedToResolveSources0(target)
+            );
+        }
+
+        private static @Nullable Pair<Library.ModifiableModel, VirtualFile[]> obtainModelWithAddedSources(
+            Library receiver,
+            VirtualFile[] availableSources
+        ) {
+            // consulo: invokeAndWaitIfNeeded { LibrarySourceRootDetectorUtil.scanAndSelectDetectedJavaSourceRoots(null, sources) } ->
+            //   PathUIUtils.scanAndSelectDetectedJavaSourceRoots (asynchronous in Consulo), started on the UI thread and awaited
+            VirtualFile[] sourceRoots =
+                Application.get().getLastUIAccess()
+                    .giveAsync(() -> PathUIUtils.scanAndSelectDetectedJavaSourceRoots(null, null, availableSources))
+                    .thenCompose(Function.identity())
+                    .join();
+            if (sourceRoots.length == 0) {
+                return null;
             }
-          } catch (e: Exception) {
-            reject(e.message)
-          }
+            return Pair.create(receiver.getModifiableModel(), sourceRoots);
         }
-      }
     }
 
+    // consulo: upstream getLibrariesActions(libraryEntities: Collection<LibraryEntity>, psiFile) is the workspace model
+    //   variant, not used by Consulo; containBazelSourcesForLibraries(libraries: Collection<LibraryEntity>) is dropped with it
 
-    private fun showError(target: String) {
-      BazelBalloonNotifier.error(
-        BazelPluginBundle.message("sources.files.not.resolved"),
-        BazelPluginBundle.message("error.message.failed.to.resolve.sources.0", target),
-      )
-    }
-
-    private fun Library.obtainModelWithAddedSources(availableSources: Array<VirtualFile>): Pair<Library.ModifiableModel, Array<out VirtualFile>>? {
-      val sourceRoots =
-        invokeAndWaitIfNeeded {
-          LibrarySourceRootDetectorUtil.scanAndSelectDetectedJavaSourceRoots(null, availableSources)
+    @Override
+    public Collection<AttachSourcesProvider.AttachSourcesAction> getActions(
+        List<LibraryOrderEntry> orderEntries,
+        PsiFile psiFile
+    ) {
+        Project project = orderEntries.stream()
+            .map(it -> it.getOwnerModule().getProject())
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElseThrow();
+        if (org.jetbrains.bazel.config.project.isBazelProject(project) && containsBazelSourcesForEntries(orderEntries)) {
+            return List.of(new BazelAttachSourcesAction());
         }
-      if (sourceRoots.isEmpty()) return null
-      return Pair(modifiableModel, sourceRoots)
+        else {
+            return List.of();
+        }
     }
-  }
 
-  override fun getLibrariesActions(
-    libraryEntities: Collection<LibraryEntity>,
-    psiFile: PsiFile
-  ): Collection<AttachSourcesProvider.AttachSourcesAction> {
-    val project = psiFile.project
-
-    return if (project.isBazelProject && containBazelSourcesForLibraries(libraryEntities)) {
-      listOf(BazelAttachSourcesAction())
-    } else {
-      emptyList()
-    }
-  }
-
-  override fun getActions(
-    orderEntries: MutableList<out LibraryOrderEntry>,
-    psiFile: PsiFile,
-  ): List<AttachSourcesProvider.AttachSourcesAction> {
-    val project = orderEntries.firstNotNullOf { it.ownerModule.project }
-    return if (project.isBazelProject && containsBazelSourcesForEntries(orderEntries)) {
-      listOf(BazelAttachSourcesAction())
-    } else {
-      emptyList()
-    }
-  }
-
-  private fun containBazelSourcesForLibraries(libraries: Collection<LibraryEntity>): Boolean {
-    return libraries.asSequence()
-      .flatMap { it.roots }
-      .any { it.type == LibraryRootTypeId.SOURCES }
-  }
-
-  private fun containsBazelSourcesForEntries(orderEntries: List<LibraryOrderEntry>): Boolean =
-    orderEntries.any {
-      it.library?.getFiles(OrderRootType.SOURCES)?.isNotEmpty() == true
+    private boolean containsBazelSourcesForEntries(List<LibraryOrderEntry> orderEntries) {
+        return orderEntries.stream().anyMatch(it -> {
+            Library library = it.getLibrary();
+            return library != null && library.getFiles(SourcesOrderRootType.ID).length != 0;
+        });
     }
 }

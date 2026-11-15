@@ -13,156 +13,224 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.hotswap
+package org.jetbrains.bazel.hotswap;
 
-import com.intellij.debugger.DebuggerManagerEx
-import com.intellij.debugger.JavaDebuggerBundle
-import com.intellij.debugger.impl.DebuggerSession
-import com.intellij.debugger.impl.HotSwapFile
-import com.intellij.debugger.impl.HotSwapManager
-import com.intellij.debugger.ui.HotSwapProgressImpl
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.PathManager
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.runBlockingCancellable
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
-import com.intellij.xdebugger.impl.hotswap.HotSwapStatusNotificationManager
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.StandardCopyOption
-import java.util.jar.JarFile
-import kotlin.io.path.ExperimentalPathApi
-import kotlin.io.path.createTempDirectory
-import kotlin.io.path.deleteRecursively
+import com.intellij.java.debugger.impl.DebuggerManagerEx;
+import com.intellij.java.debugger.impl.DebuggerSession;
+import com.intellij.java.debugger.impl.HotSwapFile;
+import com.intellij.java.debugger.impl.HotSwapManager;
+import com.intellij.java.debugger.impl.ui.HotSwapProgressImpl;
+import com.intellij.java.debugger.localize.JavaDebuggerLocalize;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.Application;
+import consulo.application.progress.ProgressManager;
+import consulo.application.progress.Task;
+import consulo.bazel.core.BazelNotificationGroupContributor;
+import consulo.component.ProcessCanceledException;
+import consulo.container.boot.ContainerPathManager;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.project.ui.notification.NotificationService;
+import consulo.util.collection.MultiMap;
+import consulo.util.io.FileUtil;
+import consulo.util.lang.StringUtil;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 
-internal class BazelHotSwapManagerImpl(private val project: Project) : BazelHotSwapManager {
-  @OptIn(ExperimentalPathApi::class)
-  override suspend fun hotswap(environment: BazelHotSwapManager.HotSwapEnvironment): Unit = with(environment) {
-    if (sessions.isEmpty()) return@with
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.stream.Collectors;
 
-    val tempRoot = Path.of(PathManager.getTempPath())
-    val tempDir = createTempDirectory(tempRoot, "class_files_")
-    val diff = JarFileManifest.diffJarManifests(oldManifest = oldManifest, newManifest = newManifest)
-    val localClassFiles = copyClassFilesLocally(tempDir, diff)
-    val hotSwapClassFiles = localClassFiles.mapValues { entry -> HotSwapFile(entry.value.toFile()) }
+@ServiceImpl
+@Singleton
+public class BazelHotSwapManagerImpl implements BazelHotSwapManager {
+    private final Project myProject;
 
-    LOG.info(
-      "hotswap: found ${diff.perJarModifiedFiles.size()} jar files with changed entries after compilation\n" +
-      diff.perJarModifiedFiles.entrySet()
-        .map { "  ${it.key}: ${it.value.sorted().joinToString(" ")}" }
-        .sorted()
-        .joinToString("\n"),
-    )
-    if (hotSwapClassFiles.isNotEmpty()) {
-      val progress = withContext(Dispatchers.EDT) {
-        HotSwapProgressImpl(project)
-      }
+    @Inject
+    public BazelHotSwapManagerImpl(Project project) {
+        myProject = project;
+    }
 
-      try {
-        ProgressManager.getInstance().runProcess(
-          {
-            LOG.info("hotswap: redefining ${hotSwapClassFiles.size} classes: " + hotSwapClassFiles.keys.joinToString(" "))
-            HotSwapManager.reloadModifiedClasses(
-              sessions.associateWith { hotSwapClassFiles },
-              progress,
-            )
+    @Override
+    public CompletableFuture<?> hotswap(BazelHotSwapManager.HotSwapEnvironment environment) {
+        List<DebuggerSession> sessions = environment.getSessions();
+        if (sessions.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
 
-            runBlockingCancellable {
-              HotSwapHook.EP_NAME.extensionList.forEach { hotSwapHook ->
-                hotSwapHook.onHotSwap(sessions)
-              }
+        Path tempDir;
+        Map<String, HotSwapFile> hotSwapClassFiles = new LinkedHashMap<>();
+        JarFileManifest.Diff diff;
+        try {
+            Path tempRoot = Path.of(ContainerPathManager.get().getTempPath());
+            tempDir = Files.createTempDirectory(tempRoot, "class_files_");
+            diff = JarFileManifest.diffJarManifests(environment.getOldManifest(), environment.getNewManifest());
+            Map<String, Path> localClassFiles = copyClassFilesLocally(tempDir, diff);
+            for (Map.Entry<String, Path> entry : localClassFiles.entrySet()) {
+                // consulo: HotSwapFile takes a Path
+                hotSwapClassFiles.put(entry.getKey(), new HotSwapFile(entry.getValue()));
             }
-
-            listener?.onSuccess(sessions)
-          },
-          progress.progressIndicator,
-        )
-      }
-      catch (e: CancellationException) {
-        listener?.onCancel(sessions)
-        throw e
-      }
-      catch (e: Exception) {
-        listener?.onFailure(sessions)
-        LOG.error("Unable to hotswap", e)
-      }
-      finally {
-        progress.finished()
-        withContext(Dispatchers.EDT) {
-          Disposer.dispose(progress.progressIndicator as Disposable)
         }
-        tempDir.deleteRecursively()
-      }
-    }
-    else {
-      if (!isAutoRun) {
-        val message = JavaDebuggerBundle.message("status.hotswap.uptodate")
-        val notification = NotificationGroupManager.getInstance().getNotificationGroup("HotSwap Messages")
-          .createNotification(message, NotificationType.INFORMATION)
-        HotSwapStatusNotificationManager.getInstance(project).trackNotification(notification)
-        notification.notify(project)
-      }
-      listener?.onNothingToReload(sessions)
-    }
-  }
-
-  override fun getCurrentDebugSessions(): List<DebuggerSession> {
-    return DebuggerManagerEx.getInstanceEx(project)
-      .sessions
-      .filter { it.isAttached && it.process.canRedefineClasses() }
-  }
-
-  /**
-   * Given a per-jar map of .class files, extracts them locally and returns a map from qualified
-   * class name to File, suitable for [HotSwapManager].
-   */
-  private fun copyClassFilesLocally(tempDir: Path, manifestDiff: JarFileManifest.Diff): Map<String, Path> {
-    val map = HashMap<String, Path>()
-    for (jar in manifestDiff.perJarModifiedFiles.keySet()) {
-      val classes = manifestDiff.perJarModifiedFiles.get(jar)
-        .filter { it.endsWith(".class") }
-      map.putAll(
-        copyClassFilesLocally(
-          tempDir,
-          jar,
-          classes,
-        ),
-      )
-    }
-    return map
-  }
-
-  private fun copyClassFilesLocally(
-    destination: Path,
-    jar: Path,
-    classes: Collection<String>,
-  ): Map<String, Path> {
-    val map = mutableMapOf<String, Path>()
-    JarFile(jar.toFile()).use { jarFile ->
-      for (path in classes) {
-        val entry = jarFile.getJarEntry(path)
-                    ?: error("")
-        val f = destination.resolve(path.replace('/', '-'))
-        jarFile.getInputStream(entry).use { inputStream ->
-          Files.copy(inputStream, f, StandardCopyOption.REPLACE_EXISTING)
+        catch (IOException | UncheckedIOException e) {
+            return CompletableFuture.failedFuture(e);
         }
-        map[deriveQualifiedClassName(path)] = f
-      }
-    }
-    return map
-  }
 
-  /** Derive the fully qualified class name from the path inside the jar.  */
-  private fun deriveQualifiedClassName(path: String): String =
-    path.removeSuffix(".class").replace('/', '.')
+        LOG.info(
+            "hotswap: found " + diff.perJarModifiedFiles().size() + " jar files with changed entries after compilation\n" +
+                diff.perJarModifiedFiles().entrySet().stream()
+                    .map(it -> "  " + it.getKey() + ": " + it.getValue().stream().sorted().collect(Collectors.joining(" ")))
+                    .sorted()
+                    .collect(Collectors.joining("\n"))
+        );
+        if (!hotSwapClassFiles.isEmpty()) {
+            // consulo: HotSwapProgressImpl needs the ProgressIndicator of a running task (upstream creates a
+            // BackgroundableProcessIndicator on the EDT and runs ProgressManager.runProcess with it), so the reload runs in a
+            // Task.Backgroundable that owns (and disposes) the indicator
+            CompletableFuture<Void> result = new CompletableFuture<>();
+            Task.Backgroundable.queue(myProject, JavaDebuggerLocalize.progressHotSwapTitle(), indicator -> {
+                HotSwapProgressImpl progress = new HotSwapProgressImpl(myProject, indicator);
+
+                try {
+                    ProgressManager.getInstance().runProcess(
+                        () -> {
+                            LOG.info(
+                                "hotswap: redefining " + hotSwapClassFiles.size() + " classes: " +
+                                    String.join(" ", hotSwapClassFiles.keySet())
+                            );
+                            Map<DebuggerSession, Map<String, HotSwapFile>> sessionMap = new LinkedHashMap<>();
+                            for (DebuggerSession session : sessions) {
+                                sessionMap.put(session, hotSwapClassFiles);
+                            }
+                            HotSwapManager.reloadModifiedClasses(
+                                sessionMap,
+                                progress
+                            );
+
+                            // consulo: upstream runBlockingCancellable { }
+                            for (HotSwapHook hotSwapHook : Application.get().getExtensionList(HotSwapHook.class)) {
+                                hotSwapHook.onHotSwap(sessions).join();
+                            }
+
+                            // TODO consulo: HotSwapStatusListener is missing in Consulo
+                            // listener?.onSuccess(sessions)
+                        },
+                        progress.getProgressIndicator()
+                    );
+                    result.complete(null);
+                }
+                catch (CancellationException | ProcessCanceledException e) {
+                    // TODO consulo: HotSwapStatusListener is missing in Consulo
+                    // listener?.onCancel(sessions)
+                    result.completeExceptionally(e);
+                }
+                catch (Exception e) {
+                    // TODO consulo: HotSwapStatusListener is missing in Consulo
+                    // listener?.onFailure(sessions)
+                    LOG.error("Unable to hotswap", e);
+                    result.complete(null);
+                }
+                finally {
+                    progress.finished();
+                    // consulo: the indicator belongs to the Task.Backgroundable, Consulo disposes it
+                    // withContext(Dispatchers.EDT) { Disposer.dispose(progress.progressIndicator as Disposable) }
+                    FileUtil.delete(tempDir);
+                }
+            });
+            return result;
+        }
+        else {
+            if (!environment.isAutoRun()) {
+                // consulo: the "HotSwap Messages" group of consulo-java (HotSwapProgressImpl.NOTIFICATION_GROUP) is not public
+                // TODO consulo: HotSwapStatusNotificationManager.getInstance(project).trackNotification(notification) is missing
+                NotificationService.getInstance()
+                    .newInfo(BazelNotificationGroupContributor.BAZEL)
+                    .content(JavaDebuggerLocalize.statusHotswapUptodate())
+                    .notify(myProject);
+            }
+            // TODO consulo: HotSwapStatusListener is missing in Consulo
+            // listener?.onNothingToReload(sessions)
+            return CompletableFuture.completedFuture(null);
+        }
+    }
+
+    @Override
+    public List<DebuggerSession> getCurrentDebugSessions() {
+        List<DebuggerSession> result = new ArrayList<>();
+        for (DebuggerSession it : DebuggerManagerEx.getInstanceEx(myProject).getSessions()) {
+            if (it.isAttached() && it.getProcess().canRedefineClasses()) {
+                result.add(it);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Given a per-jar map of .class files, extracts them locally and returns a map from qualified
+     * class name to File, suitable for {@link HotSwapManager}.
+     */
+    private Map<String, Path> copyClassFilesLocally(Path tempDir, JarFileManifest.Diff manifestDiff) throws IOException {
+        Map<String, Path> map = new HashMap<>();
+        MultiMap<Path, String> perJarModifiedFiles = manifestDiff.perJarModifiedFiles();
+        for (Path jar : perJarModifiedFiles.keySet()) {
+            List<String> classes = new ArrayList<>();
+            for (String it : perJarModifiedFiles.get(jar)) {
+                if (it.endsWith(".class")) {
+                    classes.add(it);
+                }
+            }
+            map.putAll(
+                copyClassFilesLocally(
+                    tempDir,
+                    jar,
+                    classes
+                )
+            );
+        }
+        return map;
+    }
+
+    private Map<String, Path> copyClassFilesLocally(
+        Path destination,
+        Path jar,
+        Collection<String> classes
+    ) throws IOException {
+        Map<String, Path> map = new LinkedHashMap<>();
+        try (JarFile jarFile = new JarFile(jar.toFile())) {
+            for (String path : classes) {
+                JarEntry entry = jarFile.getJarEntry(path);
+                if (entry == null) {
+                    throw new IllegalStateException("");
+                }
+                Path f = destination.resolve(path.replace('/', '-'));
+                try (InputStream inputStream = jarFile.getInputStream(entry)) {
+                    Files.copy(inputStream, f, StandardCopyOption.REPLACE_EXISTING);
+                }
+                map.put(deriveQualifiedClassName(path), f);
+            }
+        }
+        return map;
+    }
+
+    /**
+     * Derive the fully qualified class name from the path inside the jar.
+     */
+    private String deriveQualifiedClassName(String path) {
+        return StringUtil.trimEnd(path, ".class").replace('/', '.');
+    }
+
+    private static final Logger LOG = Logger.getInstance(BazelHotSwapManagerImpl.class);
 }
-
-private val LOG = logger<BazelHotSwapManagerImpl>()

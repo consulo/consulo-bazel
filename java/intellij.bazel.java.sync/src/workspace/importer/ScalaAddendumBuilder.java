@@ -1,38 +1,38 @@
-package org.jetbrains.bazel.workspace.importer
+package org.jetbrains.bazel.workspace.importer;
 
-import com.intellij.platform.workspace.jps.entities.ModuleEntity
-import com.intellij.platform.workspace.jps.entities.modifyModuleEntity
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.impl.url.toVirtualFileUrl
-import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.languages.jvm.ScalaBuildTarget
-import org.jetbrains.bazel.workspacemodel.entities.ScalaAddendumEntity
-import org.jetbrains.bazel.workspacemodel.entities.scalaAddendumEntity
-import org.jetbrains.bsp.protocol.OutputLocation
-import java.nio.file.Path
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.module.Module;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget.ScalaBuildTarget;
+import org.jetbrains.bazel.workspacemodel.entities.ScalaAddendumEntity;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jspecify.annotations.Nullable;
+
+import java.nio.file.Path;
+import java.util.function.Function;
 
 // RC: replaces `ScalaAddendumEntityUpdater`; the old `ScalaAddendum` wrapper is dropped,
 // we go straight from `ScalaBuildTarget` to `ScalaAddendumEntity`
-@ApiStatus.Internal
-object ScalaAddendumBuilder {
-  fun write(
-    scalaBuildTarget: ScalaBuildTarget?,
-    resolveLocation: (OutputLocation) -> Path?,
-    parentModuleEntity: ModuleEntity,
-    virtualFileUrlManager: VirtualFileUrlManager,
-    storage: MutableEntityStorage,
-  ) {
-    val target = scalaBuildTarget ?: return
-    val entity =
-      ScalaAddendumEntity(
-        entitySource = parentModuleEntity.entitySource,
-        compilerVersion = target.scalaVersion,
-        scalacOptions = target.scalacOptions.asList(),
-        sdkClasspaths = target.sdkJars.resolvePaths(resolveLocation).map { it.toVirtualFileUrl(virtualFileUrlManager) },
-      )
-    storage.modifyModuleEntity(parentModuleEntity) {
-      this.scalaAddendumEntity = entity
+public final class ScalaAddendumBuilder {
+    private ScalaAddendumBuilder() {
     }
-  }
+
+    // consulo: the ScalaAddendumEntity data is attached to its module with BazelModelBuilder.putModuleData
+    public static void write(
+        @Nullable ScalaBuildTarget scalaBuildTarget,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        Module parentModuleEntity,
+        BazelModelBuilder storage
+    ) {
+        ScalaBuildTarget target = scalaBuildTarget;
+        if (target == null) {
+            return;
+        }
+        ScalaAddendumEntity entity =
+            new ScalaAddendumEntity(
+                target.scalaVersion(),
+                target.scalacOptions().asList(),
+                JvmTargetEntitiesBuilder.resolvePaths(target.sdkJars(), resolveLocation).stream().map(BuilderUtils::toVirtualFileUrl).toList()
+            );
+        storage.putModuleData(parentModuleEntity, ScalaAddendumEntity.class, entity);
+    }
 }

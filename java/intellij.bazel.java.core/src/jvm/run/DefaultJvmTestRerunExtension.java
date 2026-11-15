@@ -1,40 +1,65 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.execution.testframework.AbstractTestProxy
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.java.ui.gutters.getTestFilter
-import org.jetbrains.bazel.run.BazelTestFilterRerunExtension
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.testing.TEST_CASE_PREFIX
-import org.jetbrains.bazel.testing.TEST_SUITE_PREFIX
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.test.AbstractTestProxy;
+import org.jetbrains.bazel.java.ui.gutters.BazelJavaRunConfigurationProducer;
+import org.jetbrains.bazel.run.BazelTestRerunExtension;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.testing.java.BazelJavaTestLocationHintProvider;
+import org.jspecify.annotations.Nullable;
 
-internal class DefaultJvmTestRerunExtension : BazelTestFilterRerunExtension() {
-  override fun isApplicable(configuration: BazelRunConfiguration): Boolean = configuration.handler is JvmTestHandler
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
-  override fun getTestFilter(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): String? = jvmTestFilterFromTests(tests)
-}
-
-@ApiStatus.Internal
-fun jvmTestFilterFromTests(tests: List<AbstractTestProxy>): String? =
-  tests
-    .mapNotNull { it.locationUrl?.let(::jvmTestFilterFromLocationUrl) }
-    .distinct()
-    .joinToString("|")
-    .ifEmpty { null }
-
-/**
- * Reads back a location hint written by [org.jetbrains.bazel.testing.BazelJavaTestLocationHintProvider],
- * e.g., `java:suite://com.example.Outer$Inner` or `java:test://com.example.Outer$Inner/testName`, and turns it into a test filter.
- * @see org.jetbrains.bazel.java.ui.gutters.BazelJavaRunConfigurationProducer.getGutterAction
- */
-@ApiStatus.Internal
-fun jvmTestFilterFromLocationUrl(locationUrl: String): String? {
-  val body =
-    when {
-      locationUrl.startsWith(TEST_SUITE_PREFIX) -> locationUrl.removePrefix(TEST_SUITE_PREFIX)
-      locationUrl.startsWith(TEST_CASE_PREFIX) -> locationUrl.removePrefix(TEST_CASE_PREFIX)
-      else -> return null
+@ExtensionImpl(order = "last")
+public class DefaultJvmTestRerunExtension extends BazelTestRerunExtension.BazelTestFilterRerunExtension {
+    @Override
+    public boolean isApplicable(BazelRunConfiguration configuration) {
+        return configuration.getHandler() instanceof JvmTestHandler;
     }
-  val classAndMethod = body.split("/")
-  return getTestFilter(className = classAndMethod[0], methodName = classAndMethod.getOrNull(1))
+
+    @Override
+    public @Nullable String getTestFilter(BazelRunConfiguration configuration, List<AbstractTestProxy> tests) {
+        return jvmTestFilterFromTests(tests);
+    }
+
+    // consulo: upstream top-level functions of DefaultJvmTestRerunExtension.kt
+
+    public static @Nullable String jvmTestFilterFromTests(List<AbstractTestProxy> tests) {
+        Set<String> filters = new LinkedHashSet<>();
+        for (AbstractTestProxy it : tests) {
+            String locationUrl = it.getLocationUrl();
+            String filter = locationUrl == null ? null : jvmTestFilterFromLocationUrl(locationUrl);
+            if (filter != null) {
+                filters.add(filter);
+            }
+        }
+        String result = String.join("|", filters);
+        return result.isEmpty() ? null : result;
+    }
+
+    /**
+     * Reads back a location hint written by {@link BazelJavaTestLocationHintProvider},
+     * e.g., {@code java:suite://com.example.Outer$Inner} or {@code java:test://com.example.Outer$Inner/testName}, and turns it into a test filter.
+     *
+     * @see org.jetbrains.bazel.java.ui.gutters.BazelJavaRunConfigurationProducer#getGutterAction
+     */
+    public static @Nullable String jvmTestFilterFromLocationUrl(String locationUrl) {
+        String body;
+        if (locationUrl.startsWith(BazelJavaTestLocationHintProvider.TEST_SUITE_PREFIX)) {
+            body = locationUrl.substring(BazelJavaTestLocationHintProvider.TEST_SUITE_PREFIX.length());
+        }
+        else if (locationUrl.startsWith(BazelJavaTestLocationHintProvider.TEST_CASE_PREFIX)) {
+            body = locationUrl.substring(BazelJavaTestLocationHintProvider.TEST_CASE_PREFIX.length());
+        }
+        else {
+            return null;
+        }
+        String[] classAndMethod = body.split("/", -1);
+        return BazelJavaRunConfigurationProducer.getTestFilter(
+            /* className = */ classAndMethod[0],
+            /* methodName = */ classAndMethod.length > 1 ? classAndMethod[1] : null
+        );
+    }
 }

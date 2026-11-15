@@ -1,54 +1,99 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.execution.Executor
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.executors.DefaultRunExecutor
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.AllRuleTargets
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.HasRunWithBazel
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.executor.DefaultRunExecutor;
+import consulo.execution.executor.Executor;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.RunWithBazel;
 
-@ApiStatus.Internal
-interface RunWithScriptPathExtension {
-  /**
-   * Return `true` if `bazel run --script_path=foo //foo && ./foo` should be used instead of calling Bazel directly
-   * for this [executor] and [configuration].
-   * @see org.jetbrains.bazel.jvm.run.ScriptPathBeforeRunTaskProvider
-   */
-  fun shouldRunWithScriptPath(executor: Executor, configuration: BazelRunConfiguration): Boolean
+import java.util.List;
 
-  companion object {
-    fun shouldRunWithScriptPath(executor: Executor, configuration: BazelRunConfiguration): Boolean =
-      // Because `bazel run` only supports one target, so does `bazel run --script_path`
-      configuration.targets.size == 1 && configuration.targets.none { it.target is AllRuleTargets } &&
-      ep.extensionList.any { it.shouldRunWithScriptPath(executor, configuration) }
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface RunWithScriptPathExtension {
+    /**
+     * Return {@code true} if {@code bazel run --script_path=foo //foo && ./foo} should be used instead of calling Bazel directly
+     * for this {@code executor} and {@code configuration}.
+     *
+     * @see org.jetbrains.bazel.jvm.run.ScriptPathBeforeRunTaskProvider
+     */
+    boolean shouldRunWithScriptPath(Executor executor, BazelRunConfiguration configuration);
 
-    private val ep: ExtensionPointName<RunWithScriptPathExtension> = ExtensionPointName("org.jetbrains.bazel.runWithScriptPathExtension")
-  }
+    // consulo: upstream companion object; a static interface method cannot have the signature of the abstract method above, so the
+    // companion is kept as a nested class: RunWithScriptPathExtension.Companion.shouldRunWithScriptPath(executor, configuration)
+    final class Companion {
+        private Companion() {
+        }
+
+        public static boolean shouldRunWithScriptPath(Executor executor, BazelRunConfiguration configuration) {
+            // Because `bazel run` only supports one target, so does `bazel run --script_path`
+            List<Label> targets = configuration.getTargets();
+            if (targets.size() != 1) {
+                return false;
+            }
+            for (Label it : targets) {
+                if (it.target() instanceof Label.AllRuleTargets) {
+                    return false;
+                }
+            }
+            for (RunWithScriptPathExtension it : getEp()) {
+                if (it.shouldRunWithScriptPath(executor, configuration)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static List<RunWithScriptPathExtension> getEp() {
+            return Application.get().getExtensionList(RunWithScriptPathExtension.class);
+        }
+    }
 }
 
 /**
- * If [HasRunWithBazel.runWithBazel] was set to `false` by the user, use --script_path instead of `bazel run/test` with [DefaultRunExecutor]
+ * If {@link RunWithBazel.HasRunWithBazel#getRunWithBazel()} was set to {@code false} by the user, use --script_path instead of
+ * {@code bazel run/test} with {@link DefaultRunExecutor}
  */
-internal class DefaultRunWithScriptPathExtension : RunWithScriptPathExtension {
-  override fun shouldRunWithScriptPath(
-    executor: Executor,
-    configuration: BazelRunConfiguration,
-  ): Boolean =
-    executor is DefaultRunExecutor && (configuration.handler?.state as? HasRunWithBazel)?.runWithBazel == false
+@ExtensionImpl
+class DefaultRunWithScriptPathExtension implements RunWithScriptPathExtension {
+    public DefaultRunWithScriptPathExtension() {
+    }
+
+    @Override
+    public boolean shouldRunWithScriptPath(
+        Executor executor,
+        BazelRunConfiguration configuration
+    ) {
+        BazelRunHandler handler = configuration.getHandler();
+        return executor instanceof DefaultRunExecutor
+            && handler != null
+            && handler.getState() instanceof RunWithBazel.HasRunWithBazel hasRunWithBazel
+            && !hasRunWithBazel.getRunWithBazel();
+    }
 }
 
 /**
  * Always run with --script_path when debugging, because:
  * - With remote execution, our Java debug port will be open on the remote server instead of locally
- * - `--script_path` doesn't hold Bazel's lock, allowing hotswap together with debug.
- *   This is impossible with plain `bazel run` as you can't run `bazel build` in parallel.
- * - Calling `bazel run` may involve compilation, causing debugger attachment to time out.
+ * - {@code --script_path} doesn't hold Bazel's lock, allowing hotswap together with debug.
+ * This is impossible with plain {@code bazel run} as you can't run {@code bazel build} in parallel.
+ * - Calling {@code bazel run} may involve compilation, causing debugger attachment to time out.
  */
-internal class DebugRunWithScriptPathExtension : RunWithScriptPathExtension {
-  override fun shouldRunWithScriptPath(
-    executor: Executor,
-    configuration: BazelRunConfiguration,
-  ): Boolean = executor is DefaultDebugExecutor
+@ExtensionImpl
+class DebugRunWithScriptPathExtension implements RunWithScriptPathExtension {
+    public DebugRunWithScriptPathExtension() {
+    }
+
+    @Override
+    public boolean shouldRunWithScriptPath(
+        Executor executor,
+        BazelRunConfiguration configuration
+    ) {
+        return executor instanceof DefaultDebugExecutor;
+    }
 }

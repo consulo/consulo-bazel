@@ -1,155 +1,210 @@
-package org.jetbrains.bazel.inspections
+package org.jetbrains.bazel.inspections;
 
-import com.intellij.codeInsight.multiverse.CodeInsightContext
-import com.intellij.codeInsight.multiverse.CodeInsightContextManager
-import com.intellij.codeInsight.multiverse.ModuleContext
-import com.intellij.codeInsight.multiverse.codeInsightContext
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.ProblemHighlightType
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.lang.jvm.JvmClass
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectFileIndex
-import com.intellij.openapi.roots.libraries.LibraryContext
-import com.intellij.platform.backend.workspace.workspaceModel
-import com.intellij.psi.JavaElementVisitor
-import com.intellij.psi.JavaPsiFacade
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiJavaCodeReferenceElement
-import com.intellij.psi.PsiJavaFile
-import com.intellij.psi.PsiReference
-import com.intellij.util.containers.sequenceOfNotNull
-import com.intellij.workspaceModel.ide.legacyBridge.findLibraryEntity
-import com.intellij.workspaceModel.ide.legacyBridge.findModuleEntity
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.repomapping.toApparentLabelOrThis
-import org.jetbrains.bazel.workspacemodel.entities.BazelModuleExtensionEntity
-import org.jetbrains.bazel.workspacemodel.entities.bazelLibraryExtension
-import org.jetbrains.bazel.workspacemodel.entities.bazelModuleExtension
-import org.jetbrains.bazel.workspacemodel.entities.targetKey
-import org.jetbrains.bsp.protocol.StrictDependencyCheckedType
+import com.intellij.java.language.JavaLanguage;
+import com.intellij.java.language.jvm.JvmClass;
+import com.intellij.java.language.psi.JavaElementVisitor;
+import com.intellij.java.language.psi.JavaPsiFacade;
+import com.intellij.java.language.psi.PsiClass;
+import com.intellij.java.language.psi.PsiJavaCodeReferenceElement;
+import com.intellij.java.language.psi.PsiJavaFile;
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.java.localize.JavaInspectionsLocalize;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.ProblemHighlightType;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiReference;
+import consulo.localize.LocalizeValue;
+import consulo.module.Module;
+import consulo.module.content.ProjectFileIndex;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.workspacemodel.entities.extensions;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.BazelModuleExtensionEntity;
+import org.jetbrains.bsp.protocol.BuildTarget.StrictDependencyCheckedType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class JavaStrictDependenciesInspection : LocalInspectionTool() {
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 
-  override fun buildVisitor(
-    holder: ProblemsHolder,
-    isOnTheFly: Boolean,
-  ): PsiElementVisitor {
-    val psiFile = (holder.file as? PsiJavaFile) ?: return PsiElementVisitor.EMPTY_VISITOR
-    val bazelModuleExtension = bazelModuleExtension(psiFile) ?: return PsiElementVisitor.EMPTY_VISITOR
+// consulo: registration of the upstream <localInspection> (language, shortName, groupKey, key, enabledByDefault, level)
+@ExtensionImpl
+public class JavaStrictDependenciesInspection extends LocalInspectionTool {
 
-    val moduleLabel = bazelModuleExtension.targetKey.label
-    val strictDependenciesCheck = bazelModuleExtension.strictDependencies.check
-    val strictDependencies = bazelModuleExtension.strictDependencies.labels.toSet()
-    if (strictDependenciesCheck == StrictDependencyCheckedType.OFF || strictDependencies.isEmpty())
-      return PsiElementVisitor.EMPTY_VISITOR
-
-    fun isDirectDependency(label: Label): Boolean =
-      moduleLabel == label || strictDependencies.contains(label.toString())
-
-    val project = psiFile.project
-
-    return object : JavaElementVisitor() {
-      override fun visitReferenceElement(reference: PsiJavaCodeReferenceElement) {
-        reference.reference?.let {
-          checkReference(it)
+    @Override
+    public PsiElementVisitor buildVisitor(
+        ProblemsHolder holder,
+        boolean isOnTheFly
+    ) {
+        if (!(holder.getFile() instanceof PsiJavaFile psiFile)) {
+            return PsiElementVisitor.EMPTY_VISITOR;
         }
-      }
-
-      fun checkReference(reference: PsiReference) {
-        val psiClass = reference.resolve() as? JvmClass ?: return
-
-        val psiClassLabel = getTargetLabels(
-          psiClass.sourceElement,
-          psiClass.sourceElement?.codeInsightContext,
-        ).singleOrNull() ?: return
-        if (isDirectDependency(psiClassLabel)) return
-
-        // Several targets may provide the very same class: two maven installs shipping the same
-        // artifact, or one source file listed in the srcs of two targets. Resolution picks just one
-        // of them, and that one may be an indirect dependency even though a direct dependency
-        // provides the same class, in which case Bazel itself is happy. Report only when no target
-        // providing this class is a direct dependency.
-        if (allTargetLabelsOf(psiClass, reference.element).any(::isDirectDependency))
-          return
-
-        val apparentLabel = psiClassLabel.toApparentLabelOrThis(project)
-        holder.registerProblem(
-          reference.element,
-          JavaInspectionsBundle.message(
-            "java.strict.deps.indirect.dependency",
-            psiClass.qualifiedName ?: psiClass.name ?: "<undefined>",
-            apparentLabel,
-          ),
-          if (strictDependenciesCheck == StrictDependencyCheckedType.ERROR)
-            ProblemHighlightType.ERROR
-          else
-            ProblemHighlightType.WARNING,
-        )
-      }
-
-      private fun getTargetLabels(element: PsiElement?, explicitContext: CodeInsightContext?): Sequence<Label> {
-        val file = element?.containingFile ?: return emptySequence()
-        val virtualFile = file.virtualFile ?: return emptySequence()
-
-        val contexts = explicitContext?.let { listOf(it) }
-                       ?: CodeInsightContextManager.getInstance(project).getCodeInsightContexts(virtualFile)
-        val contextLabels = contexts.mapNotNull { getTargetLabel(it, project) }
-        if (contextLabels.isNotEmpty())
-          return contextLabels.asSequence()
-
-        // Fallback
-        val fallbackLabel = ProjectFileIndex.getInstance(project).getModuleForFile(virtualFile)
-          ?.findModuleEntity()?.bazelModuleExtension?.targetKey?.label
-        return sequenceOfNotNull(fallbackLabel)
-      }
-
-      private fun getTargetLabel(context: CodeInsightContext, project: Project): Label? {
-        val multiverseModule = (context as? ModuleContext)?.getModule()
-          ?.findModuleEntity()
-          ?.bazelModuleExtension
-        if (multiverseModule != null)
-          return multiverseModule.targetKey.label
-
-        val library = (context as? LibraryContext)?.getLibrary()
-        if (library != null) {
-          val multiverseLibrary = library
-            .findLibraryEntity(project.workspaceModel.currentSnapshot)
-            ?.bazelLibraryExtension
-          if (multiverseLibrary != null)
-            return multiverseLibrary.targetKey.label
+        BazelModuleExtensionEntity bazelModuleExtension = bazelModuleExtension(psiFile);
+        if (bazelModuleExtension == null) {
+            return PsiElementVisitor.EMPTY_VISITOR;
         }
 
-        return null
-      }
+        Label moduleLabel = bazelModuleExtension.getTargetKey().label();
+        StrictDependencyCheckedType strictDependenciesCheck = bazelModuleExtension.strictDependencies().check();
+        Set<String> strictDependencies = new HashSet<>(bazelModuleExtension.strictDependencies().labels());
+        if (strictDependenciesCheck == StrictDependencyCheckedType.OFF || strictDependencies.isEmpty()) {
+            return PsiElementVisitor.EMPTY_VISITOR;
+        }
 
-      /**
-       * Labels of every target that provides [psiClass] to [place]: all the classes with the same qualified
-       * name visible from [place], each of them mapped through all of the contexts of its containing file,
-       * because a single source file may belong to several targets.
-       */
-      private fun allTargetLabelsOf(psiClass: JvmClass, place: PsiElement): Sequence<Label> {
-        val qualifiedName = psiClass.qualifiedName ?: return emptySequence()
-        return JavaPsiFacade.getInstance(project)
-          .findClasses(qualifiedName, place.resolveScope)
-          .asSequence()
-          .flatMap { getTargetLabels(it.containingFile, explicitContext = null) }
-      }
+        Predicate<Label> isDirectDependency = label ->
+            moduleLabel.equals(label) || strictDependencies.contains(label.toString());
+
+        Project project = psiFile.getProject();
+
+        return new JavaElementVisitor() {
+            @Override
+            @RequiredReadAction
+            public void visitReferenceElement(PsiJavaCodeReferenceElement reference) {
+                PsiReference it = reference.getReference();
+                if (it != null) {
+                    checkReference(it);
+                }
+            }
+
+            @RequiredReadAction
+            public void checkReference(PsiReference reference) {
+                if (!(reference.resolve() instanceof JvmClass psiClass)) {
+                    return;
+                }
+
+                // consulo: multiverse (code insight contexts) is not ported, so no explicit context is passed
+                List<Label> psiClassLabels = getTargetLabels(psiClass.getSourceElement()).toList();
+                if (psiClassLabels.size() != 1) {
+                    return;
+                }
+                Label psiClassLabel = psiClassLabels.get(0);
+                if (isDirectDependency.test(psiClassLabel)) {
+                    return;
+                }
+
+                // Several targets may provide the very same class: two maven installs shipping the same
+                // artifact, or one source file listed in the srcs of two targets. Resolution picks just one
+                // of them, and that one may be an indirect dependency even though a direct dependency
+                // provides the same class, in which case Bazel itself is happy. Report only when no target
+                // providing this class is a direct dependency.
+                if (allTargetLabelsOf(psiClass, reference.getElement()).anyMatch(isDirectDependency)) {
+                    return;
+                }
+
+                Label apparentLabel = BazelRepoMappingUtils.toApparentLabelOrThis(psiClassLabel, project);
+                String qualifiedName = psiClass.getQualifiedName();
+                String name = psiClass.getName();
+                holder.newProblem(
+                        JavaInspectionsLocalize.javaStrictDepsIndirectDependency(
+                            qualifiedName != null ? qualifiedName : name != null ? name : "<undefined>",
+                            apparentLabel
+                        )
+                    )
+                    .range(reference.getElement())
+                    .highlightType(
+                        strictDependenciesCheck == StrictDependencyCheckedType.ERROR
+                            ? ProblemHighlightType.ERROR
+                            : ProblemHighlightType.WARNING
+                    )
+                    .create();
+            }
+
+            // consulo: upstream getTargetLabels(element, explicitContext: CodeInsightContext?) first maps the code insight
+            //   contexts (multiverse) of the file to labels; multiverse is not ported, so only the fallback remains
+            @RequiredReadAction
+            private Stream<Label> getTargetLabels(@Nullable PsiElement element) {
+                PsiFile file = element != null ? element.getContainingFile() : null;
+                if (file == null) {
+                    return Stream.empty();
+                }
+                VirtualFile virtualFile = file.getVirtualFile();
+                if (virtualFile == null) {
+                    return Stream.empty();
+                }
+
+                // Fallback
+                Module module = ProjectFileIndex.getInstance(project).getModuleForFile(virtualFile);
+                BazelModuleExtensionEntity moduleExtension = module != null ? extensions.getBazelModuleExtension(module) : null;
+                Label fallbackLabel = moduleExtension != null ? moduleExtension.getTargetKey().label() : null;
+                return fallbackLabel != null ? Stream.of(fallbackLabel) : Stream.empty();
+            }
+
+            // consulo: upstream getTargetLabel(context: CodeInsightContext, project) maps a multiverse ModuleContext /
+            //   LibraryContext to the Bazel module / library extension label; multiverse is not ported
+
+            /**
+             * Labels of every target that provides {@code psiClass} to {@code place}: all the classes with the same qualified
+             * name visible from {@code place}, each of them mapped through all of the contexts of its containing file,
+             * because a single source file may belong to several targets.
+             */
+            @RequiredReadAction
+            private Stream<Label> allTargetLabelsOf(JvmClass psiClass, PsiElement place) {
+                String qualifiedName = psiClass.getQualifiedName();
+                if (qualifiedName == null) {
+                    return Stream.empty();
+                }
+                PsiClass[] classes = JavaPsiFacade.getInstance(project)
+                    .findClasses(qualifiedName, place.getResolveScope());
+                return Arrays.stream(classes)
+                    .flatMap(it -> getTargetLabels(it.getContainingFile()));
+            }
+        };
     }
-  }
 
-  private fun bazelModuleExtension(file: PsiFile?): BazelModuleExtensionEntity? {
-    if (file == null)
-      return null
+    @RequiredReadAction
+    private @Nullable BazelModuleExtensionEntity bazelModuleExtension(@Nullable PsiFile file) {
+        if (file == null) {
+            return null;
+        }
 
-    val multiverseModule = (file.codeInsightContext as? ModuleContext)?.getModule()?.findModuleEntity()?.bazelModuleExtension
-    if (multiverseModule != null)
-      return multiverseModule
+        // consulo: multiverse (ModuleContext of file.codeInsightContext) is not ported
 
-    return ProjectFileIndex.getInstance(file.project).getModuleForFile(file.virtualFile)?.findModuleEntity()?.bazelModuleExtension
-  }
+        VirtualFile virtualFile = file.getVirtualFile();
+        if (virtualFile == null) {
+            return null;
+        }
+        Module module = ProjectFileIndex.getInstance(file.getProject()).getModuleForFile(virtualFile);
+        return module != null ? extensions.getBazelModuleExtension(module) : null;
+    }
+
+    @Override
+    public @Nullable Language getLanguage() {
+        return JavaLanguage.INSTANCE;
+    }
+
+    @Override
+    public String getShortName() {
+        return "JavaStrictDependencies";
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return JavaInspectionsLocalize.bazelInspectionGroupName();
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return JavaInspectionsLocalize.inspectionsDisplayNameJavastrictdeps();
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }

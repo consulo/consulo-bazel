@@ -1,134 +1,185 @@
-package org.jetbrains.bazel.jvm.run
+package org.jetbrains.bazel.jvm.run;
 
-import com.intellij.debugger.impl.attach.JavaDebuggerAttachUtil
-import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.process.AnsiEscapeDecoder
-import com.intellij.execution.process.OSProcessHandler
-import com.intellij.execution.process.ProcessEvent
-import com.intellij.execution.process.ProcessListener
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Key
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withTimeoutOrNull
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bazel.run.commandLine.scriptPathCommandLine
-import org.jetbrains.bazel.server.bep.TestXmlParser
-import org.jetbrains.bazel.sync.workspace.languages.jvm.JAVA_TEST_KIND
-import org.jetbrains.bazel.sync.workspace.snapshot.workspaceSnapshotOrNull
-import org.jetbrains.bazel.taskEvents.BazelTaskEventsService
-import org.jetbrains.bazel.util.BspClientTestNotifier
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
-import kotlin.io.path.readText
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
+import consulo.application.Application;
+import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.process.ExecutionException;
+import consulo.process.ProcessHandler;
+import consulo.process.ProcessHandlerBuilderFactory;
+import consulo.process.cmd.GeneralCommandLine;
+import consulo.process.event.ProcessEvent;
+import consulo.process.event.ProcessListener;
+import consulo.process.util.AnsiEscapeDecoder;
+import consulo.project.Project;
+import consulo.util.dataholder.Key;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bazel.run.commandLine.Utils;
+import org.jetbrains.bazel.server.bep.TestXmlParser;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JavaBazelRules;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.taskEvents.BazelTaskEventsService;
+import org.jetbrains.bazel.util.BspClientTestNotifier;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-/**
- * See [ScriptPathBeforeRunTaskProvider], we have to pass [env] to the script process manually
- * because Bazel doesn't include environment variable setup in the generated script.
- */
-internal suspend fun runWithScriptPath(
-  taskId: TaskId,
-  scriptPath: Path,
-  project: Project,
-  pidDeferred: CompletableDeferred<Long?>,
-  handler: BazelProcessHandler,
-  env: Map<String, String>,
-  additionalScriptParameters: List<String>,
-  isTest: Boolean,
-  isPassParentEnvs: Boolean,
-  testFilter: String?,
-  processHandlerCreated: suspend (OSProcessHandler) -> Unit,
-) {
-  val commandLine = scriptPathCommandLine(scriptPath, env, isTest, isPassParentEnvs, testFilter, additionalScriptParameters)
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-  runJvmCommandLine(commandLine, pidDeferred, handler, processHandlerCreated)
-  runInterruptible(Dispatchers.IO) {
-    findXmlOutputAndReport(taskId, scriptPath, project)
-  }
-}
-
-/**
- * Starts [commandLine] and copies its output to [handler].
- * When [handler] is destroyed, the process is destroyed too.
- * [pidDeferred] gets the pid when the JVM can take an attach, or after 5 seconds.
- * The function returns when the process ends.
- */
-@ApiStatus.Internal
-suspend fun runJvmCommandLine(
-  commandLine: GeneralCommandLine,
-  pidDeferred: CompletableDeferred<Long?>,
-  handler: BazelProcessHandler,
-  processHandlerCreated: suspend (OSProcessHandler) -> Unit,
-) {
-  val scriptHandler = OSProcessHandler(commandLine)
-  scriptHandler.addProcessListener(
-    object : ProcessListener {
-      private val ansiEscapeDecoder = AnsiEscapeDecoder()
-
-      override fun onTextAvailable(e: ProcessEvent, outputType: Key<*>) {
-        ansiEscapeDecoder.escapeText(e.text, outputType) { text, type ->
-          handler.notifyTextAvailable(text, type)
-        }
-      }
-    },
-  )
-
-  // necessary for terminating the debug process from scriptHandler when handler.destroyProcess() is called
-  handler.addProcessListener(
-    object : ProcessListener {
-      override fun processWillTerminate(event: ProcessEvent, willBeDestroyed: Boolean) {
-        if (willBeDestroyed) {
-          scriptHandler.destroyProcess()
-        }
-      }
-    },
-  )
-
-  processHandlerCreated(scriptHandler)
-
-  scriptHandler.startNotify()
-
-  val pid: Long = scriptHandler.process.pid()
-  // We run the bash script generated via --script_path, which then starts the JVM via Unix's exec: https://en.wikipedia.org/wiki/Exec_(system_call)
-  // Since the PID of the bash process is the same as that of the JVM, we wait for bash script completion before returning the pid to IDEA
-  withTimeoutOrNull(5.seconds) {
-    while (scriptHandler.process.isAlive) {
-      if (JavaDebuggerAttachUtil.isAttachable(pid.toString())) break
-      delay(50.milliseconds)
+// consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name
+public final class RunWithScriptPath {
+    private RunWithScriptPath() {
     }
-  }
 
-  runInterruptible(Dispatchers.IO) {
-    pidDeferred.complete(pid)
-    scriptHandler.waitFor()
-  }
+    /**
+     * See {@link ScriptPathBeforeRunTaskProvider}, we have to pass {@code env} to the script process manually
+     * because Bazel doesn't include environment variable setup in the generated script.
+     */
+    public static CompletableFuture<?> runWithScriptPath(
+        TaskId taskId,
+        Path scriptPath,
+        Project project,
+        CompletableFuture<@Nullable Long> pidDeferred,
+        BazelProcessHandler handler,
+        Map<String, String> env,
+        List<String> additionalScriptParameters,
+        boolean isTest,
+        boolean isPassParentEnvs,
+        @Nullable String testFilter,
+        Function<ProcessHandler, CompletableFuture<?>> processHandlerCreated
+    ) {
+        GeneralCommandLine commandLine =
+            Utils.scriptPathCommandLine(scriptPath, env, isTest, isPassParentEnvs, testFilter, additionalScriptParameters);
+
+        return runJvmCommandLine(commandLine, pidDeferred, handler, processHandlerCreated)
+            // consulo: upstream runInterruptible(Dispatchers.IO) { }
+            .thenCompose(ignored -> CompletableFuture.runAsync(() -> findXmlOutputAndReport(taskId, scriptPath, project), ioDispatcher()));
+    }
+
+    /**
+     * Starts {@code commandLine} and copies its output to {@code handler}.
+     * When {@code handler} is destroyed, the process is destroyed too.
+     * {@code pidDeferred} gets the pid when the JVM can take an attach, or after 5 seconds.
+     * The function returns when the process ends.
+     */
+    // consulo: upstream OSProcessHandler is internal in Consulo, the process handler is built by ProcessHandlerBuilderFactory
+    public static CompletableFuture<?> runJvmCommandLine(
+        GeneralCommandLine commandLine,
+        CompletableFuture<@Nullable Long> pidDeferred,
+        BazelProcessHandler handler,
+        Function<ProcessHandler, CompletableFuture<?>> processHandlerCreated
+    ) {
+        ProcessHandler scriptHandler;
+        try {
+            scriptHandler = Application.get().getInstance(ProcessHandlerBuilderFactory.class).newBuilder(commandLine).build();
+        }
+        catch (ExecutionException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        scriptHandler.addProcessListener(
+            new ProcessListener() {
+                private final AnsiEscapeDecoder myAnsiEscapeDecoder = new AnsiEscapeDecoder();
+
+                @Override
+                public void onTextAvailable(ProcessEvent e, Key outputType) {
+                    myAnsiEscapeDecoder.escapeText(e.getText(), outputType, (text, type) -> {
+                        handler.notifyTextAvailable(text, type);
+                    });
+                }
+            }
+        );
+
+        // necessary for terminating the debug process from scriptHandler when handler.destroyProcess() is called
+        handler.addProcessListener(
+            new ProcessListener() {
+                @Override
+                public void processWillTerminate(ProcessEvent event, boolean willBeDestroyed) {
+                    if (willBeDestroyed) {
+                        scriptHandler.destroyProcess();
+                    }
+                }
+            }
+        );
+
+        return processHandlerCreated.apply(scriptHandler).thenCompose(ignored -> {
+            scriptHandler.startNotify();
+
+            // consulo: upstream scriptHandler.process.pid(); Consulo ProcessHandler.getId() is the native pid
+            long pid = scriptHandler.getId();
+            // We run the bash script generated via --script_path, which then starts the JVM via Unix's exec: https://en.wikipedia.org/wiki/Exec_(system_call)
+            // Since the PID of the bash process is the same as that of the JVM, we wait for bash script completion before returning the pid to IDEA
+            // consulo: upstream withTimeoutOrNull(5.seconds) { while (...) { ...; delay(50.milliseconds) } } and
+            // runInterruptible(Dispatchers.IO) { }, both on a pooled thread
+            return CompletableFuture.runAsync(() -> {
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!scriptHandler.isProcessTerminated() && System.nanoTime() < deadline) {
+                    // TODO consulo: com.intellij.debugger.impl.attach.JavaDebuggerAttachUtil.isAttachable(pid) is missing in Consulo,
+                    //  so the pid is delivered after 5 seconds or when the process ends
+                    // if (JavaDebuggerAttachUtil.isAttachable(pid.toString())) break
+                    try {
+                        Thread.sleep(50);
+                    }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+
+                pidDeferred.complete(pid);
+                scriptHandler.waitFor();
+            }, ioDispatcher());
+        });
+    }
+
+    private static void findXmlOutputAndReport(TaskId taskId, Path scriptPath, Project project) {
+        String scriptContent;
+        try {
+            scriptContent = Files.readString(scriptPath);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+
+        WorkspaceSnapshot snapshot = WorkspaceHelpers.getWorkspaceSnapshotOrNull(project);
+        BazelInfo bazelInfo = snapshot == null ? null : snapshot.bazelInfo();
+        if (bazelInfo == null) {
+            return;
+        }
+        Path execRoot = bazelInfo.execRoot();
+        Matcher matcher = TEST_XML_OUTPUT_FILE_REGEX.matcher(scriptContent);
+        if (!matcher.find()) {
+            return;
+        }
+        String xmlPath = matcher.group("path");
+        if (xmlPath == null) {
+            return;
+        }
+        Path absoluteXmlPath = execRoot.resolve(xmlPath);
+
+        BazelTaskEventsService taskHandler = BazelTaskEventsService.getInstance(project);
+        BspClientTestNotifier testNotifier = new BspClientTestNotifier(taskHandler);
+
+        new TestXmlParser(testNotifier).parseAndReport(
+            taskId, /* ??? */
+            absoluteXmlPath,
+            JavaBazelRules.JAVA_TEST_KIND
+        );
+    }
+
+    private static final Pattern TEST_XML_OUTPUT_FILE_REGEX = Pattern.compile("XML_OUTPUT_FILE=(?<path>\\S+)");
+
+    // consulo: Dispatchers.IO
+    private static Executor ioDispatcher() {
+        return Application.get().getInstance(ApplicationConcurrency.class).executor();
+    }
 }
-
-private fun findXmlOutputAndReport(taskId: TaskId, scriptPath: Path, project: Project) {
-  val scriptContent = scriptPath.readText()
-
-  val execRoot = project.workspaceSnapshotOrNull?.bazelInfo?.execRoot ?: return
-  val xmlPath =
-    TEST_XML_OUTPUT_FILE_REGEX
-      .find(scriptContent)
-      ?.groups
-      ?.get("path")
-      ?.value ?: return
-  val absoluteXmlPath = execRoot.resolve(xmlPath)
-
-  val taskHandler = BazelTaskEventsService.getInstance(project)
-  val testNotifier = BspClientTestNotifier(taskHandler)
-
-  TestXmlParser(testNotifier).parseAndReport(
-    taskId, /* ??? */
-    absoluteXmlPath,
-    JAVA_TEST_KIND,
-  )
-}
-
-private val TEST_XML_OUTPUT_FILE_REGEX = Regex("XML_OUTPUT_FILE=(?<path>\\S+)")
