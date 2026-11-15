@@ -198,6 +198,13 @@ public class JavaStrictDependenciesInspection extends LocalInspectionTool {
         return JavaInspectionsLocalize.inspectionsDisplayNameJavastrictdeps();
     }
 
+    // consulo: the description is a LocalizeValue (upstream inspectionDescriptions/JavaStrictDependencies.html); a resource directory
+    //   shared with consulo.bazel.base would be a split package
+    @Override
+    public LocalizeValue getDescription() {
+        return JavaInspectionsLocalize.inspectionJavaStrictDependenciesDescription();
+    }
+
     @Override
     public boolean isEnabledByDefault() {
         return true;

@@ -57,6 +57,13 @@ public class BazelGoStrictDependenciesInspection extends LocalInspectionTool imp
         return BazelGoLocalize.inspectionsDisplayNameGoStrictDeps();
     }
 
+    // consulo: the description is a LocalizeValue (upstream inspectionDescriptions/BazelGoStrictDependencies.html); a resource directory
+    //   shared with consulo.bazel.base would be a split package
+    @Override
+    public LocalizeValue getDescription() {
+        return BazelGoLocalize.inspectionGoStrictDependenciesDescription();
+    }
+
     @Override
     public boolean isEnabledByDefault() {
         return true;

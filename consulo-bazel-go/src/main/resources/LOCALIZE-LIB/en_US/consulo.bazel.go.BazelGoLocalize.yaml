@@ -12,3 +12,5 @@ sync.gazelle.run.target:
     text: "Run Gazelle target"
 sync.gazelle.target.hint:
     text: "Specify the correct gazelle_target: in your selected .bazelproject"
+inspection.go.strict.dependencies.description:
+    text: "Reports Go packages imported from targets missing from direct dependencies of the Bazel target."

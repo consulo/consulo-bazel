@@ -67,31 +67,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- the upstream inspection descriptions; copy-resources, see consulo-bazel-base/pom.xml -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>upstream-resources</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>copy-resources</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                            <resources>
-                                <resource>
-                                    <directory>${project.basedir}/../java/intellij.bazel.java.core/resources</directory>
-                                    <includes>
-                                        <include>inspectionDescriptions/**</include>
-                                    </includes>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
             <plugin>
                 <groupId>consulo.maven</groupId>
                 <artifactId>maven-consulo-plugin</artifactId>
@@ -114,11 +89,6 @@
             </plugin>
         </plugins>
     </build>
-
-    <properties>
-        <!-- build cache input: the upstream resources copied by maven-resources-plugin -->
-        <maven.build.cache.input.1>../java/intellij.bazel.java.core/resources</maven.build.cache.input.1>
-    </properties>
 
     <dependencies>
         <dependency>
