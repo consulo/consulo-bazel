@@ -1,6 +1,7 @@
 package org.jetbrains.bazel.workspace.importer;
 
 import com.intellij.java.language.LanguageLevel;
+import consulo.application.ReadAction;
 import consulo.application.progress.ProgressIndicator;
 import consulo.application.util.concurrent.AppExecutorUtil;
 import consulo.bazel.java.localize.BazelJavaBackendLocalize;
@@ -361,13 +362,17 @@ public class JvmTargetEntitiesBuilder {
                 .thenComparing(it -> it.plan().moduleName());
             List<TargetAndPlan> sorted = new ArrayList<>(plans);
             sorted.sort(comparator);
-            for (int index = 0; index < sorted.size(); index++) {
-                TargetAndPlan it = sorted.get(index);
-                writeOne(it.target(), it.plan(), writtenNames, storage);
-                if (progressReporter != null) {
-                    progressReporter.setFraction((double) (index + 1) / plans.size());
+            // consulo: upstream MutableEntityStorage needs no lock; the classic modifiable models read the module and library
+            //   tables, which needs read access on this pool thread
+            ReadAction.run(() -> {
+                for (int index = 0; index < sorted.size(); index++) {
+                    TargetAndPlan it = sorted.get(index);
+                    writeOne(it.target(), it.plan(), writtenNames, storage);
+                    if (progressReporter != null) {
+                        progressReporter.setFraction((double) (index + 1) / plans.size());
+                    }
                 }
-            }
+            });
 
             // phase 3: compute excluded sources inside Jars
             if (myCtx.getExcludeCompiledSourceCodeInsideJars()) {

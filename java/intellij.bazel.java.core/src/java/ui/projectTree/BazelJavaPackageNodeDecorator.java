@@ -13,7 +13,8 @@ import consulo.ui.ex.tree.PresentationData;
 import jakarta.inject.Inject;
 import org.jetbrains.bazel.ui.projectTree.BazelProjectViewDirectoryHelper;
 
-@ExtensionImpl(order = "first")
+// consulo: upstream order="first", restricted to the plugin owning the extension point
+@ExtensionImpl
 public class BazelJavaPackageNodeDecorator implements ProjectViewNodeDecorator {
     private final Project myProject;
 

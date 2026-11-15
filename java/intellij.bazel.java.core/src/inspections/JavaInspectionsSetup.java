@@ -5,7 +5,8 @@ import consulo.project.Project;
 import consulo.project.startup.PostStartupActivity;
 import consulo.ui.UIAccess;
 
-@ExtensionImpl(order = "first")
+// consulo: upstream order="first", restricted to the plugin owning the extension point
+@ExtensionImpl
 public class JavaInspectionsSetup implements PostStartupActivity {
     @Override
     public void runActivity(Project project, UIAccess uiAccess) {

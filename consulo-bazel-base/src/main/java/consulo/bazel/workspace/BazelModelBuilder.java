@@ -16,6 +16,7 @@
 package consulo.bazel.workspace;
 
 import consulo.annotation.access.RequiredReadAction;
+import consulo.application.ReadAction;
 import consulo.annotation.access.RequiredWriteAction;
 import consulo.content.OrderRootType;
 import consulo.content.library.Library;
@@ -106,11 +107,12 @@ public final class BazelModelBuilder {
 
     public ModifiableRootModel getRootModel(Module module) {
         checkNotFinished();
-        return myRootModels.computeIfAbsent(module, it -> {
+        // the importers fill the builder on a background thread; creating the modifiable model needs read access
+        return myRootModels.computeIfAbsent(module, it -> ReadAction.compute(() -> {
             ModifiableRootModel model = ModuleRootManager.getInstance(it).getModifiableModel();
             model.clear();
             return model;
-        });
+        }));
     }
 
     /**

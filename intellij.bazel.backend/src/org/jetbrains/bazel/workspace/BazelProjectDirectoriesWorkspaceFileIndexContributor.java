@@ -82,17 +82,18 @@ public class BazelProjectDirectoriesWorkspaceFileIndexContributor extends Indexa
 // consulo: excluded roots of BazelProjectDirectoriesEntity (upstream registerExcludedDirectories)
 @ExtensionImpl
 class BazelProjectDirectoriesExcludePolicy implements DirectoryIndexExcludePolicy {
-    private final Project myProject;
+    // consulo: injected, the policy is first called inside the write action of a roots change
+    private final BazelProjectModelService myProjectModelService;
     private volatile @Nullable List<String> myLastExcludedRoots;
 
     @Inject
-    public BazelProjectDirectoriesExcludePolicy(Project project) {
-        myProject = project;
+    public BazelProjectDirectoriesExcludePolicy(BazelProjectModelService projectModelService) {
+        myProjectModelService = projectModelService;
     }
 
     @Override
     public VirtualFile[] getExcludeRootsForProject() {
-        BazelProjectDirectoriesEntity entity = BazelProjectModelService.getInstance(myProject).getProjectData(BazelProjectDirectoriesEntity.class);
+        BazelProjectDirectoriesEntity entity = myProjectModelService.getProjectData(BazelProjectDirectoriesEntity.class);
         if (entity == null) {
             return VirtualFile.EMPTY_ARRAY;
         }

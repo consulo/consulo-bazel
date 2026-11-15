@@ -17,10 +17,13 @@ import java.util.List;
 @ExtensionImpl
 public class BazelDirectoryIndexExcludePolicy implements DirectoryIndexExcludePolicy, DumbAware {
     private final Project myProject;
+    // consulo: injected, the policy is first called inside the write action of a roots change
+    private final BazelSymlinkExcludeService mySymlinkExcludeService;
 
     @Inject
-    public BazelDirectoryIndexExcludePolicy(Project project) {
+    public BazelDirectoryIndexExcludePolicy(Project project, BazelSymlinkExcludeService symlinkExcludeService) {
         myProject = project;
+        mySymlinkExcludeService = symlinkExcludeService;
     }
 
     public Project getProject() {
@@ -31,7 +34,7 @@ public class BazelDirectoryIndexExcludePolicy implements DirectoryIndexExcludePo
     @Override
     public VirtualFile[] getExcludeRootsForProject() {
         List<VirtualFile> result = new ArrayList<>();
-        for (Path it : BazelSymlinkExcludeService.getInstance(myProject).getBazelSymlinksToExclude()) {
+        for (Path it : mySymlinkExcludeService.getBazelSymlinksToExclude()) {
             VirtualFile file = VirtualFileManager.getInstance().findFileByNioPath(it);
             if (file != null) {
                 result.add(file);

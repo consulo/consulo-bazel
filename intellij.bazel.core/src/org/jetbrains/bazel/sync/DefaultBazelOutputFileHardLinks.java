@@ -320,9 +320,16 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
                     return CompletableFuture.completedFuture(null);
                 }
                 VirtualFileUtil.markDirty(/* recursive = */ true, /* reloadChildren = */ false, cacheDirFile);
-                // consulo: upstream suspending RefreshQueue.refresh(recursive = true, files), completed by the finish runnable here
+                // consulo: upstream suspending RefreshQueue.refresh(recursive = true, files), completed by the finish runnable here.
+                //   The finish runnable runs in the write action of the refresh events; the coroutine resumes on its own dispatcher
+                //   upstream, so the future is completed on the IO executor and the sync does not continue inside the write action
                 CompletableFuture<Void> refreshed = new CompletableFuture<>();
-                RefreshQueue.getInstance().refresh(true, /* recursive = */ true, () -> refreshed.complete(null), List.of(cacheDirFile));
+                RefreshQueue.getInstance().refresh(
+                    true,
+                    /* recursive = */ true,
+                    () -> ioDispatcher().execute(() -> refreshed.complete(null)),
+                    List.of(cacheDirFile)
+                );
                 return refreshed;
             });
     }
