@@ -60,8 +60,14 @@ git merge-base HEAD upstream/main
   every bundled library must be listed there.
 - The Maven build cache ignores plugin-configuration-only changes in a pom; touch an input file of the module to
   force a rebuild.
-- Language integrations (`java/`, `golang/`, `python/`, `clion/`) go to the consumer plugins. They also share
-  packages with core (e.g. `org.jetbrains.bazel.config`); this needs a decision when the first one is ported.
+- Language integrations (`java/`, `kotlin/`, `golang/`, `python/`, `clion/`) are **optional libraries of the
+  `consulo.bazel` plugin** (decision of the project owner), like consulo-dotenv's language parts: one Maven jar module
+  per integration (`consulo-bazel-java`, ...) compiling the upstream source folders, with
+  `src/main/resources/META-INF/plugin-requires.xml` naming the required plugin (e.g. `consulo.java`). `consulo-plugin`
+  depends on it with `runtime` scope; the packager writes `lib/<jar>.requires`, so the jar is loaded only when that
+  plugin is installed; `plugin.xml` declares `<depends optional="true">consulo.java</depends>`. The jar is its own JPMS
+  module next to `consulo.bazel.base`, so upstream files that reuse a core package get an integration-specific
+  `package` line (kept at the upstream path, listed in [Renamed files](#renamed-files)).
 - The Consulo plugin descriptor lives in the Consulo-only module `consulo-plugin/`.
   Upstream's `intellij.bazel.plugin/resources/META-INF/plugin.xml` is left untouched.
 - Upstream `<extensions>` XML (for example `intellij.bazel.languages.xml`) is not used. Consulo registers

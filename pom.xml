@@ -47,6 +47,8 @@
         <module>protobuf</module>
         <module>consulo-aspect-sdk</module>
         <module>consulo-bazel-base</module>
+        <!-- TODO: enable once java/ is converted to Java -->
+        <!-- <module>consulo-bazel-java</module> -->
         <module>consulo-plugin</module>
     </modules>
 </project>
