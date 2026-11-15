@@ -1,14 +1,23 @@
-package org.jetbrains.bazel.golang.sync
+package org.jetbrains.bazel.golang.sync;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeEntry
-import org.jetbrains.bazel.sync.workspace.persistence.type
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor.WorkspaceTypeEntry;
 
-private const val GOLANG_NAMESPACE = "intellij.bazel.golang"
+import java.util.ArrayList;
+import java.util.List;
 
-internal class GoWorkspaceTypeContributor : WorkspaceTypeContributor {
-  override fun contribute(project: Project): List<WorkspaceTypeEntry> = buildList {
-    type<GoBuildTarget>()
-  }
+@ExtensionImpl
+public class GoWorkspaceTypeContributor implements WorkspaceTypeContributor {
+    // consulo: upstream private top-level const
+    @SuppressWarnings("unused")
+    private static final String GOLANG_NAMESPACE = "intellij.bazel.golang";
+
+    @Override
+    public List<WorkspaceTypeEntry> contribute(Project project) {
+        List<WorkspaceTypeEntry> result = new ArrayList<>();
+        WorkspaceTypeContributor.type(result, GoBuildTarget.class);
+        return result;
+    }
 }

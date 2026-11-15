@@ -1,64 +1,71 @@
-package org.jetbrains.bazel.clion.debug
+package org.jetbrains.bazel.clion.debug;
 
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.project.Project
-import com.jetbrains.cidr.lang.CLanguageKind
-import com.jetbrains.cidr.lang.toolchains.CidrCompilerSwitches
-import com.jetbrains.cidr.lang.workspace.OCCompilerSettings
-import com.jetbrains.cidr.lang.workspace.OCResolveConfiguration
-import com.jetbrains.cidr.lang.workspace.OCWorkspace
-import org.jetbrains.bazel.clion.BazelCLionCoreBundle
-import org.jetbrains.bazel.clion.workspace.CC_CLIENT_KEY
-import org.jetbrains.bazel.clion.workspace.getCcIdentifier
-import kotlin.collections.orEmpty
+import consulo.bazel.cpp.localize.BazelCLionCoreLocalize;
+import consulo.project.Project;
 
-private val CC_LANGUAGES = listOf(CLanguageKind.C, CLanguageKind.CPP)
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Asks for a C/C++ resolve configuration, then reports it.
  *
- * It reads the committed [OCWorkspace], so it shows the settings that code resolution uses.
+ * <p>It reads the committed {@code OCWorkspace}, so it shows the settings that code resolution uses.
  */
-internal class DebugOCResolveContextAction : BazelDebugAction() {
+// TODO consulo: OCWorkspace / OCResolveConfiguration / OCCompilerSettings (com.jetbrains.cidr.lang.workspace) do not exist in
+//   consulo-cpp, which has no resolve configurations (its compiler settings are CCompileSettings of a module extension). The action
+//   is not registered (upstream id Bazel.CLion.DebugOCResolveContext in the group Bazel.CLion.DebugActions).
+public class DebugOCResolveContextAction extends BazelDebugAction {
+    // TODO consulo: CLanguageKind (com.jetbrains.cidr.lang) does not exist in consulo-cpp
+    // private val CC_LANGUAGES = listOf(CLanguageKind.C, CLanguageKind.CPP)
 
-  override val showOutputInEditor: Boolean
-    get() = true
-
-  override suspend fun exec(project: Project): Any {
-    val configurations = readAction { OCWorkspace.getInstance(project).getConfigurations(CC_CLIENT_KEY) }
-    if (configurations.isEmpty()) {
-      fail("no $CC_CLIENT_KEY resolve configuration found, the project is not synced")
+    public DebugOCResolveContextAction() {
+        super(BazelCLionCoreLocalize.actionBazelClionDebugocresolvecontextText());
     }
 
-    val chosen = chooseInPopup(
-      project,
-      BazelCLionCoreBundle.message("debug.popup.resolve.configurations.title"),
-      configurations,
-    ) { it.displayName }
+    @Override
+    protected boolean getShowOutputInEditor() {
+        return true;
+    }
 
-    return chosen.toJsonMap()
-  }
-}
+    @Override
+    protected CompletableFuture<?> exec(Project project) {
+        // TODO consulo: OCWorkspace.getInstance(project).getConfigurations(CC_CLIENT_KEY) does not exist in consulo-cpp
+        // val configurations = readAction { OCWorkspace.getInstance(project).getConfigurations(CC_CLIENT_KEY) }
+        // if (configurations.isEmpty()) {
+        //   fail("no $CC_CLIENT_KEY resolve configuration found, the project is not synced")
+        // }
+        //
+        // val chosen = chooseInPopup(
+        //   project,
+        //   BazelCLionCoreBundle.message("debug.popup.resolve.configurations.title"),
+        //   configurations,
+        // ) { it.displayName }
+        //
+        // return chosen.toJsonMap()
+        return fail("no resolve configuration found, OCWorkspace is not available in consulo-cpp");
+    }
 
-private fun OCResolveConfiguration.toJsonMap(): Map<String, Any?> {
-  return mapOf(
-    "unique_id" to uniqueId,
-    "display_name" to displayName,
-    "cc_identifier" to getCcIdentifier(),
-    "variant" to variant?.toString(),
-    "sources" to sources,
-    "languages" to CC_LANGUAGES.associate { it.displayName to getCompilerSettings(it).toJsonMap() },
-  )
-}
+    // TODO consulo: OCResolveConfiguration does not exist in consulo-cpp
+    // private fun OCResolveConfiguration.toJsonMap(): Map<String, Any?> {
+    //   return mapOf(
+    //     "unique_id" to uniqueId,
+    //     "display_name" to displayName,
+    //     "cc_identifier" to getCcIdentifier(),
+    //     "variant" to variant?.toString(),
+    //     "sources" to sources,
+    //     "languages" to CC_LANGUAGES.associate { it.displayName to getCompilerSettings(it).toJsonMap() },
+    //   )
+    // }
 
-private fun OCCompilerSettings.toJsonMap(): Map<String, Any?> {
-  return mapOf(
-    "compiler_kind" to compilerKind?.toString(),
-    "compiler_executable" to compilerExecutable,
-    "compiler_working_dir" to compilerWorkingDir,
-    "switches" to compilerSwitches?.getList(CidrCompilerSwitches.Format.BASH_SHELL).orEmpty(),
-    "headers_search_paths" to headersSearchPaths.map { it.toString() },
-    "implicit_includes" to implicitIncludeUrls,
-    "preprocessor_defines" to preprocessorDefines,
-  )
+    // TODO consulo: OCCompilerSettings / CidrCompilerSwitches do not exist in consulo-cpp
+    // private fun OCCompilerSettings.toJsonMap(): Map<String, Any?> {
+    //   return mapOf(
+    //     "compiler_kind" to compilerKind?.toString(),
+    //     "compiler_executable" to compilerExecutable,
+    //     "compiler_working_dir" to compilerWorkingDir,
+    //     "switches" to compilerSwitches?.getList(CidrCompilerSwitches.Format.BASH_SHELL).orEmpty(),
+    //     "headers_search_paths" to headersSearchPaths.map { it.toString() },
+    //     "implicit_includes" to implicitIncludeUrls,
+    //     "preprocessor_defines" to preprocessorDefines,
+    //   )
+    // }
 }

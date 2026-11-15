@@ -1,26 +1,46 @@
-package org.jetbrains.bazel.clion.workspace.entities
+package org.jetbrains.bazel.clion.workspace.entities;
 
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.workspacemodel.entities.WorkspaceModelTargetKey
-import org.jetbrains.bsp.protocol.OutputLocation
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.WorkspaceModelTargetKey;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface CcToolchainCompilerInfoEntity : WorkspaceEntity {
-  val _toolchainKey: WorkspaceModelTargetKey
-  val cCompilerPath: String
-  val cCompilerKindId: String
-  val cppCompilerPath: String
-  val cppCompilerKindId: String
-  val cSwitches: List<String>
-  val cppSwitches: List<String>
-  val compilerName: String
-  val environment: Map<String, String>
-  val builtinIncludes: List<OutputLocation>
-  val sysroot: OutputLocation?
+import java.util.List;
+import java.util.Map;
+
+/**
+ * consulo: upstream Kotlin declarations of CcCompilerInfoEntity.kt. The workspace entity is a record, stored as
+ * project data of the {@code BazelModelBuilder} (see CONSULO.md, "Project model").
+ */
+public final class CcCompilerInfoEntity {
+    private CcCompilerInfoEntity() {
+    }
+
+    public record CcToolchainCompilerInfoEntity(
+        WorkspaceModelTargetKey _toolchainKey,
+        String cCompilerPath,
+        String cCompilerKindId,
+        String cppCompilerPath,
+        String cppCompilerKindId,
+        List<String> cSwitches,
+        List<String> cppSwitches,
+        String compilerName,
+        Map<String, String> environment,
+        List<OutputLocation> builtinIncludes,
+        @Nullable OutputLocation sysroot
+    ) {
+    }
+
+    /**
+     * consulo: all entities of one sync, the project data of the builder (upstream {@code storage.entities(...)})
+     */
+    public record CcToolchainCompilerInfoEntities(List<CcToolchainCompilerInfoEntity> entities) {
+        public CcToolchainCompilerInfoEntities {
+            entities = List.copyOf(entities);
+        }
+    }
+
+    public static WorkspaceTargetKey getToolchainKey(CcToolchainCompilerInfoEntity receiver) {
+        return receiver._toolchainKey().toWorkspaceTarget();
+    }
 }
-
-@get:ApiStatus.Internal
-val CcToolchainCompilerInfoEntity.toolchainKey: WorkspaceTargetKey
-  get() = _toolchainKey.toWorkspaceTarget()

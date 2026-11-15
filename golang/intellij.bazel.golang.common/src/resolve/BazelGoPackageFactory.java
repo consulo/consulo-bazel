@@ -14,40 +14,45 @@
  * limitations under the License.
  */
 // Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-package org.jetbrains.bazel.golang.resolve
+package org.jetbrains.bazel.golang.resolve;
 
-import com.goide.project.GoPackageFactory
-import com.goide.psi.GoFile
-import com.goide.psi.impl.GoPackage
-import com.intellij.platform.backend.workspace.findEntitiesByVirtualFile
-import com.intellij.platform.backend.workspace.workspaceModel
-import com.intellij.psi.PsiDirectory
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity
+import com.goide.psi.GoFile;
+import consulo.language.psi.PsiDirectory;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil.GoPackageEntities;
+import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelGoPackageFactory : GoPackageFactory {
-  override fun createPackage(goFile: GoFile): GoPackage? {
-    val project = goFile.project
-    if (!project.isBazelProject) return null
-    val goPackageEntity = getGoPackageEntity(goFile) ?: return null
-    return BazelGoPackage(project, goPackageEntity)
-  }
+// TODO consulo: not registered (upstream com.goide packageFactory, order="first"). The GoPackageFactory extension point and
+//  GoPackage are missing in consulo-google-go
+public class BazelGoPackageFactory /* : GoPackageFactory */ {
+    public @Nullable BazelGoPackage createPackage(GoFile goFile) {
+        Project project = goFile.getProject();
+        if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            return null;
+        }
+        BazelGoPackageEntity goPackageEntity = getGoPackageEntity(goFile);
+        if (goPackageEntity == null) {
+            return null;
+        }
+        return new BazelGoPackage(project, goPackageEntity);
+    }
 
-  override fun createPackage(packageName: String, vararg directories: PsiDirectory): GoPackage? = null
-}
+    public @Nullable BazelGoPackage createPackage(String packageName, PsiDirectory... directories) {
+        return null;
+    }
 
-internal fun getGoPackageEntity(goFile: GoFile): BazelGoPackageEntity? {
-  val project = goFile.project
-  val virtualFile = goFile.virtualFile ?: return null
-  val workspaceModel = project.workspaceModel
-  val vfuManager = workspaceModel.getVirtualFileUrlManager()
-  val snapshot = workspaceModel.currentSnapshot
+    // consulo: upstream internal top-level function of BazelGoPackageFactory.kt
+    public static @Nullable BazelGoPackageEntity getGoPackageEntity(GoFile goFile) {
+        Project project = goFile.getProject();
+        VirtualFile virtualFile = goFile.getVirtualFile();
+        if (virtualFile == null) {
+            return null;
+        }
 
-  // `BazelGoPackageEntity` is already part of VFU index due to `sources` property
-  return snapshot.getVirtualFileUrlIndex()
-    .findEntitiesByVirtualFile(virtualFile = virtualFile, virtualFileUrlManager = vfuManager)
-    .filterIsInstance<BazelGoPackageEntity>()
-    .firstOrNull()
+        // `BazelGoPackageEntity` is already part of VFU index due to `sources` property
+        // consulo: the workspace model virtual file url index is replaced by the source url index of GoPackageEntities
+        return GoPackageEntities.getInstance(project).findBySourceUrl(virtualFile.getUrl());
+    }
 }

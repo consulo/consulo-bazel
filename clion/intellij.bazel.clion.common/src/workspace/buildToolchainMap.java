@@ -1,87 +1,111 @@
-package org.jetbrains.bazel.clion.workspace
+package org.jetbrains.bazel.clion.workspace;
 
-import com.intellij.build.events.MessageEvent
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.VisibleForTesting
-import org.jetbrains.bazel.clion.BazelCLionCommonBundle
-import org.jetbrains.bazel.clion.sync.CcBuildTarget
-import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget
-import org.jetbrains.bazel.label.DependencyLabelKind
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.sync.workspace.snapshot.hasBuildData
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.bazel.cpp.localize.BazelCLionCommonLocalize;
+import consulo.build.ui.event.MessageEvent;
+import org.jetbrains.bazel.clion.sync.CcBuildTarget;
+import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget;
+import org.jetbrains.bazel.label.DependencyLabel;
+import org.jetbrains.bazel.label.DependencyLabel.DependencyLabelKind;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-context(ctx: CcImportContext)
-fun buildToolchainMap(): Map<WorkspaceTargetKey, WorkspaceTargetKey> {
-  val toolchains = ctx.snapshot.targets.allTargets()
-    .filter { it.hasBuildData<CcToolchainBuildTarget>() }
-    .map { it.key }
-    .toSet()
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
-  // pick an arbitrary fallback toolchain
-  val fallbackToolchain = toolchains.firstOrNull()
-
-  val problems = mutableMapOf<WorkspaceTargetKey, List<WorkspaceTargetKey>>()
-  val result = mutableMapOf<WorkspaceTargetKey, WorkspaceTargetKey>()
-
-  for (target in ctx.snapshot.targets.allTargets()) {
-    if (!target.hasBuildData<CcBuildTarget>()) continue
-    val candidates = findTargetToolchain(target, toolchains)
-
-    // if the CcInfo was provided by an aspect, we do not know what toolchain the aspect used
-    val plainTarget = target.key.aspectIds.ids.isEmpty()
-
-    // no need to report an error if the target has no sources
-    val hasSources = !target.sources.isEmpty()
-
-    if (hasSources && (candidates.size > 1 || (candidates.isEmpty() && plainTarget))) {
-      problems[target.key] = candidates
+// consulo: upstream Kotlin top-level functions of buildToolchainMap.kt
+public final class buildToolchainMap {
+    private buildToolchainMap() {
     }
 
-    val toolchain = candidates.firstOrNull() ?: fallbackToolchain
-    if (toolchain != null) result[target.key] = toolchain
-  }
+    // consulo: upstream `context(ctx: CcImportContext) fun buildToolchainMap()`, the context parameter is the first parameter
+    public static Map<WorkspaceTargetKey, WorkspaceTargetKey> buildToolchainMap(CcImportContext ctx) {
+        Set<WorkspaceTargetKey> toolchains = ctx.getSnapshot().targets().allTargets()
+            .filter(it -> WorkspaceHelpers.hasBuildData(it, CcToolchainBuildTarget.class))
+            .map(BuildTarget::getKey)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
 
-  reportProblems(problems)
+        // pick an arbitrary fallback toolchain
+        @Nullable WorkspaceTargetKey fallbackToolchain = toolchains.isEmpty() ? null : toolchains.iterator().next();
 
-  return result
-}
+        Map<WorkspaceTargetKey, List<WorkspaceTargetKey>> problems = new LinkedHashMap<>();
+        Map<WorkspaceTargetKey, WorkspaceTargetKey> result = new LinkedHashMap<>();
 
-/** Prefer [CcTargetUtils.findToolchain] over directly calling this function. */
-@VisibleForTesting
-@ApiStatus.Internal
-fun findTargetToolchain(target: BuildTarget, toolchains: Set<WorkspaceTargetKey>): List<WorkspaceTargetKey> {
-  val candidates = target.dependencies
-    .filter { it.kind == DependencyLabelKind.TOOLCHAIN }
-    .map { it.targetKey }
-    .filter { toolchains.contains(it) }
+        for (BuildTarget target : ctx.getSnapshot().targets().allTargets().toList()) {
+            if (!WorkspaceHelpers.hasBuildData(target, CcBuildTarget.class)) {
+                continue;
+            }
+            List<WorkspaceTargetKey> candidates = findTargetToolchain(target, toolchains);
 
-  // prefer the dependencies of type toolchain if any were found
-  if (candidates.isNotEmpty()) return candidates
+            // if the CcInfo was provided by an aspect, we do not know what toolchain the aspect used
+            boolean plainTarget = target.getKey().aspectIds().getIds().isEmpty();
 
-  // for older Bazel versions (<= 7) toolchain dependencies are just regular dependencies
-  return target.dependencies.map { it.targetKey }.filter { toolchains.contains(it) }
-}
+            // no need to report an error if the target has no sources
+            boolean hasSources = !target.getSources().isEmpty();
 
-context(ctx: CcImportContext)
-private fun reportProblems(problems: Map<WorkspaceTargetKey, List<WorkspaceTargetKey>>) {
-  if (problems.isEmpty()) return
+            if (hasSources && (candidates.size() > 1 || (candidates.isEmpty() && plainTarget))) {
+                problems.put(target.getKey(), candidates);
+            }
 
-  val description = problems.entries.joinToString("\n") { problem ->
-    val candidates = if (problem.value.isEmpty()) {
-      BazelCLionCommonBundle.message("cc.toolchain.no.dependencies.found")
+            @Nullable WorkspaceTargetKey toolchain = candidates.isEmpty() ? fallbackToolchain : candidates.get(0);
+            if (toolchain != null) {
+                result.put(target.getKey(), toolchain);
+            }
+        }
+
+        reportProblems(ctx, problems);
+
+        return result;
     }
-    else {
-      problem.value.joinToString(", ") { it.presentable() }
+
+    /**
+     * Prefer {@link CcTargetUtils#findToolchain} over directly calling this function.
+     */
+    public static List<WorkspaceTargetKey> findTargetToolchain(BuildTarget target, Set<WorkspaceTargetKey> toolchains) {
+        List<WorkspaceTargetKey> candidates = target.getDependencies().stream()
+            .filter(it -> it.kind() == DependencyLabelKind.TOOLCHAIN)
+            .map(DependencyLabel::targetKey)
+            .filter(toolchains::contains)
+            .toList();
+
+        // prefer the dependencies of type toolchain if any were found
+        if (!candidates.isEmpty()) {
+            return candidates;
+        }
+
+        // for older Bazel versions (<= 7) toolchain dependencies are just regular dependencies
+        return target.getDependencies().stream().map(DependencyLabel::targetKey).filter(toolchains::contains).toList();
     }
 
-    "${problem.key.presentable()}: $candidates"
-  }
+    private static void reportProblems(CcImportContext ctx, Map<WorkspaceTargetKey, List<WorkspaceTargetKey>> problems) {
+        if (problems.isEmpty()) {
+            return;
+        }
 
-  ctx.reportEvent(
-    message = BazelCLionCommonBundle.message("cc.toolchain.unexpected.dependency.count", problems.size),
-    description = description,
-    severity = MessageEvent.Kind.WARNING,
-  )
+        List<String> lines = new ArrayList<>();
+        for (Map.Entry<WorkspaceTargetKey, List<WorkspaceTargetKey>> problem : problems.entrySet()) {
+            String candidates;
+            if (problem.getValue().isEmpty()) {
+                candidates = BazelCLionCommonLocalize.ccToolchainNoDependenciesFound().get();
+            }
+            else {
+                candidates = problem.getValue().stream().map(utils::presentable).collect(Collectors.joining(", "));
+            }
+
+            lines.add(utils.presentable(problem.getKey()) + ": " + candidates);
+        }
+        String description = String.join("\n", lines);
+
+        ctx.reportEvent(
+            MessageEvent.Kind.WARNING,
+            BazelCLionCommonLocalize.ccToolchainUnexpectedDependencyCount(problems.size()),
+            description
+        );
+    }
 }

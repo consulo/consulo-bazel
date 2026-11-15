@@ -1,16 +1,32 @@
-package org.jetbrains.bazel.clion.sync
+package org.jetbrains.bazel.clion.sync;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.commons.LanguageClassProvider
-import org.jetbrains.bazel.commons.TargetKind
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.LanguageClass.LanguageClassProvider;
+import org.jetbrains.bazel.commons.TargetKind;
 
-val CC_LANGUAGE_CLASS = LanguageClass("cc", emptySet())
+import java.util.List;
+import java.util.Set;
 
-internal class CcLanguageClassProvider : LanguageClassProvider {
+// consulo: upstream top-level declarations of CcLanguageClass.kt
+public final class CcLanguageClass {
+    private CcLanguageClass() {
+    }
 
-  override val languages: List<LanguageClass> get() = listOf(CC_LANGUAGE_CLASS)
+    public static final LanguageClass CC_LANGUAGE_CLASS = new LanguageClass("cc", Set.of());
+
+    public static boolean includesCc(TargetKind receiver) {
+        return receiver.languageClasses().contains(CC_LANGUAGE_CLASS);
+    }
 }
 
-@ApiStatus.Internal
-fun TargetKind.includesCc(): Boolean = languageClasses.contains(CC_LANGUAGE_CLASS)
+@ExtensionImpl
+class CcLanguageClassProvider implements LanguageClassProvider {
+    public CcLanguageClassProvider() {
+    }
+
+    @Override
+    public List<LanguageClass> getLanguages() {
+        return List.of(CcLanguageClass.CC_LANGUAGE_CLASS);
+    }
+}

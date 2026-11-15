@@ -1,145 +1,172 @@
-package org.jetbrains.bazel.golang.sync
+package org.jetbrains.bazel.golang.sync;
 
-import com.google.devtools.intellij.aspect.Common
-import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.TargetIdeInfo
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.diagnostic.logger
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.golang.GoLanguageClass
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin
-import org.jetbrains.bazel.sync.workspace.snapshot.OutputLocationCollectionBuilder
-import org.jetbrains.bazel.sync.workspace.snapshot.toWorkspaceTargetKey
-import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams
-import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteResult
-import org.jetbrains.bsp.protocol.BazelResolveRemoteToLocalParams
-import org.jetbrains.bsp.protocol.BazelResolveRemoteToLocalResult
-import org.jetbrains.bsp.protocol.BuildTargetData
-import org.jetbrains.bsp.protocol.OutputLocation
-import java.nio.file.Path
-import java.nio.file.Paths
-import kotlin.io.path.absolute
-import kotlin.reflect.KClass
+import com.google.devtools.intellij.aspect.Common;
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.TargetIdeInfo;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.logging.Logger;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.golang.GoLanguageClassProvider.GoLanguageClass;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin;
+import org.jetbrains.bazel.sync.workspace.snapshot.InterningOutputLocationCollection.OutputLocationCollectionBuilder;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelper;
+import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams;
+import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams.BazelResolveLocalToRemoteResult;
+import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams.BazelResolveRemoteToLocalParams;
+import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams.BazelResolveRemoteToLocalResult;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class GoLanguagePlugin : LanguagePlugin {
-  override val providedBuildTargetTypes: Set<KClass<out BuildTargetData>>
-    get() = setOf(GoBuildTarget::class)
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
-  override fun getSupportedLanguages(): Set<LanguageClass> = setOf(GoLanguageClass.GO)
-
-  override fun collectUsedLanguages(target: TargetIdeInfo): List<LanguageClass> {
-    if (target.hasGoTargetInfo())
-      return listOf(GoLanguageClass.GO)
-    return emptyList()
-  }
-
-  override suspend fun mapBuildTargetData(
-    server: BazelServerFacade,
-    target: TargetIdeInfo,
-  ): List<BuildTargetData> {
-    if (!target.hasGoTargetInfo()) {
-      return emptyList()
+@ExtensionImpl
+public class GoLanguagePlugin implements LanguagePlugin {
+    @Override
+    public Set<Class<? extends BuildTargetData>> getProvidedBuildTargetTypes() {
+        return Set.of(GoBuildTarget.class);
     }
-    val goTarget = target.goTargetInfo
-    return listOf(
-      GoBuildTarget(
-        sdkHomePath = calculateSdkPath(server, goTarget.sdkHomePath),
-        importPath = goTarget.importPath,
-        sources = OutputLocationCollectionBuilder.build(goTarget.sourcesList, server.outputParser),
-        embed = goTarget.embedList.map { it.toWorkspaceTargetKey() },
-      ),
-    )
-  }
 
-  // the aspect gives the `go` binary, the SDK home is two directories above it: `<home>/bin/go`
-  private suspend fun calculateSdkPath(server: BazelServerFacade, sdk: Common.ArtifactLocation?): OutputLocation? {
-    if (sdk == null || sdk.relativePath.isNullOrEmpty()) {
-      return null
+    @Override
+    public Set<LanguageClass> getSupportedLanguages() {
+        return Set.of(GoLanguageClass.GO);
     }
-    val homePath = sdk.relativePath.split('/').dropLast(2).joinToString("/")
-    return server.outputParser.parse(sdk.toBuilder().setRelativePath(homePath).build())
-  }
 
-  companion object {
-    private val logger: Logger = logger<GoLanguagePlugin>()
+    @Override
+    public List<LanguageClass> collectUsedLanguages(TargetIdeInfo target) {
+        if (target.hasGoTargetInfo()) {
+            return List.of(GoLanguageClass.GO);
+        }
+        return List.of();
+    }
+
+    @Override
+    public CompletableFuture<List<BuildTargetData>> mapBuildTargetData(
+        BazelServerFacade server,
+        TargetIdeInfo target
+    ) {
+        if (!target.hasGoTargetInfo()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        IntellijIdeInfo.GoTargetInfo goTarget = target.getGoTargetInfo();
+        // consulo: the suspend calls of upstream run sequentially, in the same order
+        return calculateSdkPath(server, goTarget.getSdkHomePath()).thenCompose(sdkHomePath ->
+            OutputLocationCollectionBuilder.build(goTarget.getSourcesList(), server.getOutputParser()).thenApply(sources ->
+                List.<BuildTargetData>of(
+                    new GoBuildTarget(
+                        sdkHomePath,
+                        goTarget.getImportPath(),
+                        sources,
+                        goTarget.getEmbedList().stream().map(WorkspaceHelper::toWorkspaceTargetKey).toList()
+                    )
+                )
+            )
+        );
+    }
+
+    // the aspect gives the `go` binary, the SDK home is two directories above it: `<home>/bin/go`
+    private static CompletableFuture<@Nullable OutputLocation> calculateSdkPath(
+        BazelServerFacade server,
+        Common.@Nullable ArtifactLocation sdk
+    ) {
+        if (sdk == null || sdk.getRelativePath().isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        List<String> segments = Arrays.asList(sdk.getRelativePath().split("/", -1));
+        String homePath = String.join("/", segments.subList(0, Math.max(segments.size() - 2, 0)));
+        return server.getOutputParser().parse(sdk.toBuilder().setRelativePath(homePath).build()).thenApply(it -> it);
+    }
+
+    private static final Logger logger = Logger.getInstance(GoLanguagePlugin.class);
 
     /**
      * Converts local absolute paths to remote Bazel paths.
      */
-    fun resolveLocalToRemote(pathsResolver: BazelPathsResolver, params: BazelResolveLocalToRemoteParams): BazelResolveLocalToRemoteResult {
-      val mapping = mutableMapOf<String, String>()
-      for (local in params.localPaths) {
-        try {
-          val localAbs = Paths.get(local).toAbsolutePath().normalize()
-          val workspaceRoot = pathsResolver.workspaceRoot()
-          if (localAbs.startsWith(workspaceRoot)) {
-            // If inside the main workspace, get a relative Bazel path:
-            val relative = pathsResolver.getWorkspaceRelativePath(localAbs)
-            mapping[local] = relative
-          }
-          else {
-            // If outside, keep absolute path (but unify slashes):
-            mapping[local] = localAbs.toString().replace("\\", "/")
-          }
+    public static BazelResolveLocalToRemoteResult resolveLocalToRemote(
+        BazelPathsResolver pathsResolver,
+        BazelResolveLocalToRemoteParams params
+    ) {
+        Map<String, String> mapping = new LinkedHashMap<>();
+        for (String local : params.localPaths()) {
+            try {
+                Path localAbs = Paths.get(local).toAbsolutePath().normalize();
+                Path workspaceRoot = pathsResolver.workspaceRoot();
+                if (localAbs.startsWith(workspaceRoot)) {
+                    // If inside the main workspace, get a relative Bazel path:
+                    String relative = pathsResolver.getWorkspaceRelativePath(localAbs);
+                    mapping.put(local, relative);
+                }
+                else {
+                    // If outside, keep absolute path (but unify slashes):
+                    mapping.put(local, localAbs.toString().replace("\\", "/"));
+                }
+            }
+            catch (Exception e) {
+                logger.warn("Failed to resolve local path '" + local + "': " + e.getMessage(), e);
+                mapping.put(local, local);
+            }
         }
-        catch (e: Exception) {
-          logger.warn("Failed to resolve local path '$local': ${e.message}", e)
-          mapping[local] = local
-        }
-      }
-      return BazelResolveLocalToRemoteResult(mapping)
+        return new BazelResolveLocalToRemoteResult(mapping);
     }
 
     /**
      * Converts remote Bazel paths to local absolute paths.
      */
-    fun resolveRemoteToLocal(pathsResolver: BazelPathsResolver, params: BazelResolveRemoteToLocalParams): BazelResolveRemoteToLocalResult {
-      val mapping = mutableMapOf<String, Path>()
-      for (remote in params.remotePaths) {
-        try {
-          val normalizedRemotePath = Path.of(normalizeRemotePath(remote, params.goRoot))
-          val localPath = pathsResolver.resolve(normalizedRemotePath).absolute().normalize()
-          mapping[remote] = localPath
+    public static BazelResolveRemoteToLocalResult resolveRemoteToLocal(
+        BazelPathsResolver pathsResolver,
+        BazelResolveRemoteToLocalParams params
+    ) {
+        Map<String, Path> mapping = new LinkedHashMap<>();
+        for (String remote : params.remotePaths()) {
+            try {
+                Path normalizedRemotePath = Path.of(normalizeRemotePath(remote, params.goRoot()));
+                Path localPath = pathsResolver.resolve(normalizedRemotePath).toAbsolutePath().normalize();
+                mapping.put(remote, localPath);
+            }
+            catch (Exception e) {
+                logger.warn("Failed to resolve remote path '" + remote + "': " + e.getMessage(), e);
+            }
         }
-        catch (e: Exception) {
-          logger.warn("Failed to resolve remote path '$remote': ${e.message}", e)
-        }
-      }
-      return BazelResolveRemoteToLocalResult(mapping)
+        return new BazelResolveRemoteToLocalResult(mapping);
     }
 
-    private fun normalizeRemotePath(path: String, goRoot: String): String =
-      when {
-        path.startsWith("/build/work/") ->
-          afterNthSlash(path, 5)
-
-        path.startsWith("/tmp/go-build-release/buildroot/") ->
-          afterNthSlash(path, 4)
-
-        path.startsWith("GOROOT/") -> {
-          val suffix = afterNthSlash(path, 1)
-          goRoot.removeSuffix("/") + "/" + suffix
+    private static String normalizeRemotePath(String path, String goRoot) {
+        if (path.startsWith("/build/work/")) {
+            return afterNthSlash(path, 5);
         }
-
-        else -> path
-      }
+        else if (path.startsWith("/tmp/go-build-release/buildroot/")) {
+            return afterNthSlash(path, 4);
+        }
+        else if (path.startsWith("GOROOT/")) {
+            String suffix = afterNthSlash(path, 1);
+            return (goRoot.endsWith("/") ? goRoot.substring(0, goRoot.length() - 1) : goRoot) + "/" + suffix;
+        }
+        else {
+            return path;
+        }
+    }
 
     /**
      * Returns the substring after the Nth slash.
      * If the path has fewer than N slashes, returns the original path.
      */
-    private fun afterNthSlash(path: String, n: Int): String {
-      var index = 0
-      repeat(n) {
-        index = path.indexOf('/', index) + 1
-        if (index == 0) {
-          return path
+    private static String afterNthSlash(String path, int n) {
+        int index = 0;
+        for (int i = 0; i < n; i++) {
+            index = path.indexOf('/', index) + 1;
+            if (index == 0) {
+                return path;
+            }
         }
-      }
-      return if (index < path.length) path.substring(index) else ""
+        return index < path.length() ? path.substring(index) : "";
     }
-  }
 }

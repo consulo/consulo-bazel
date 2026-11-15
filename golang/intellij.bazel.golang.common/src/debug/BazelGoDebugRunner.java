@@ -1,86 +1,84 @@
-package org.jetbrains.bazel.golang.debug
+package org.jetbrains.bazel.golang.debug;
 
-import com.goide.dlv.DlvDebugProcess
-import com.goide.dlv.DlvDisconnectOption
-import com.goide.dlv.DlvRemoteVmConnection
-import com.goide.execution.GoBuildingRunner
-import com.goide.execution.GoBuildingRunningState
-import com.intellij.execution.DefaultExecutionResult
-import com.intellij.execution.ExecutionResult
-import com.intellij.execution.configurations.RunProfile
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.execution.ui.RunContentDescriptor
-import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.util.Condition
-import com.intellij.xdebugger.XDebugProcess
-import com.intellij.xdebugger.XDebugProcessStarter
-import com.intellij.xdebugger.XDebugSession
-import com.intellij.xdebugger.XDebuggerManager
-import com.intellij.xdebugger.impl.XDebugSessionImpl
-import org.jetbrains.annotations.VisibleForTesting
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.concurrency.Promise
-import org.jetbrains.concurrency.resolvedPromise
+import consulo.execution.configuration.RunProfile;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.process.ProcessHandler;
+import consulo.util.lang.function.Condition;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelGoDebugRunner : GoBuildingRunner() {
-  override fun getRunnerId(): String = "BazelGoDebugRunner"
-
-  override fun canRun(executorId: String, profile: RunProfile): Boolean {
-    // if target cannot be debugged, do not offer debugging it
-    if (executorId != DefaultDebugExecutor.EXECUTOR_ID) return false
-    if (profile !is BazelRunConfiguration) return false
-    return profile.handler is BazelGoRunHandler || profile.handler is BazelGoTestHandler
-  }
-
-  override fun execute(environment: ExecutionEnvironment, state: RunProfileState): Promise<RunContentDescriptor?> =
-    resolvedPromise(attachVM(state as GoBuildingRunningState<*>, environment))
-
-  private fun attachVM(state: GoBuildingRunningState<*>, executionEnvironment: ExecutionEnvironment): RunContentDescriptor {
-    val project = executionEnvironment.project
-    (state as GoDebugCommandLineState).patchNativeState()
-    ProgressManager.getInstance().runProcessWithProgressSynchronously(
-      { ReadAction.run<RuntimeException>(state::prepareStateInBGT) },
-      BazelPluginBundle.message("go.debug.progress.manager.preparing.process.title"),
-      false,
-      project,
-    )
-    val starter = BazelDebugProcessStarter(state.execute(executionEnvironment.executor, this), state)
-    return XDebuggerManager.getInstance(project).newSessionBuilder(starter)
-      .environment(executionEnvironment)
-      .startSession().runContentDescriptor!!
-  }
-}
-
-private class BazelDebugProcessStarter(
-  private val executionResult: ExecutionResult,
-  val state: GoBuildingRunningState<*>
-) : XDebugProcessStarter() {
-  override fun start(session: XDebugSession): XDebugProcess {
-    val sessionImpl = session as XDebugSessionImpl
-    sessionImpl.addExtraActions(*executionResult.actions)
-    (executionResult as? DefaultExecutionResult)?.let {
-      sessionImpl.addRestartActions(*it.restartActions)
+// TODO consulo: not registered (upstream programRunner). IntelliJ GoBuildingRunner and the Delve debugger (com.goide.dlv:
+//  DlvDebugProcess, DlvRemoteVmConnection, DlvDisconnectOption) are missing in consulo-google-go, and
+//  GoBuildingRunningState.debugServerAddress / XDebugSessionImpl.addExtraActions are not available; the runner keeps
+//  its checks, attaching the debugger is kept commented out
+public class BazelGoDebugRunner /* : GoBuildingRunner() */ {
+    public String getRunnerId() {
+        return "BazelGoDebugRunner";
     }
-    val connection = DlvRemoteVmConnection(DlvDisconnectOption.KILL)
-    val process = DlvDebugProcess(session, connection, executionResult, true)
-    connection.open(state.debugServerAddress, delveAttachStopCondition(executionResult.processHandler))
-    return process
-  }
+
+    public boolean canRun(String executorId, RunProfile profile) {
+        // if target cannot be debugged, do not offer debugging it
+        if (!executorId.equals(DefaultDebugExecutor.EXECUTOR_ID)) {
+            return false;
+        }
+        if (!(profile instanceof BazelRunConfiguration configuration)) {
+            return false;
+        }
+        BazelRunHandler handler = configuration.getHandler();
+        return handler instanceof BazelGoRunHandler || handler instanceof BazelGoTestHandler;
+    }
+
+    // TODO consulo: GoBuildingRunner.execute(environment, state): Promise<RunContentDescriptor?> and the Delve attach
+    // override fun execute(environment: ExecutionEnvironment, state: RunProfileState): Promise<RunContentDescriptor?> =
+    //   resolvedPromise(attachVM(state as GoBuildingRunningState<*>, environment))
+    //
+    // private fun attachVM(state: GoBuildingRunningState<*>, executionEnvironment: ExecutionEnvironment): RunContentDescriptor {
+    //   val project = executionEnvironment.project
+    //   (state as GoDebugCommandLineState).patchNativeState()
+    //   ProgressManager.getInstance().runProcessWithProgressSynchronously(
+    //     { ReadAction.run<RuntimeException>(state::prepareStateInBGT) },
+    //     BazelPluginBundle.message("go.debug.progress.manager.preparing.process.title"),
+    //     false,
+    //     project,
+    //   )
+    //   val starter = BazelDebugProcessStarter(state.execute(executionEnvironment.executor, this), state)
+    //   return XDebuggerManager.getInstance(project).newSessionBuilder(starter)
+    //     .environment(executionEnvironment)
+    //     .startSession().runContentDescriptor!!
+    // }
+
+    /**
+     * Builds the stop condition for the Delve debugger attach. With a Delve {@code processHandler} the attach is
+     * process-bound — {@code RemoteVmConnection.open} retries until Delve is reachable or its process exits
+     * ({@code doOpen} uses {@code maxAttemptCount = -1}) — instead of the default bounded ~19s connect window. This path
+     * opens the connection right after launching Delve (unlike the standard {@code GoDebugStarter}, which waits for
+     * {@code getDebugClientAddress()}), so on a slow Delve startup the bounded window races the port opening. Returns
+     * {@code null} (bounded window) when no process handler is available.
+     */
+    // consulo: upstream top-level function of BazelGoDebugRunner.kt
+    public static @Nullable Condition<Void> delveAttachStopCondition(@Nullable ProcessHandler processHandler) {
+        if (processHandler == null) {
+            return null;
+        }
+        return it -> processHandler.isProcessTerminating() || processHandler.isProcessTerminated();
+    }
 }
 
-/**
- * Builds the stop condition for the Delve debugger attach. With a Delve [processHandler] the attach is
- * process-bound — `RemoteVmConnection.open` retries until Delve is reachable or its process exits
- * (`doOpen` uses `maxAttemptCount = -1`) — instead of the default bounded ~19s connect window. This path
- * opens the connection right after launching Delve (unlike the standard `GoDebugStarter`, which waits for
- * `getDebugClientAddress()`), so on a slow Delve startup the bounded window races the port opening. Returns
- * `null` (bounded window) when no process handler is available.
- */
-@VisibleForTesting
-fun delveAttachStopCondition(processHandler: ProcessHandler?): Condition<Void>? =
-  processHandler?.let { handler -> Condition<Void> { handler.isProcessTerminating || handler.isProcessTerminated } }
+// TODO consulo: XDebugProcessStarter for the Delve debugger, see BazelGoDebugRunner
+// private class BazelDebugProcessStarter(
+//   private val executionResult: ExecutionResult,
+//   val state: GoBuildingRunningState<*>
+// ) : XDebugProcessStarter() {
+//   override fun start(session: XDebugSession): XDebugProcess {
+//     val sessionImpl = session as XDebugSessionImpl
+//     sessionImpl.addExtraActions(*executionResult.actions)
+//     (executionResult as? DefaultExecutionResult)?.let {
+//       sessionImpl.addRestartActions(*it.restartActions)
+//     }
+//     val connection = DlvRemoteVmConnection(DlvDisconnectOption.KILL)
+//     val process = DlvDebugProcess(session, connection, executionResult, true)
+//     connection.open(state.debugServerAddress, delveAttachStopCondition(executionResult.processHandler))
+//     return process
+//   }
+// }

@@ -13,29 +13,49 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.golang.sync
+package org.jetbrains.bazel.golang.sync;
 
-import com.intellij.navigation.ItemPresentation
-import com.intellij.openapi.roots.SyntheticLibrary
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import javax.swing.Icon
+import consulo.localize.LocalizeValue;
+import consulo.navigation.ItemPresentation;
+import consulo.ui.image.Image;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jspecify.annotations.Nullable;
 
-internal const val GO_EXTERNAL_LIBRARY_ROOT_NAME = "Go Libraries"
+import java.util.List;
 
-@ApiStatus.Internal
-data class GoExternalSyntheticLibrary(private val files: List<VirtualFile>) :
-  SyntheticLibrary(),
-  ItemPresentation {
-  override fun getSourceRoots(): List<VirtualFile> = files.filter { it.isValid }
+// TODO consulo: IntelliJ SyntheticLibrary (a library shown under External Libraries) is missing; the class keeps its data and
+//  presentation, its roots are indexed through GoAdditionalLibraryRootsProvider
+public record GoExternalSyntheticLibrary(List<VirtualFile> files) implements ItemPresentation {
+    // consulo: upstream internal top-level const of GoExternalSyntheticLibrary.kt
+    public static final String GO_EXTERNAL_LIBRARY_ROOT_NAME = "Go Libraries";
 
-  override fun getPresentableText(): String = GO_EXTERNAL_LIBRARY_ROOT_NAME
+    public List<VirtualFile> getSourceRoots() {
+        return files.stream().filter(VirtualFile::isValid).toList();
+    }
 
-  override fun getIcon(unused: Boolean): Icon = BazelPluginIcons.bazel
+    @Override
+    public LocalizeValue getPresentableText() {
+        return LocalizeValue.of(GO_EXTERNAL_LIBRARY_ROOT_NAME);
+    }
 
-  /**
-   * Prevent [files] from polluting [com.intellij.util.indexing.dependenciesCache.SyntheticLibraryDescriptor.debugLibraryName]
-   */
-  override fun toString(): String = GO_EXTERNAL_LIBRARY_ROOT_NAME
+    // consulo: ItemPresentation of Consulo also has the location string
+    @Override
+    public @Nullable String getLocationString() {
+        return null;
+    }
+
+    @Override
+    public Image getIcon() {
+        return BazelPluginIcons.bazel();
+    }
+
+    /**
+     * Prevent {@link #files} from polluting
+     * {@code com.intellij.util.indexing.dependenciesCache.SyntheticLibraryDescriptor.debugLibraryName}
+     */
+    @Override
+    public String toString() {
+        return GO_EXTERNAL_LIBRARY_ROOT_NAME;
+    }
 }

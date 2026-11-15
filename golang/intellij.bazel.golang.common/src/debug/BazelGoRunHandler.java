@@ -1,77 +1,83 @@
-package org.jetbrains.bazel.golang.debug
+package org.jetbrains.bazel.golang.debug;
 
-import com.goide.execution.application.GoApplicationConfiguration
-import com.intellij.execution.ExecutionException
-import com.intellij.execution.Executor
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.golang.targetKinds.includesGo
-import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.config.BazelRunConfigurationType
-import org.jetbrains.bazel.run.import.GooglePluginAwareRunHandlerProvider
-import org.jetbrains.bazel.run.state.GenericRunState
-import org.jetbrains.bsp.protocol.BuildTarget
-import java.util.concurrent.atomic.AtomicReference
+import com.goide.runconfig.application.GoApplicationConfiguration;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.BeforeRunTask;
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.module.Module;
+import consulo.process.ExecutionException;
+import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
+import org.jetbrains.bazel.run.state.GenericRunState;
 
-internal class BazelGoRunHandler(configuration: BazelRunConfiguration) : BazelRunHandler {
-  init {
-    configuration.setBeforeRunTasksFromHandler(
-      listOfNotNull(
-        ScriptPathDebugBeforeRunTaskProvider().createTask(configuration),
-      ),
-    )
-  }
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
-  override val name: String
-    get() = "Bazel Go Run Handler"
+// consulo: the nested upstream BazelGoRunHandler.BazelGoRunHandlerProvider has its own file (nested @ExtensionImpl classes are not
+// supported by the annotation processor), see BazelGoRunHandlerProvider
+public class BazelGoRunHandler implements BazelRunHandler {
+    private final GenericRunState myState = new GenericRunState();
 
-  override val isTestHandler: Boolean = false
-
-  override val state = GenericRunState()
-
-  override fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState =
-    when {
-      executor is DefaultDebugExecutor -> {
-        environment.putCopyableUserData(EXECUTABLE_KEY, AtomicReference())
-        val target = getTargetId(environment)
-        val module = GoWorkspaceModuleUtil.findModule(environment.project) ?: error("Could not find module for target $target")
-        val configuration = GoApplicationConfiguration(environment.project, "default", BazelRunConfigurationType())
-        configuration.setModule(module)
-        GoRunWithDebugCommandLineState(
-          environment = environment,
-          module = module,
-          configuration = configuration,
-          settings = state,
-        )
-      }
-
-      else -> {
-        BazelRunCommandLineState(environment, state)
-      }
+    public BazelGoRunHandler(BazelRunConfiguration configuration) {
+        List<BeforeRunTask> beforeRunTasks = new ArrayList<>();
+        ScriptPathDebugBeforeRunTaskProvider.Task task = new ScriptPathDebugBeforeRunTaskProvider().createTask(configuration);
+        if (task != null) {
+            beforeRunTasks.add(task);
+        }
+        configuration.setBeforeRunTasksFromHandler(beforeRunTasks);
     }
 
-  private fun getTargetId(environment: ExecutionEnvironment): Label =
-    (environment.runProfile as? BazelRunConfiguration)?.targets?.singleOrNull()
-      ?: throw ExecutionException(BazelPluginBundle.message("go.runner.wrong.configuration"))
+    @Override
+    public String getName() {
+        return "Bazel Go Run Handler";
+    }
 
-  class BazelGoRunHandlerProvider : GooglePluginAwareRunHandlerProvider {
-    override val id: String
-      get() = "BazelGoRunHandlerProvider"
+    @Override
+    public boolean isTestHandler() {
+        return false;
+    }
 
-    override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = BazelGoRunHandler(configuration)
+    @Override
+    public GenericRunState getState() {
+        return myState;
+    }
 
-    override fun canRun(project: Project, targets: List<BuildTarget>): Boolean =
-      targets.all { it.kind.includesGo() && it.kind.ruleType == RuleType.BINARY }
+    @Override
+    public RunProfileState getRunProfileState(Executor executor, ExecutionEnvironment environment) throws ExecutionException {
+        if (executor instanceof DefaultDebugExecutor) {
+            environment.putCopyableUserData(BazelGoTestHandler.EXECUTABLE_KEY, new AtomicReference<>());
+            Label target = getTargetId(environment);
+            Module module = GoWorkspaceModuleUtil.findModule(environment.getProject());
+            if (module == null) {
+                throw new IllegalStateException("Could not find module for target " + target);
+            }
+            GoApplicationConfiguration configuration =
+                new GoApplicationConfiguration(environment.getProject(), "default", new BazelRunConfigurationType());
+            configuration.setModule(module);
+            return new GoRunWithDebugCommandLineState(
+                environment,
+                module,
+                configuration,
+                myState
+            );
+        }
+        else {
+            return new BazelRunCommandLineState(environment, myState);
+        }
+    }
 
-    override val googleHandlerId: String = "BlazeGoRunConfigurationHandlerProvider"
-    override val isTestHandler: Boolean = false
-  }
+    private static Label getTargetId(ExecutionEnvironment environment) throws ExecutionException {
+        if (environment.getRunProfile() instanceof BazelRunConfiguration configuration && configuration.getTargets().size() == 1) {
+            return configuration.getTargets().get(0);
+        }
+        throw new ExecutionException(BazelPluginLocalize.goRunnerWrongConfiguration());
+    }
 }

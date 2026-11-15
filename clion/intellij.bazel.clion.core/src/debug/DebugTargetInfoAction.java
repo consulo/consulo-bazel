@@ -1,105 +1,137 @@
-package org.jetbrains.bazel.clion.debug
+package org.jetbrains.bazel.clion.debug;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.clion.BazelCLionCoreBundle
-import org.jetbrains.bazel.clion.sync.CcBuildTarget
-import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget
-import org.jetbrains.bazel.clion.workspace.presentable
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.target.baseDirectoryLocation
-import org.jetbrains.bazel.target.isWorkspace
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.BuildTargetData
-import org.jetbrains.bsp.protocol.isFull
+import consulo.annotation.component.ActionImpl;
+import consulo.bazel.cpp.localize.BazelCLionCoreLocalize;
+import consulo.project.Project;
+import org.jetbrains.bazel.clion.sync.CcBuildTarget;
+import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget;
+import org.jetbrains.bazel.clion.workspace.utils;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
+import org.jetbrains.bazel.target.BuildTargetUtils;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jspecify.annotations.Nullable;
 
-/** Asks for a target, then reports every section of it. */
-internal class DebugTargetInfoAction : BazelDebugAction() {
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
 
-  override val showOutputInEditor: Boolean
-    get() = true
-
-  override suspend fun exec(project: Project): Any {
-    val snapshot = snapshotOrFail(project)
-
-    val summaries = snapshot.targets.allTargets(TargetLoadOptions.SUMMARY).toList()
-    if (summaries.isEmpty()) {
-      fail("no target found in the workspace snapshot")
+/**
+ * Asks for a target, then reports every section of it.
+ */
+// consulo: the group Bazel.CLion.DebugActions (no class upstream) is written by the coordinator
+@ActionImpl(id = "Bazel.CLion.DebugTargetInfo")
+public class DebugTargetInfoAction extends BazelDebugAction {
+    public DebugTargetInfoAction() {
+        super(BazelCLionCoreLocalize.actionBazelClionDebugtargetinfoText());
     }
 
-    val chosen = chooseInPopup(project, BazelCLionCoreBundle.message("debug.popup.targets.title"), summaries) {
-      "${it.kind.kind} rule ${it.key.presentable()}"
+    @Override
+    protected boolean getShowOutputInEditor() {
+        return true;
     }
 
-    val target = snapshot.targets.findTargetByKey(chosen.key, TargetLoadOptions.ALL)
-      ?: fail("target ${chosen.key} is absent from the workspace snapshot")
+    @Override
+    protected CompletableFuture<?> exec(Project project) {
+        return snapshotOrFail(project).thenCompose(snapshot -> {
+            List<BuildTarget> summaries = snapshot.targets().allTargets(TargetLoadOptions.SUMMARY).toList();
+            if (summaries.isEmpty()) {
+                fail("no target found in the workspace snapshot");
+            }
 
-    if (!target.isFull) {
-      fail("target ${chosen.key} did not load every section")
+            return chooseInPopup.chooseInPopup(project, BazelCLionCoreLocalize.debugPopupTargetsTitle(), summaries, it ->
+                it.getKind().kind() + " rule " + utils.presentable(it.getKey())
+            ).thenApply(chosen -> {
+                BuildTarget target = snapshot.targets().findTargetByKey(chosen.getKey(), TargetLoadOptions.ALL);
+                if (target == null) {
+                    return fail("target " + chosen.getKey() + " is absent from the workspace snapshot");
+                }
+
+                if (!BuildTarget.isFull(target)) {
+                    fail("target " + chosen.getKey() + " did not load every section");
+                }
+
+                return toJsonMap(target, snapshot.repoMapping());
+            });
+        });
     }
 
-    return target.toJsonMap(snapshot.repoMapping)
-  }
-}
+    private static Map<String, @Nullable Object> toJsonMap(BuildTarget receiver, RepoMapping repoMapping) {
+        Map<String, @Nullable Object> data = new LinkedHashMap<>();
+        for (BuildTargetData it : receiver.getData()) {
+            data.put(it.getClass().getSimpleName(), toJsonMap(it));
+        }
 
-private fun BuildTarget.toJsonMap(repoMapping: RepoMapping): Map<String, Any?> {
-  return mapOf(
-    "key" to key,
-    "kind" to kind,
-    "base_directory" to baseDirectoryLocation,
-    "generator_name" to generatorName,
-    "is_workspace" to isWorkspace(repoMapping),
-    "is_test_only" to isTestOnly,
-    "tags" to tags,
-    "dependencies" to dependencies,
-    "sources" to sources,
-    "resources" to resources,
-    "data" to data.associate { it.javaClass.simpleName to it.toJsonMap() },
-  )
-}
+        Map<String, @Nullable Object> result = new LinkedHashMap<>();
+        result.put("key", receiver.getKey());
+        result.put("kind", receiver.getKind());
+        result.put("base_directory", BuildTargetUtils.getBaseDirectoryLocation(receiver));
+        result.put("generator_name", receiver.getGeneratorName());
+        result.put("is_workspace", BuildTargetUtils.isWorkspace(receiver, repoMapping));
+        result.put("is_test_only", receiver.isTestOnly());
+        result.put("tags", receiver.getTags());
+        result.put("dependencies", receiver.getDependencies());
+        result.put("sources", receiver.getSources());
+        result.put("resources", receiver.getResources());
+        result.put("data", data);
+        return result;
+    }
 
-private fun BuildTargetData.toJsonMap(): Map<String, Any?> {
-  return when (this) {
-    is CcBuildTarget -> toJsonMap()
-    is CcToolchainBuildTarget -> toJsonMap()
-    else -> emptyMap()
-  }
-}
-private fun CcBuildTarget.toJsonMap(): Map<String, Any?> {
-  return mapOf(
-    "rule_context" to ruleContext?.let {
-      mapOf(
-        "headers" to it.headers,
-        "textualHeaders" to it.textualHeaders,
-        "copts" to it.copts,
-        "conlyopts" to it.conlyopts,
-        "cxxopts" to it.cxxopts,
-        "args" to it.args,
-        "include_prefix" to it.includePrefix,
-        "strip_include_prefix" to it.stripIncludePrefix,
-      )
-    },
-    "compilationContext" to linkedMapOf(
-      "headers" to compilationContext.headers,
-      "defines" to compilationContext.defines,
-      "includes" to compilationContext.includes,
-      "quote_includes" to compilationContext.quoteIncludes,
-      "system_includes" to compilationContext.systemIncludes,
-    ),
-  )
-}
+    private static Map<String, @Nullable Object> toJsonMap(BuildTargetData receiver) {
+        if (receiver instanceof CcBuildTarget ccBuildTarget) {
+            return toJsonMap(ccBuildTarget);
+        }
+        else if (receiver instanceof CcToolchainBuildTarget ccToolchainBuildTarget) {
+            return toJsonMap(ccToolchainBuildTarget);
+        }
+        else {
+            return Map.of();
+        }
+    }
 
-private fun CcToolchainBuildTarget.toJsonMap(): Map<String, Any?> {
-  return mapOf(
-    "target_name" to targetName,
-    "compiler_name" to compilerName,
-    "c_compiler" to cCompiler,
-    "cpp_compiler" to cppCompiler,
-    "c_option" to cOption,
-    "cpp_option" to cppOption,
-    "built_in_include_directories" to builtInIncludeDirectories,
-    "sysroot" to sysroot,
-    "c_environment" to cEnvironment.toSortedMap(),
-    "cpp_environment" to cppEnvironment.toSortedMap(),
-  )
+    private static Map<String, @Nullable Object> toJsonMap(CcBuildTarget receiver) {
+        CcBuildTarget.RuleContext it = receiver.ruleContext();
+        Map<String, @Nullable Object> ruleContext = null;
+        if (it != null) {
+            ruleContext = new LinkedHashMap<>();
+            ruleContext.put("headers", it.headers());
+            ruleContext.put("textualHeaders", it.textualHeaders());
+            ruleContext.put("copts", it.copts());
+            ruleContext.put("conlyopts", it.conlyopts());
+            ruleContext.put("cxxopts", it.cxxopts());
+            ruleContext.put("args", it.args());
+            ruleContext.put("include_prefix", it.includePrefix());
+            ruleContext.put("strip_include_prefix", it.stripIncludePrefix());
+        }
+
+        Map<String, @Nullable Object> compilationContext = new LinkedHashMap<>();
+        compilationContext.put("headers", receiver.compilationContext().headers());
+        compilationContext.put("defines", receiver.compilationContext().defines());
+        compilationContext.put("includes", receiver.compilationContext().includes());
+        compilationContext.put("quote_includes", receiver.compilationContext().quoteIncludes());
+        compilationContext.put("system_includes", receiver.compilationContext().systemIncludes());
+
+        Map<String, @Nullable Object> result = new LinkedHashMap<>();
+        result.put("rule_context", ruleContext);
+        result.put("compilationContext", compilationContext);
+        return result;
+    }
+
+    private static Map<String, @Nullable Object> toJsonMap(CcToolchainBuildTarget receiver) {
+        Map<String, @Nullable Object> result = new LinkedHashMap<>();
+        result.put("target_name", receiver.targetName());
+        result.put("compiler_name", receiver.compilerName());
+        result.put("c_compiler", receiver.cCompiler());
+        result.put("cpp_compiler", receiver.cppCompiler());
+        result.put("c_option", receiver.cOption());
+        result.put("cpp_option", receiver.cppOption());
+        result.put("built_in_include_directories", receiver.builtInIncludeDirectories());
+        result.put("sysroot", receiver.sysroot());
+        result.put("c_environment", new TreeMap<>(receiver.cEnvironment()));
+        result.put("cpp_environment", new TreeMap<>(receiver.cppEnvironment()));
+        return result;
+    }
 }

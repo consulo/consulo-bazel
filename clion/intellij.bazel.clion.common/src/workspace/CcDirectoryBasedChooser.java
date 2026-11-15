@@ -1,49 +1,81 @@
-package org.jetbrains.bazel.clion.workspace
+package org.jetbrains.bazel.clion.workspace;
 
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
-import com.jetbrains.cidr.lang.workspace.OCResolveConfiguration
-import com.jetbrains.cidr.lang.workspace.OCResolveConfigurationChooser
-import com.jetbrains.cidr.lang.workspace.OCResolveConfigurationSlice
-import com.jetbrains.cidr.lang.workspace.OCWorkspace
-import org.jetbrains.bazel.sync.environment.bazelProjectInfo
+import consulo.application.progress.ProgressManager;
+import consulo.bazel.cpp.workspace.CcWorkspaceModel;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jspecify.annotations.Nullable;
 
-/** Selects a configuration for files that are not a source of any configuration, e.g. newly created files. */
-internal class CcDirectoryBasedChooser : OCResolveConfigurationChooser {
-
-  override fun selectPreselectedResolveConfiguration(
-    project: Project,
-    slice: OCResolveConfigurationSlice,
-    file: VirtualFile?,
-  ): OCResolveConfiguration? {
-    // a specific slice means the file is known to the workspace, leave the choice to the other choosers
-    if (file == null || slice !is OCResolveConfigurationSlice.All || !project.bazelProjectInfo.isBazelProject) return null
-
-    val projectRoot = project.bazelProjectInfo.projectRootDir ?: return null
-    val workspace = OCWorkspace.getInstance(project)
-
-    var directory = file.parent
-    while (directory != null && VfsUtilCore.isAncestor(projectRoot, directory, /* strict = */ false)) {
-      findConfigurationInDirectory(workspace, directory)?.let { return it }
-      directory = directory.parent
+/**
+ * Selects a configuration for files that are not a source of any configuration, e.g. newly created files.
+ * <p>
+ * consulo: CIDR {@code OCResolveConfigurationChooser} (extension {@code cidr.projectModel.resolveConfigurationChooser}) does
+ * not exist in consulo-cpp; the class is not registered, {@code consulo.bazel.cpp.workspace.CcFileOptionsContributor}
+ * asks it for the files that are not a source of a configuration. {@code OCWorkspace} is {@link CcWorkspaceModel},
+ * {@code OCResolveConfiguration} is {@link CcWorkspaceModel.Configuration}.
+ */
+public class CcDirectoryBasedChooser {
+    public CcDirectoryBasedChooser() {
     }
 
-    return null
-  }
-}
+    // consulo: upstream also gets the OCResolveConfigurationSlice; consulo-cpp asks for every file without a slice, which
+    // upstream handles as OCResolveConfigurationSlice.All
+    public CcWorkspaceModel.@Nullable Configuration selectPreselectedResolveConfiguration(
+        Project project,
+        @Nullable VirtualFile file
+    ) {
+        // a specific slice means the file is known to the workspace, leave the choice to the other choosers
+        if (file == null || !BazelProjectInfoService.getBazelProjectInfo(project).isBazelProject()) {
+            return null;
+        }
 
-/** Returns the first configuration of the sources in [directory]. */
-private fun findConfigurationInDirectory(workspace: OCWorkspace, directory: VirtualFile): OCResolveConfiguration? {
-  for (child in directory.children) {
-    ProgressManager.checkCanceled()
-    if (child.isDirectory) continue
+        VirtualFile projectRoot = BazelProjectInfoService.getBazelProjectInfo(project).getProjectRootDir();
+        if (projectRoot == null) {
+            return null;
+        }
+        CcWorkspaceModel workspace = CcWorkspaceModel.getInstance(project);
+        // consulo: OCWorkspace.getInstance(project) always exists; the model is absent before the first C/C++ import
+        if (workspace == null) {
+            return null;
+        }
 
-    for (configuration in workspace.getConfigurationsForFile(child)) {
-      return configuration
+        VirtualFile directory = file.getParent();
+        while (directory != null && VirtualFileUtil.isAncestor(projectRoot, directory, /* strict = */ false)) {
+            CcWorkspaceModel.Configuration configuration = findConfigurationInDirectory(workspace, directory);
+            if (configuration != null) {
+                return configuration;
+            }
+            directory = directory.getParent();
+        }
+
+        return null;
     }
-  }
 
-  return null
+    /**
+     * Returns the first configuration of the sources in {@code directory}.
+     */
+    private static CcWorkspaceModel.@Nullable Configuration findConfigurationInDirectory(
+        CcWorkspaceModel workspace,
+        VirtualFile directory
+    ) {
+        VirtualFile[] children = directory.getChildren();
+        // consulo: getChildren() is nullable in Consulo (an invalid directory)
+        if (children == null) {
+            return null;
+        }
+        for (VirtualFile child : children) {
+            ProgressManager.checkCanceled();
+            if (child.isDirectory()) {
+                continue;
+            }
+
+            for (CcWorkspaceModel.Configuration configuration : workspace.getConfigurationsForFile(child)) {
+                return configuration;
+            }
+        }
+
+        return null;
+    }
 }

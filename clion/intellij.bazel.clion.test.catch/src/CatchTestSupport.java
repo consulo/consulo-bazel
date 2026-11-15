@@ -14,42 +14,54 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.clion.test.catch
+// consulo: upstream package org.jetbrains.bazel.clion.test.catch; `catch` is a Java keyword
+package org.jetbrains.bazel.clion.test.catch_;
 
-import com.intellij.execution.Location
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.ModificationTracker
-import com.intellij.psi.search.GlobalSearchScope
-import com.jetbrains.cidr.execution.testing.CidrTestLanguageSupport
-import com.jetbrains.cidr.execution.testing.CidrTestScopeElement
-import com.jetbrains.cidr.execution.testing.tcatch.CatchTestLanguageSupport
-import com.jetbrains.cidr.execution.testing.tcatch.CidrCatchTestLinker
-import com.jetbrains.cidr.execution.testing.tcatch.CidrCatchTestLocationProvider
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.clion.run.BazelCcTestFrameworkSupport
-import org.jetbrains.bazel.clion.run.TEST_NAME_PARTS_SPLITTER
+import consulo.component.util.ModificationTracker;
+import consulo.execution.action.Location;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.project.Project;
+import consulo.util.lang.StringUtil;
+import org.jetbrains.bazel.clion.run.BazelCcTestFrameworkSupport;
+import org.jetbrains.bazel.clion.run.BazelCcTestLocationHintProvider;
 
-@ApiStatus.Internal
-class CatchTestSupport : BazelCcTestFrameworkSupport {
-  override val framework: CidrTestLanguageSupport
-    get() = CatchTestLanguageSupport.getInstance()
+import java.util.List;
 
-  override fun locate(path: String, project: Project, scope: GlobalSearchScope): List<Location<*>> {
+// TODO consulo: not registered (upstream ccTestSupport, plugin dependency org.jetbrains.plugins.clion.test.catch),
+//   CatchTestLanguageSupport / CidrCatchTestLinker / CidrCatchTestLocationProvider (com.jetbrains.cidr.execution.testing.tcatch)
+//   do not exist: consulo-cpp has no Catch2 test framework support
+public class CatchTestSupport implements BazelCcTestFrameworkSupport {
+    // TODO consulo: CidrTestLanguageSupport / CatchTestLanguageSupport do not exist in consulo-cpp
+    // override val framework: CidrTestLanguageSupport
+    //   get() = CatchTestLanguageSupport.getInstance()
 
-    val test = path.substringAfter(TEST_NAME_PARTS_SPLITTER)
+    @Override
+    public List<Location> locate(String path, Project project, GlobalSearchScope scope) {
 
-    val linker = CidrCatchTestLinker.create(test)
+        String test = StringUtil.substringAfter(path, BazelCcTestLocationHintProvider.TEST_NAME_PARTS_SPLITTER);
+        if (test == null) {
+            test = path;
+        }
 
-    return CidrCatchTestLocationProvider.INSTANCE.getLocation(
-      CidrCatchTestLocationProvider.PROTOCOL, linker.findPath, project, scope,
-    )
-  }
+        // TODO consulo: CidrCatchTestLinker / CidrCatchTestLocationProvider do not exist in consulo-cpp
+        // val linker = CidrCatchTestLinker.create(test)
+        //
+        // return CidrCatchTestLocationProvider.INSTANCE.getLocation(
+        //   CidrCatchTestLocationProvider.PROTOCOL, linker.findPath, project, scope,
+        // )
+        return List.of();
+    }
 
-  /** Catch2 accepts a comma-separated list of test case names. */
-  override fun createTestFilter(tests: List<CidrTestScopeElement>): String? {
-    return tests.map { it.pattern }.ifEmpty { null }?.joinToString(",")
-  }
+    // TODO consulo: CidrTestScopeElement does not exist in consulo-cpp
+    // /** Catch2 accepts a comma-separated list of test case names. */
+    // override fun createTestFilter(tests: List<CidrTestScopeElement>): String? {
+    //   return tests.map { it.pattern }.ifEmpty { null }?.joinToString(",")
+    // }
 
-  override fun getLocationCacheModificationTracker(project: Project): ModificationTracker =
-    CidrCatchTestLocationProvider.INSTANCE.getLocationCacheModificationTracker(project)
+    @Override
+    public ModificationTracker getLocationCacheModificationTracker(Project project) {
+        // TODO consulo: CidrCatchTestLocationProvider does not exist in consulo-cpp
+        // CidrCatchTestLocationProvider.INSTANCE.getLocationCacheModificationTracker(project)
+        return ModificationTracker.NEVER_CHANGED;
+    }
 }

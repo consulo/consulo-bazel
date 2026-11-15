@@ -14,44 +14,61 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.clion.test.google
+package org.jetbrains.bazel.clion.test.google;
 
-import com.intellij.execution.Location
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.ModificationTracker
-import com.intellij.psi.search.GlobalSearchScope
-import com.jetbrains.cidr.execution.testing.CidrTestLanguageSupport
-import com.jetbrains.cidr.execution.testing.CidrTestScopeElement
-import com.jetbrains.cidr.execution.testing.google.CidrGoogleTestLinker
-import com.jetbrains.cidr.execution.testing.google.CidrGoogleTestLocationProvider
-import com.jetbrains.cidr.execution.testing.google.GoogleTestLanguageSupport
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.clion.run.BazelCcTestFrameworkSupport
-import org.jetbrains.bazel.clion.run.TEST_NAME_PARTS_SPLITTER
+import consulo.component.util.ModificationTracker;
+import consulo.execution.action.Location;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.project.Project;
+import consulo.util.lang.StringUtil;
+import org.jetbrains.bazel.clion.run.BazelCcTestFrameworkSupport;
+import org.jetbrains.bazel.clion.run.BazelCcTestLocationHintProvider;
 
-@ApiStatus.Internal
-class GoogleTestSupport : BazelCcTestFrameworkSupport {
-  override val framework: CidrTestLanguageSupport
-    get() = GoogleTestLanguageSupport.getInstance()
+import java.util.List;
 
-  override fun locate(path: String, project: Project, scope: GlobalSearchScope): List<Location<*>> {
-    val suite = path.substringBefore(TEST_NAME_PARTS_SPLITTER).ifEmpty { null }
-    val test = path.substringAfter(TEST_NAME_PARTS_SPLITTER)
-    val linker = CidrGoogleTestLinker.parseTestOut("$suite.$test") ?: return emptyList()
-    return CidrGoogleTestLocationProvider.INSTANCE.getLocation(
-      CidrGoogleTestLocationProvider.PROTOCOL, linker.path, project, scope,
-    )
-  }
+// TODO consulo: not registered (upstream ccTestSupport, plugin dependency org.jetbrains.plugins.clion.test.google),
+//   GoogleTestLanguageSupport / CidrGoogleTestLinker / CidrGoogleTestLocationProvider (com.jetbrains.cidr.execution.testing.google)
+//   do not exist: consulo-cpp has no Google Test framework support
+public class GoogleTestSupport implements BazelCcTestFrameworkSupport {
+    // TODO consulo: CidrTestLanguageSupport / GoogleTestLanguageSupport do not exist in consulo-cpp
+    // override val framework: CidrTestLanguageSupport
+    //   get() = GoogleTestLanguageSupport.getInstance()
 
-  /** Google Test accepts a colon-separated list of patterns. */
-  override fun createTestFilter(tests: List<CidrTestScopeElement>): String? {
-    if (tests.isEmpty()) {
-      return null
+    @Override
+    public List<Location> locate(String path, Project project, GlobalSearchScope scope) {
+        String suiteOrPath = StringUtil.substringBefore(path, BazelCcTestLocationHintProvider.TEST_NAME_PARTS_SPLITTER);
+        if (suiteOrPath == null) {
+            suiteOrPath = path;
+        }
+        String suite = suiteOrPath.isEmpty() ? null : suiteOrPath;
+        String test = StringUtil.substringAfter(path, BazelCcTestLocationHintProvider.TEST_NAME_PARTS_SPLITTER);
+        if (test == null) {
+            test = path;
+        }
+        String testOut = suite + "." + test;
+
+        // TODO consulo: CidrGoogleTestLinker / CidrGoogleTestLocationProvider do not exist in consulo-cpp
+        // val linker = CidrGoogleTestLinker.parseTestOut("$suite.$test") ?: return emptyList()
+        // return CidrGoogleTestLocationProvider.INSTANCE.getLocation(
+        //   CidrGoogleTestLocationProvider.PROTOCOL, linker.path, project, scope,
+        // )
+        return List.of();
     }
 
-    return tests.joinToString(":") { it.pattern }
-  }
+    // TODO consulo: CidrTestScopeElement does not exist in consulo-cpp
+    // /** Google Test accepts a colon-separated list of patterns. */
+    // override fun createTestFilter(tests: List<CidrTestScopeElement>): String? {
+    //   if (tests.isEmpty()) {
+    //     return null
+    //   }
+    //
+    //   return tests.joinToString(":") { it.pattern }
+    // }
 
-  override fun getLocationCacheModificationTracker(project: Project): ModificationTracker =
-    CidrGoogleTestLocationProvider.INSTANCE.getLocationCacheModificationTracker(project)
+    @Override
+    public ModificationTracker getLocationCacheModificationTracker(Project project) {
+        // TODO consulo: CidrGoogleTestLocationProvider does not exist in consulo-cpp
+        // CidrGoogleTestLocationProvider.INSTANCE.getLocationCacheModificationTracker(project)
+        return ModificationTracker.NEVER_CHANGED;
+    }
 }

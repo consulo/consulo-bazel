@@ -1,80 +1,84 @@
-@file:Suppress("IO_FILE_USAGE") // forced by underlying implementation
+package org.jetbrains.bazel.clion.workspace;
 
-package org.jetbrains.bazel.clion.workspace
+import org.jspecify.annotations.Nullable;
 
-import com.intellij.openapi.project.Project
-import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
-import com.jetbrains.cidr.lang.workspace.compiler.AppleClangCompilerKind
-import com.jetbrains.cidr.lang.workspace.compiler.BasicCompilerCommandLineShortener
-import com.jetbrains.cidr.lang.workspace.compiler.ClangCompilerKind
-import com.jetbrains.cidr.lang.workspace.compiler.GCCCompiler
-import com.jetbrains.cidr.lang.workspace.compiler.GCCCompilerKind
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompiler
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerCommandLineShortener
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerId
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerKind
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerKindProvider
-import com.jetbrains.cidr.lang.workspace.compiler.TempFilesPool
-import com.jetbrains.cidr.lang.workspace.compiler.resolver.OCCompilerResolverCache
-import org.jetbrains.annotations.ApiStatus
-import java.io.File
+import java.util.List;
 
 /**
- * An [OCCompilerKind] wrapper that disables response file usage.
- *
+ * An {@code OCCompilerKind} wrapper that disables response file usage.
+ * <p>
  * Bazel's compiler wrappers cannot read the response files, CLion writes. This kind delegates
- * all behavior to the underlying [delegate] kind, but overrides [getCompilerInstance] to return
- * a [CcGccCompiler], which reports a no-op command line shortener.
+ * all behavior to the underlying {@code delegate} kind, but overrides {@code getCompilerInstance} to return
+ * a {@code CcGccCompiler}, which reports a no-op command line shortener.
+ * <p>
+ * TODO consulo: consulo-cpp has no compiler kinds (CIDR {@code OCCompilerKind}, {@code OCCompilerId}): this class only
+ * keeps the identity of the kind (the CIDR compiler id, e.g. {@code GCC}). The CIDR behavior it delegates and overrides
+ * (switch builders, {@code skipLanguageNotRelatedSwitches}, {@code fixPchSwitches}, the command line shortener and the
+ * {@code GCCCompiler} instance used to collect the compiler info) is not ported.
  */
-@ApiStatus.Internal
-abstract class CcCompilerKind private constructor(private val delegate: OCCompilerKind) : OCCompilerKind by delegate {
+public final class CcCompilerKind {
+    public static final CcCompilerKind GCC = new CcCompilerKind("GCC");
 
-  object GCC : CcCompilerKind(GCCCompilerKind)
+    public static final CcCompilerKind CLANG = new CcCompilerKind("CLANG");
 
-  object CLANG : CcCompilerKind(ClangCompilerKind)
+    public static final CcCompilerKind APPLE_CLANG = new CcCompilerKind("APPLE_CLANG");
 
-  object APPLE_CLANG : CcCompilerKind(AppleClangCompilerKind)
+    /**
+     * consulo: stands for CIDR's {@code UnknownCompilerKind}, the kind of a compiler that was not identified.
+     */
+    public static final CcCompilerKind UNKNOWN = new CcCompilerKind(null);
 
-  override fun getId(): OCCompilerId? = delegate.getId()
+    // consulo: upstream delegates to the CIDR kind, here its id (OCCompilerId.toString(), null when unknown)
+    private final @Nullable String myDelegate;
 
-  override fun toString(): String = "Cc($delegate)"
+    private CcCompilerKind(@Nullable String delegate) {
+        myDelegate = delegate;
+    }
 
-  override fun skipLanguageNotRelatedSwitches(switches: List<String?>): List<String?> = delegate.skipLanguageNotRelatedSwitches(switches)
+    /**
+     * The CIDR compiler id ({@code OCCompilerId.toString()}): {@code GCC}, {@code CLANG}, {@code APPLE_CLANG};
+     * {@code null} for {@link #UNKNOWN}.
+     */
+    public @Nullable String getId() {
+        return myDelegate;
+    }
 
-  override fun fixPchSwitches(switches: List<String?>): List<String?> = delegate.fixPchSwitches(switches)
+    /**
+     * consulo: CIDR's {@code OCCompilerKind.isUnknown()}
+     */
+    public boolean isUnknown() {
+        return myDelegate == null;
+    }
 
-  override fun getCommandLineShortener(): OCCompilerCommandLineShortener = BasicCompilerCommandLineShortener()
+    @Override
+    public String toString() {
+        return "Cc(" + (myDelegate == null ? "Unknown" : myDelegate) + ")";
+    }
 
-  override fun getCompilerInstance(
-    project: Project,
-    compilerExecutable: File,
-    compilerWorkingDirectory: File,
-    environment: CidrToolEnvironment,
-    tempFilesPool: TempFilesPool,
-  ): OCCompiler = CcGccCompiler(compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool)
-
-  override fun getCompilerInstance(
-    project: Project,
-    compilerExecutable: File,
-    compilerWorkingDirectory: File,
-    environment: CidrToolEnvironment,
-    tempFilesPool: TempFilesPool,
-    cache: OCCompilerResolverCache,
-  ): OCCompiler = CcGccCompiler(compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool)
+    // TODO consulo: CIDR OCCompilerKind overrides, no consulo-cpp API
+    //  override fun skipLanguageNotRelatedSwitches(switches: List<String?>): List<String?> = delegate.skipLanguageNotRelatedSwitches(switches)
+    //  override fun fixPchSwitches(switches: List<String?>): List<String?> = delegate.fixPchSwitches(switches)
+    //  override fun getCommandLineShortener(): OCCompilerCommandLineShortener = BasicCompilerCommandLineShortener()
+    //  override fun getCompilerInstance(project, compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool): OCCompiler =
+    //    CcGccCompiler(compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool)
+    //  override fun getCompilerInstance(project, compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool, cache): OCCompiler =
+    //    CcGccCompiler(compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool)
 }
 
-private class CcGccCompiler(
-  compilerExecutable: File,
-  compilerWorkingDirectory: File,
-  environment: CidrToolEnvironment,
-  tempFilesPool: TempFilesPool,
-) : GCCCompiler(compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool) {
+// TODO consulo: CIDR GCCCompiler does not exist in consulo-cpp
+//  private class CcGccCompiler(compilerExecutable: File, compilerWorkingDirectory: File, environment: CidrToolEnvironment,
+//    tempFilesPool: TempFilesPool) : GCCCompiler(compilerExecutable, compilerWorkingDirectory, environment, tempFilesPool) {
+//    // TODO: can we remove this duplicated entry point on the GCCCompiler?
+//    override fun getCommandLineShortener(): OCCompilerCommandLineShortener = BasicCompilerCommandLineShortener()
+//  }
 
-  // TODO: can we remove this duplicated entry point on the GCCCompiler?
-  override fun getCommandLineShortener(): OCCompilerCommandLineShortener = BasicCompilerCommandLineShortener()
-}
+// TODO consulo: CIDR extension cidr.lang.compilerKindProvider (OCCompilerKindProvider) does not exist in consulo-cpp,
+//  the class is not registered
+class CcCompilerKindProvider {
+    public CcCompilerKindProvider() {
+    }
 
-internal class CcCompilerKindProvider : OCCompilerKindProvider {
-
-  override fun getCompilerKinds(): List<OCCompilerKind> = listOf(CcCompilerKind.GCC, CcCompilerKind.CLANG, CcCompilerKind.APPLE_CLANG)
+    public List<CcCompilerKind> getCompilerKinds() {
+        return List.of(CcCompilerKind.GCC, CcCompilerKind.CLANG, CcCompilerKind.APPLE_CLANG);
+    }
 }

@@ -1,66 +1,88 @@
-package org.jetbrains.bazel.clion.workspace
+package org.jetbrains.bazel.clion.workspace;
 
-import com.intellij.build.events.MessageEvent
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.NlsSafe
-import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterContext
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bsp.protocol.OutputLocationParser
-import org.jetbrains.bsp.protocol.OutputLocationResolver
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
+import consulo.build.ui.event.MessageEvent;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter.WorkspaceImporterContext;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
+import org.jetbrains.bsp.protocol.OutputLocationParser;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface CcImportContext {
+import java.nio.file.Path;
 
-  val taskId: TaskId
+public interface CcImportContext {
 
-  val project: Project
+    TaskId getTaskId();
 
-  val vfuManager: VirtualFileUrlManager
+    Project getProject();
 
-  val snapshot: WorkspaceSnapshot
+    // consulo: upstream vfuManager (VirtualFileUrlManager) is a workspace model object, urls are VFS url strings
 
-  val execroot: Path
+    WorkspaceSnapshot getSnapshot();
 
-  fun reportEvent(severity: MessageEvent.Kind, message: @NlsSafe String, description: @NlsSafe String? = null)
+    Path getExecroot();
 
-  val outputResolver: OutputLocationResolver
+    void reportEvent(MessageEvent.Kind severity, LocalizeValue message, @Nullable String description);
 
-  val outputParser: OutputLocationParser
-
-  companion object {
-
-    fun create(taskId: TaskId, ctx: WorkspaceImporterContext, snapshot: WorkspaceSnapshot): CcImportContext {
-      return CcImportContextImpl(ctx, taskId, snapshot)
+    // consulo: overload for the upstream default value of description
+    default void reportEvent(MessageEvent.Kind severity, LocalizeValue message) {
+        reportEvent(severity, message, null);
     }
-  }
+
+    OutputLocationResolver getOutputResolver();
+
+    OutputLocationParser getOutputParser();
+
+    static CcImportContext create(TaskId taskId, WorkspaceImporterContext ctx, WorkspaceSnapshot snapshot) {
+        return new CcImportContextImpl(ctx, taskId, snapshot);
+    }
 }
 
-private class CcImportContextImpl(
-  private val ctx: WorkspaceImporterContext,
-  override val taskId: TaskId,
-  override val snapshot: WorkspaceSnapshot,
-) : CcImportContext {
+class CcImportContextImpl implements CcImportContext {
+    private final WorkspaceImporterContext myCtx;
+    private final TaskId myTaskId;
+    private final WorkspaceSnapshot mySnapshot;
 
-  override val project: Project
-    get() = ctx.project
+    CcImportContextImpl(WorkspaceImporterContext ctx, TaskId taskId, WorkspaceSnapshot snapshot) {
+        myCtx = ctx;
+        myTaskId = taskId;
+        mySnapshot = snapshot;
+    }
 
-  override val vfuManager: VirtualFileUrlManager
-    get() = ctx.vfuManager
+    @Override
+    public TaskId getTaskId() {
+        return myTaskId;
+    }
 
-  override val execroot: Path
-    get() = ctx.bazelInfo.execRoot
+    @Override
+    public WorkspaceSnapshot getSnapshot() {
+        return mySnapshot;
+    }
 
-  override fun reportEvent(severity: MessageEvent.Kind, message: @NlsSafe String, description: @NlsSafe String?) {
-    ctx.taskConsole.addDiagnosticMessage(taskId, message = message, description = description, severity = severity)
-  }
+    @Override
+    public Project getProject() {
+        return myCtx.project();
+    }
 
-  override val outputResolver: OutputLocationResolver
-    get() = ctx.outputResolver
+    @Override
+    public Path getExecroot() {
+        return myCtx.bazelInfo().execRoot();
+    }
 
-  override val outputParser: OutputLocationParser
-    get() = ctx.outputParser
+    @Override
+    public void reportEvent(MessageEvent.Kind severity, LocalizeValue message, @Nullable String description) {
+        myCtx.taskConsole().addDiagnosticMessage(myTaskId, null, -1, -1, message, description, severity);
+    }
+
+    @Override
+    public OutputLocationResolver getOutputResolver() {
+        return myCtx.outputResolver();
+    }
+
+    @Override
+    public OutputLocationParser getOutputParser() {
+        return myCtx.outputParser();
+    }
 }

@@ -1,0 +1,30 @@
+cc.compiler.info.failed:
+    text: "Failed to collect compiler info for {0} target(s)"
+cc.compiler.kind.resolve.failed:
+    text: "Cannot identify the compiler kind: {0}"
+cc.compiler.path.resolve.failed:
+    text: "Cannot resolve the compiler path: {0}"
+cc.compiler.resolve.failed:
+    text: "Cannot resolve C/C++ compilers"
+cc.import.task.compiler.info:
+    text: "Collect Compiler Info"
+cc.import.task.compiler.settings:
+    text: "Collect Compiler Settings"
+cc.import.task.equivalence.classes:
+    text: "Calculate Equivalence Classes"
+cc.import.task.oc.workspace:
+    text: "Create OC Workspace"
+cc.import.task.toolchain.map:
+    text: "Build Toolchain Map"
+cc.resolve.configuration.other.targets:
+    text: " and {0} other target(s)"
+cc.toolchain.no.dependencies.found:
+    text: "No dependency on a C/C++ toolchain found"
+cc.toolchain.unexpected.dependency.count:
+    text: "Unexpected number of C/C++ toolchain dependencies for {0} target(s)"
+cc.workspace.importer.name:
+    text: "C/C++ workspace importer"
+cc.xcode.locate.failed:
+    text: "Cannot locate Xcode {0} with macOS SDK {1}"
+cc.xcode.resolve.failed:
+    text: "Cannot resolve Xcode"

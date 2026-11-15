@@ -14,128 +14,213 @@
  * limitations under the License.
  */
 // Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-package org.jetbrains.bazel.golang.resolve
+package org.jetbrains.bazel.golang.resolve;
 
-import com.goide.psi.impl.GoPackage
-import com.goide.psi.impl.imports.GoImportReference
-import com.goide.psi.impl.imports.GoImportResolver
-import com.google.common.collect.ImmutableList
-import com.intellij.codeInsight.navigation.CtrlMouseHandler
-import com.intellij.lang.documentation.DocumentationProviderEx
-import com.intellij.openapi.module.Module
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.backend.workspace.workspaceModel
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementResolveResult
-import com.intellij.psi.PsiFileSystemItem
-import com.intellij.psi.ResolveResult
-import com.intellij.psi.ResolveState
-import com.intellij.psi.impl.SyntheticFileSystemItem
-import com.intellij.psi.search.PsiElementProcessor
-import com.intellij.util.ThreeState
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity
-import org.jetbrains.bazel.workspacemodel.entities.ImportPathId
+import com.goide.psi.impl.imports.GoImportReference;
+import com.google.common.collect.ImmutableList;
+import consulo.annotation.access.RequiredReadAction;
+import consulo.ide.impl.idea.codeInsight.navigation.CtrlMouseHandler;
+import consulo.language.editor.documentation.DocumentationProviderEx;
+import consulo.language.impl.psi.SyntheticFileSystemItem;
+import consulo.language.psi.PsiDirectory;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementResolveResult;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiFileSystemItem;
+import consulo.language.psi.ResolveResult;
+import consulo.language.psi.resolve.PsiElementProcessor;
+import consulo.language.psi.resolve.ResolveState;
+import consulo.module.Module;
+import consulo.project.Project;
+import consulo.util.lang.ThreeState;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil.GoPackageEntities;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity;
+import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity.ImportPathId;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelGoImportResolver : GoImportResolver {
-  override fun resolve(
-    importPath: String,
-    project: Project,
-    module: Module?,
-    resolveState: ResolveState?,
-  ): Collection<GoPackage>? {
-    if (!supportsGo(project)) return null
-    val goPackage = resolveGoPackage(project, importPath)
-    return if (goPackage != null) ImmutableList.of(goPackage) else null
-  }
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
 
-  override fun supportsRelativeImportPaths(project: Project, module: Module?): ThreeState {
-    if (!supportsGo(project)) return ThreeState.UNSURE
-    return ThreeState.NO
-  }
+// TODO consulo: not registered (upstream com.goide importResolver id="Bazel.ImportResolver", order="first"). The GoImportResolver
+//  extension point and GoPackage are missing in consulo-google-go, its import references resolve to directories only
+public class BazelGoImportResolver /* : GoImportResolver */ {
+    @RequiredReadAction
+    public @Nullable Collection<BazelGoPackage> resolve(
+        String importPath,
+        Project project,
+        @Nullable Module module,
+        @Nullable ResolveState resolveState
+    ) {
+        if (!supportsGo(project)) {
+            return null;
+        }
+        BazelGoPackage goPackage = resolveGoPackage(project, importPath);
+        return goPackage != null ? ImmutableList.of(goPackage) : null;
+    }
 
-  override fun supportsInternalPackages(project: Project, module: Module?): ThreeState {
-    if (!supportsGo(project)) return ThreeState.UNSURE
-    return ThreeState.NO
-  }
+    public ThreeState supportsRelativeImportPaths(Project project, @Nullable Module module) {
+        if (!supportsGo(project)) {
+            return ThreeState.UNSURE;
+        }
+        return ThreeState.NO;
+    }
 
-  override fun supportsSdkInternalPackages(project: Project, module: Module?): ThreeState {
-    if (!supportsGo(project)) return ThreeState.UNSURE
-    return ThreeState.NO
-  }
+    public ThreeState supportsInternalPackages(Project project, @Nullable Module module) {
+        if (!supportsGo(project)) {
+            return ThreeState.UNSURE;
+        }
+        return ThreeState.NO;
+    }
 
-  override fun resolve(reference: GoImportReference): Array<ResolveResult>? {
-    val project = reference.element.project
-    if (!supportsGo(project)) return null
-    val importPath = reference.fileReferenceSet.pathString
-    val goPackage = resolveGoPackage(project, importPath) ?: return null
-    return doResolve(goPackage, reference.index)
-  }
+    public ThreeState supportsSdkInternalPackages(Project project, @Nullable Module module) {
+        if (!supportsGo(project)) {
+            return ThreeState.UNSURE;
+        }
+        return ThreeState.NO;
+    }
 
-  private fun supportsGo(project: Project): Boolean =
-    project.isBazelProject
+    @RequiredReadAction
+    public ResolveResult @Nullable [] resolve(GoImportReference reference) {
+        Project project = reference.getElement().getProject();
+        if (!supportsGo(project)) {
+            return null;
+        }
+        String importPath = reference.getFileReferenceSet().getPathString();
+        BazelGoPackage goPackage = resolveGoPackage(project, importPath);
+        if (goPackage == null) {
+            return null;
+        }
+        return doResolve(goPackage, reference.getIndex());
+    }
+
+    private static boolean supportsGo(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project);
+    }
+
+    // consulo: upstream private top-level functions of BazelGoImportResolver.kt
+
+    @RequiredReadAction
+    private static @Nullable BazelGoPackage resolveGoPackage(Project project, String importPath) {
+        // consulo: upstream resolves the ImportPathId symbolic id in the workspace model
+        BazelGoPackageEntity entity = GoPackageEntities.getInstance(project).resolve(new ImportPathId(importPath));
+        if (entity == null) {
+            return null;
+        }
+        return new BazelGoPackage(project, entity);
+    }
+
+    @RequiredReadAction
+    private static ResolveResult[] doResolve(BazelGoPackage goPackage, int index) {
+        return List.of(goPackage)
+            .stream()
+            .map(BazelGoPackage::getImportReferences)
+            .filter(Objects::nonNull)
+            .filter(it -> index < it.length)
+            .map(it -> it[index])
+            .filter(Objects::nonNull)
+            .map(GoPackageFileSystemItem::getInstance)
+            .filter(Objects::nonNull)
+            .map(PsiElementResolveResult::new)
+            .toArray(ResolveResult[]::new);
+    }
 }
 
 /**
- * [GoImportReference] must resolve to a [PsiFileSystemItem], but we might want it to
- * resolve to a build rule in a [BuildFile]. We'll just return the [BuildFile] with a
+ * {@link GoImportReference} must resolve to a {@link PsiFileSystemItem}, but we might want it to
+ * resolve to a build rule in a {@code BuildFile}. We'll just return the {@code BuildFile} with a
  * navigation redirect.
  */
-private class GoPackageFileSystemItem private constructor(private val name: String, private val rule: StarlarkCallExpression) :
-  SyntheticFileSystemItem(rule.project) {
-    companion object {
-      @JvmStatic
-      fun getInstance(element: PsiElement): PsiFileSystemItem? =
-        when (element) {
-          is PsiFileSystemItem -> element
-          is StarlarkCallExpression -> element.getCalledFunctionName()?.let { GoPackageFileSystemItem(it, element) }
-          else -> null
+class GoPackageFileSystemItem extends SyntheticFileSystemItem {
+    private final String myName;
+    private final StarlarkCallExpression myRule;
+
+    private GoPackageFileSystemItem(String name, StarlarkCallExpression rule) {
+        super(rule.getProject());
+        myName = name;
+        myRule = rule;
+    }
+
+    @RequiredReadAction
+    static @Nullable PsiFileSystemItem getInstance(PsiElement element) {
+        if (element instanceof PsiFileSystemItem fileSystemItem) {
+            return fileSystemItem;
+        }
+        else if (element instanceof StarlarkCallExpression callExpression) {
+            String calledFunctionName = callExpression.getCalledFunctionName();
+            return calledFunctionName != null ? new GoPackageFileSystemItem(calledFunctionName, callExpression) : null;
+        }
+        else {
+            return null;
         }
     }
 
-    override fun getName(): String = name
+    @Override
+    public String getName() {
+        return myName;
+    }
 
-    override fun getNavigationElement(): PsiElement = rule
+    @Override
+    public PsiElement getNavigationElement() {
+        return myRule;
+    }
 
-    override fun getParent(): PsiFileSystemItem? = (rule.containingFile as? StarlarkFile)?.takeIf { it.isBuildFile() }?.parent
+    @Override
+    @RequiredReadAction
+    public @Nullable PsiFileSystemItem getParent() {
+        PsiFile containingFile = myRule.getContainingFile();
+        if (containingFile instanceof StarlarkFile starlarkFile && starlarkFile.isBuildFile()) {
+            PsiDirectory parent = starlarkFile.getParent();
+            return parent;
+        }
+        return null;
+    }
 
-    override fun getVirtualFile(): VirtualFile? = null
+    @Override
+    public @Nullable VirtualFile getVirtualFile() {
+        return null;
+    }
 
-    override fun isValid(): Boolean = true
+    @Override
+    public boolean isValid() {
+        return true;
+    }
 
-    override fun isPhysical(): Boolean = false
+    @Override
+    public boolean isPhysical() {
+        return false;
+    }
 
-    override fun isDirectory(): Boolean = false
+    @Override
+    public boolean isDirectory() {
+        return false;
+    }
 
-    override fun processChildren(psiElementProcessor: PsiElementProcessor<in PsiFileSystemItem>): Boolean = false
-  }
-
-/** Redirects quick navigation text on the fake file system item back to the build rule. */
-internal class GoPackageDocumentationProvider : DocumentationProviderEx() {
-  override fun getQuickNavigateInfo(element: PsiElement, originalElement: PsiElement): String? =
-    if (element is GoPackageFileSystemItem) {
-      CtrlMouseHandler.getInfo(element.navigationElement, originalElement)
-    } else {
-      null
+    @Override
+    public boolean processChildren(PsiElementProcessor<PsiFileSystemItem> psiElementProcessor) {
+        return false;
     }
 }
 
-private fun resolveGoPackage(project: Project, importPath: String): BazelGoPackage? {
-  val entity: BazelGoPackageEntity = project.workspaceModel.currentSnapshot.resolve(ImportPathId(importPath)) ?: return null
-  return BazelGoPackage(project, entity)
-}
+/**
+ * Redirects quick navigation text on the fake file system item back to the build rule.
+ */
+// TODO consulo: not registered (upstream documentationProvider): Consulo documentation providers are language bound, and the
+//  fake file system item only comes from the unregistered BazelGoImportResolver
+class GoPackageDocumentationProvider extends DocumentationProviderEx {
+    public GoPackageDocumentationProvider() {
+    }
 
-private fun doResolve(goPackage: BazelGoPackage, index: Int): Array<ResolveResult> =
-  listOf(goPackage)
-    .asSequence()
-    .mapNotNull { it.getImportReferences() }
-    .filter { index < it.size }
-    .mapNotNull { it[index] }
-    .mapNotNull { GoPackageFileSystemItem.getInstance(it) }
-    .map { PsiElementResolveResult(it) }
-    .toList()
-    .toTypedArray()
+    @Override
+    public @Nullable String getQuickNavigateInfo(PsiElement element, PsiElement originalElement) {
+        if (element instanceof GoPackageFileSystemItem) {
+            return CtrlMouseHandler.getInfo(element.getNavigationElement(), originalElement);
+        }
+        else {
+            return null;
+        }
+    }
+}

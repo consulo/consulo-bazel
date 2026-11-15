@@ -13,22 +13,48 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.golang.sync
+package org.jetbrains.bazel.golang.sync;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.AdditionalLibraryRootsProvider
-import com.intellij.openapi.roots.SyntheticLibrary
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.isBazelProject
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.stub.IndexableSetContributor;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
 
-internal class GoAdditionalLibraryRootsProvider : AdditionalLibraryRootsProvider() {
-  override fun getAdditionalProjectLibraries(project: Project): Collection<SyntheticLibrary> {
-    if (!project.isBazelProject) return emptyList()
-    val library = GoExternalLibraryManager.getInstance(project).library
-    return if (library != null) {
-      listOf(library)
-    } else {
-      emptyList()
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * consulo: IntelliJ {@code AdditionalLibraryRootsProvider} / {@code SyntheticLibrary} do not exist; the roots of the Go external
+ * library are indexed with an {@link IndexableSetContributor} (TODO consulo: they are not shown under External Libraries).
+ */
+@ExtensionImpl
+public class GoAdditionalLibraryRootsProvider extends IndexableSetContributor {
+    public Collection<GoExternalSyntheticLibrary> getAdditionalProjectLibraries(Project project) {
+        if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            return List.of();
+        }
+        GoExternalSyntheticLibrary library = GoExternalLibraryManager.getInstance(project).getLibrary();
+        if (library != null) {
+            return List.of(library);
+        }
+        else {
+            return List.of();
+        }
     }
-  }
+
+    @Override
+    public Set<VirtualFile> getAdditionalProjectRootsToIndex(Project project) {
+        Set<VirtualFile> roots = new LinkedHashSet<>();
+        for (GoExternalSyntheticLibrary library : getAdditionalProjectLibraries(project)) {
+            roots.addAll(library.getSourceRoots());
+        }
+        return roots;
+    }
+
+    @Override
+    public Set<VirtualFile> getAdditionalRootsToIndex() {
+        return Set.of();
+    }
 }

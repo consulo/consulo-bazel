@@ -1,59 +1,109 @@
-package org.jetbrains.bazel.clion.workspace.copts
+package org.jetbrains.bazel.clion.workspace.copts;
 
-import com.jetbrains.cidr.lang.workspace.compiler.CompilerSpecificSwitchBuilder
+import consulo.bazel.cpp.workspace.CcCompilerSwitches;
+import org.jspecify.annotations.Nullable;
 
-/** An option that forwards other options. */
-internal interface CoptsForwarder {
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.List;
 
-  /** Returns the matching part of the option, or null when the option is not this forwarder. */
-  fun match(option: String): String?
+/**
+ * An option that forwards other options.
+ * <p>
+ * consulo: the CIDR {@code CompilerSpecificSwitchBuilder} is {@link CcCompilerSwitches.Builder}
+ */
+interface CoptsForwarder {
 
-  /** Gives the options that [option] forwards. It takes a separate value from [options]. */
-  fun expand(option: String, options: Iterator<String>): List<String>
+    /**
+     * Returns the matching part of the option, or null when the option is not this forwarder.
+     */
+    @Nullable String match(String option);
 
-  /** Writes the forwarded switches back using [flag]. */
-  fun apply(builder: CompilerSpecificSwitchBuilder, flag: String, values: List<String>)
+    /**
+     * Gives the options that {@code option} forwards. It takes a separate value from {@code options}.
+     */
+    List<String> expand(String option, Iterator<String> options);
+
+    /**
+     * Writes the forwarded switches back using {@code flag}.
+     */
+    void apply(CcCompilerSwitches.Builder builder, String flag, List<String> values);
 }
 
-/** A forwarder that gives the next option to another tool. */
-internal class CoptsForwardNext(private val flag: String, private val prefix: Boolean = false) : CoptsForwarder {
+/**
+ * A forwarder that gives the next option to another tool.
+ */
+class CoptsForwardNext implements CoptsForwarder {
+    private final String myFlag;
+    private final boolean myPrefix;
 
-  override fun match(option: String): String? = when {
-    option == flag -> flag
-    prefix && option.startsWith(flag) -> option
-    else -> null
-  }
+    CoptsForwardNext(String flag, boolean prefix) {
+        myFlag = flag;
+        myPrefix = prefix;
+    }
 
-  override fun expand(option: String, options: Iterator<String>): List<String> {
-    if (options.hasNext()) {
-      return listOf(options.next())
+    // consulo: overload for the upstream default value of prefix
+    CoptsForwardNext(String flag) {
+        this(flag, false);
     }
-    else {
-      return emptyList()
-    }
-  }
 
-  override fun apply(builder: CompilerSpecificSwitchBuilder, flag: String, values: List<String>) {
-    for (value in values) {
-      builder.withSwitch(flag)
-      builder.withSwitch(value)
+    @Override
+    public @Nullable String match(String option) {
+        if (option.equals(myFlag)) {
+            return myFlag;
+        }
+        else if (myPrefix && option.startsWith(myFlag)) {
+            return option;
+        }
+        else {
+            return null;
+        }
     }
-  }
+
+    @Override
+    public List<String> expand(String option, Iterator<String> options) {
+        if (options.hasNext()) {
+            return List.of(options.next());
+        }
+        else {
+            return List.of();
+        }
+    }
+
+    @Override
+    public void apply(CcCompilerSwitches.Builder builder, String flag, List<String> values) {
+        for (String value : values) {
+            builder.withSwitch(flag);
+            builder.withSwitch(value);
+        }
+    }
 }
 
-internal class CoptsForwardCommaSeparated(private val flag: String) : CoptsForwarder {
+class CoptsForwardCommaSeparated implements CoptsForwarder {
+    private final String myFlag;
 
-  private val prefix = "$flag,"
+    private final String myPrefix;
 
-  override fun match(option: String): String? = flag.takeIf { option.startsWith(prefix) }
-
-  override fun expand(option: String, options: Iterator<String>): List<String> {
-    return option.removePrefix(prefix).split(",")
-  }
-
-  override fun apply(builder: CompilerSpecificSwitchBuilder, flag: String, values: List<String>) {
-    if (values.isNotEmpty()) {
-      builder.withSwitch(values.joinToString(prefix = prefix, separator = ","))
+    CoptsForwardCommaSeparated(String flag) {
+        myFlag = flag;
+        myPrefix = flag + ",";
     }
-  }
+
+    @Override
+    public @Nullable String match(String option) {
+        return option.startsWith(myPrefix) ? myFlag : null;
+    }
+
+    @Override
+    public List<String> expand(String option, Iterator<String> options) {
+        // consulo: Kotlin removePrefix + split(","), which keeps the empty parts
+        return Arrays.asList(option.substring(myPrefix.length()).split(",", -1));
+    }
+
+    @Override
+    public void apply(CcCompilerSwitches.Builder builder, String flag, List<String> values) {
+        if (!values.isEmpty()) {
+            builder.withSwitch(myPrefix + String.join(",", values));
+        }
+    }
 }

@@ -1,41 +1,65 @@
-package org.jetbrains.bazel.golang.run
+package org.jetbrains.bazel.golang.run;
 
-import com.goide.execution.testing.GoTestLocator
-import com.goide.utils.GoSharedConstants
-import com.intellij.execution.testframework.sm.runner.SMTestLocator
-import org.jetbrains.bazel.commons.TargetKind
-import org.jetbrains.bazel.golang.targetKinds.includesGo
-import org.jetbrains.bazel.run.test.BazelTestLocatorProvider
-import org.jetbrains.bazel.testing.BazelTestDetails
-import org.jetbrains.bazel.util.BazelTestLocationHintProvider
+import com.goide.runconfig.testing.GoTestLocator;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.test.sm.runner.SMTestLocator;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.golang.targetKinds.GoBazelRules;
+import org.jetbrains.bazel.run.test.BazelTestConsoleProperties.BazelTestLocatorProvider;
+import org.jetbrains.bazel.testing.BazelTestDetails;
+import org.jetbrains.bazel.util.BazelTestLocationHintProvider;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelGoTestLocationHintProvider : BazelTestLocationHintProvider {
-  override fun isApplicable(targetKind: TargetKind): Boolean = targetKind.includesGo()
+@ExtensionImpl
+public class BazelGoTestLocationHintProvider implements BazelTestLocationHintProvider {
+    @Override
+    public boolean isApplicable(TargetKind targetKind) {
+        return GoBazelRules.includesGo(targetKind);
+    }
 
-  override fun getLocationHint(testDetails: BazelTestDetails): String? {
-    val suiteName = if (testDetails.isSuite) {
-      testDetails.displayName
+    @Override
+    public @Nullable String getLocationHint(BazelTestDetails testDetails) {
+        String suiteName;
+        if (testDetails.isSuite()) {
+            suiteName = testDetails.displayName();
+        }
+        else {
+            if (testDetails.parentSuiteNames().isEmpty()) {
+                return null;
+            }
+            suiteName = testDetails.parentSuiteNames().get(0);
+        }
+        int importPathDotSeparator = suiteName.lastIndexOf('.');
+        if (importPathDotSeparator == -1) {
+            return null;
+        }
+        String importPath = suiteName.substring(0, importPathDotSeparator);
+        String outerTestName = suiteName.substring(importPathDotSeparator + 1);
+        String subtestName = !testDetails.isSuite() ? testDetails.displayName() : null;
+        String testName;
+        if (outerTestName.equals(subtestName) || subtestName == null) {
+            testName = outerTestName;
+        }
+        else {
+            testName = outerTestName + "/" + subtestName;
+        }
+        // consulo: GoSharedConstants.TEST_PROTOCOL -> GoTestLocator.PROTOCOL ("gotest")
+        // TODO consulo: the GoTestLocator of consulo-google-go resolves "gotest://<function>" or "gotest://<type>.<method>",
+        //  not the "gotest://<import path>#<test>" hint of IntelliJ
+        return GoTestLocator.PROTOCOL + "://" + importPath + "#" + testName;
     }
-    else {
-      testDetails.parentSuiteNames.firstOrNull() ?: return null
-    }
-    val importPathDotSeparator = suiteName.lastIndexOf('.')
-    if (importPathDotSeparator == -1) return null
-    val importPath = suiteName.substring(0..<importPathDotSeparator)
-    val outerTestName = suiteName.substring(importPathDotSeparator + 1)
-    val subtestName = if (!testDetails.isSuite) testDetails.displayName else null
-    val testName = if (outerTestName == subtestName || subtestName == null) {
-      outerTestName
-    }
-    else {
-      "$outerTestName/$subtestName"
-    }
-    return GoSharedConstants.TEST_PROTOCOL + "://" + importPath + "#" + testName
-  }
 }
 
-internal class BazelGoTestLocatorProvider : BazelTestLocatorProvider {
-  private val locator = GoTestLocator(null)
+@ExtensionImpl
+class BazelGoTestLocatorProvider implements BazelTestLocatorProvider {
+    // consulo: upstream GoTestLocator(null), the Consulo locator is a singleton
+    private final SMTestLocator myLocator = GoTestLocator.INSTANCE;
 
-  override fun getTestLocator(): SMTestLocator = locator
+    public BazelGoTestLocatorProvider() {
+    }
+
+    @Override
+    public SMTestLocator getTestLocator() {
+        return myLocator;
+    }
 }

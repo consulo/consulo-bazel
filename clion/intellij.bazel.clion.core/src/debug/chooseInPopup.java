@@ -1,53 +1,82 @@
-package org.jetbrains.bazel.clion.debug
+package org.jetbrains.bazel.clion.debug;
 
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.ui.popup.PopupStep
-import com.intellij.openapi.ui.popup.util.BaseListPopupStep
-import com.intellij.openapi.util.NlsSafe
-import kotlinx.coroutines.CancellableContinuation
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
-import org.jetbrains.annotations.Nls
+import consulo.application.Application;
+import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.ui.ex.popup.BaseListPopupStep;
+import consulo.ui.ex.popup.JBPopupFactory;
+import consulo.ui.ex.popup.PopupStep;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Shows a list popup with speed search and waits for the choice.
- *
- * The caller is canceled when the user closes the popup without a choice.
- */
-internal suspend fun <T> chooseInPopup(
-  project: Project,
-  title: @Nls String,
-  candidates: List<T>,
-  textFor: (T) -> @NlsSafe String,
-): T = withContext(Dispatchers.EDT) {
-  suspendCancellableCoroutine { continuation ->
-    JBPopupFactory.getInstance()
-      .createListPopup(ChoicePopupStep(continuation, title, candidates, textFor))
-      .showCenteredInCurrentWindow(project)
-  }
+import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
+
+// consulo: upstream Kotlin top-level function; the class keeps the upstream file name
+final class chooseInPopup {
+    private chooseInPopup() {
+    }
+
+    /**
+     * Shows a list popup with speed search and waits for the choice.
+     *
+     * <p>The caller is canceled when the user closes the popup without a choice.
+     */
+    static <T> CompletableFuture<T> chooseInPopup(
+        Project project,
+        LocalizeValue title,
+        List<T> candidates,
+        Function<T, String> textFor
+    ) {
+        // consulo: withContext(Dispatchers.EDT) { suspendCancellableCoroutine { } } -> a future completed by the popup step
+        CompletableFuture<T> continuation = new CompletableFuture<>();
+        project.getUIAccess().give(() -> {
+            JBPopupFactory.getInstance()
+                .createListPopup(new ChoicePopupStep<>(continuation, title, candidates, textFor))
+                .showCenteredInCurrentWindow(project);
+        });
+        // consulo: withContext(Dispatchers.EDT) returns to the dispatcher of the caller, the choice is handed back on a pooled thread
+        return continuation.thenApplyAsync(it -> it, Application.get().getInstance(ApplicationConcurrency.class).getExecutorService());
+    }
 }
 
-private class ChoicePopupStep<T>(
-  private val continuation: CancellableContinuation<T>,
-  title: @Nls String,
-  candidates: List<T>,
-  private val textFor: (T) -> @NlsSafe String,
-) : BaseListPopupStep<T>(title, candidates) {
+final class ChoicePopupStep<T> extends BaseListPopupStep<T> {
+    private final CompletableFuture<T> myContinuation;
 
-  override fun getTextFor(value: T): String = textFor(value)
+    private final Function<T, String> myTextFor;
 
-  override fun onChosen(selectedValue: T, finalChoice: Boolean): PopupStep<*>? {
-    continuation.resumeWith(Result.success(selectedValue))
-    return super.onChosen(selectedValue, true)
-  }
+    ChoicePopupStep(
+        CompletableFuture<T> continuation,
+        LocalizeValue title,
+        List<T> candidates,
+        Function<T, String> textFor
+    ) {
+        super(title.get(), candidates);
+        myContinuation = continuation;
+        myTextFor = textFor;
+    }
 
-  override fun isSpeedSearchEnabled(): Boolean = true
+    @Override
+    public String getTextFor(T value) {
+        return myTextFor.apply(value);
+    }
 
-  override fun canceled() {
-    continuation.cancel()
-    super.canceled()
-  }
+    @Override
+    public @Nullable PopupStep onChosen(T selectedValue, boolean finalChoice) {
+        myContinuation.complete(selectedValue);
+        return super.onChosen(selectedValue, true);
+    }
+
+    @Override
+    public boolean isSpeedSearchEnabled() {
+        return true;
+    }
+
+    @Override
+    public void canceled() {
+        myContinuation.completeExceptionally(new CancellationException());
+        super.canceled();
+    }
 }

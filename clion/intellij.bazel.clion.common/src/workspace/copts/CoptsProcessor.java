@@ -1,34 +1,57 @@
-package org.jetbrains.bazel.clion.workspace.copts
+package org.jetbrains.bazel.clion.workspace.copts;
 
-import com.jetbrains.cidr.lang.workspace.compiler.CompilerSpecificSwitchBuilder
-import org.jetbrains.bazel.clion.workspace.CcImportContext
-import org.jetbrains.bazel.clion.workspace.resolveExecutionRootPath
+import consulo.bazel.cpp.workspace.CcCompilerSwitches;
+import org.jetbrains.bazel.clion.workspace.CcImportContext;
+import org.jetbrains.bazel.clion.workspace.utils;
 
-/** A compile option that carries a path. */
-internal interface CoptsProcessor {
-  val flag: String
+import java.nio.file.Path;
+import java.util.function.BiConsumer;
 
-  context(ctx: CcImportContext)
-  suspend fun apply(builder: CompilerSpecificSwitchBuilder, value: String)
+/**
+ * A compile option that carries a path.
+ * <p>
+ * consulo: the CIDR {@code CompilerSpecificSwitchBuilder} is {@link CcCompilerSwitches.Builder}; upstream {@code apply} is
+ * a suspend function that does not suspend, it is synchronous here
+ */
+interface CoptsProcessor {
+    String getFlag();
+
+    void apply(CcImportContext ctx, CcCompilerSwitches.Builder builder, String value);
 }
 
-internal class GnuCoptsProcessor(
-  override val flag: String,
-  private val separator: String = "",
-  private val body: CompilerSpecificSwitchBuilder.(String) -> Unit,
-) : CoptsProcessor {
+class GnuCoptsProcessor implements CoptsProcessor {
+    private final String myFlag;
+    private final String mySeparator;
+    private final BiConsumer<CcCompilerSwitches.Builder, String> myBody;
 
-  context(ctx: CcImportContext)
-  private fun resolvePath(value: String): String {
-    // GCC and Clang replace a `=` prefix of an include path with the sysroot. Keep such a path as it is.
-    if (value.startsWith("=")) return value
+    GnuCoptsProcessor(String flag, String separator, BiConsumer<CcCompilerSwitches.Builder, String> body) {
+        myFlag = flag;
+        mySeparator = separator;
+        myBody = body;
+    }
 
-    return ctx.resolveExecutionRootPath(value)?.toString() ?: value
-  }
+    // consulo: overload for the upstream default value of separator
+    GnuCoptsProcessor(String flag, BiConsumer<CcCompilerSwitches.Builder, String> body) {
+        this(flag, "", body);
+    }
 
-  context(ctx: CcImportContext)
-  override suspend fun apply(builder: CompilerSpecificSwitchBuilder, value: String) {
-    body(builder, resolvePath(value.removePrefix(separator)))
-  }
+    @Override
+    public String getFlag() {
+        return myFlag;
+    }
+
+    private String resolvePath(CcImportContext ctx, String value) {
+        // GCC and Clang replace a `=` prefix of an include path with the sysroot. Keep such a path as it is.
+        if (value.startsWith("=")) {
+            return value;
+        }
+
+        Path resolved = utils.resolveExecutionRootPath(ctx, value);
+        return resolved != null ? resolved.toString() : value;
+    }
+
+    @Override
+    public void apply(CcImportContext ctx, CcCompilerSwitches.Builder builder, String value) {
+        myBody.accept(builder, resolvePath(ctx, value.startsWith(mySeparator) ? value.substring(mySeparator.length()) : value));
+    }
 }
-

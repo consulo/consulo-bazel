@@ -113,6 +113,18 @@
             <version>${project.version}</version>
             <scope>runtime</scope>
         </dependency>
+        <dependency>
+            <groupId>consulo.plugin</groupId>
+            <artifactId>consulo.bazel.cpp</artifactId>
+            <version>${project.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>consulo.plugin</groupId>
+            <artifactId>consulo.bazel.go</artifactId>
+            <version>${project.version}</version>
+            <scope>runtime</scope>
+        </dependency>
         <!-- gRPC (grpc-api, grpc-stub, grpc-protobuf) and proto-google-common-protos are provided by the platform.
              TODO: drop the versions once the published arch.managment manages ${grpc.version} -->
         <dependency>

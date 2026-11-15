@@ -1,87 +1,91 @@
-package org.jetbrains.bazel.clion.run
+package org.jetbrains.bazel.clion.run;
 
-import com.intellij.cidr.debugger.profiles.CidrDebugProfilesEnabler
-import com.intellij.execution.Executor
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.clion.BazelCLionCoreBundle
-import org.jetbrains.bazel.clion.BazelCLionFeatureFlags
-import org.jetbrains.bazel.clion.sync.includesCc
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.RunHandlerProvider
-import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState
-import org.jetbrains.bazel.run.commandLine.BazelTestCommandLineState
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.GenericRunState
-import org.jetbrains.bazel.run.state.GenericTestState
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.bazel.cpp.localize.BazelCLionCoreLocalize;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.project.Project;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState;
+import org.jetbrains.bazel.run.commandLine.BazelTestCommandLineState;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.GenericRunState;
+import org.jetbrains.bazel.run.state.GenericTestState;
+import org.jspecify.annotations.Nullable;
 
-internal class CcRunHandler : BazelRunHandler {
-  override val state: GenericRunState = GenericRunState()
+// consulo: the nested upstream CcRunHandler.Provider and CcTestHandler.Provider have their own files (nested @ExtensionImpl classes
+// are not supported by the annotation processor), see CcRunHandlerProvider and CcTestHandlerProvider
+public class CcRunHandler implements BazelRunHandler {
+    private final GenericRunState myState = new GenericRunState();
 
-  override val name: String get() = BazelCLionCoreBundle.message("run.handler.cc.name")
-
-  override val isTestHandler: Boolean = false
-
-  override fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
-    return if (executor is DefaultDebugExecutor) {
-      CcDebugCommandLineState(environment, state)
-    } else {
-      BazelRunCommandLineState(environment, state)
+    @Override
+    public GenericRunState getState() {
+        return myState;
     }
-  }
 
-  internal class Provider : RunHandlerProvider {
-    override val id: String = "CcRunHandlerProvider"
-
-    override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = CcRunHandler()
-
-    override fun canRun(project: Project, targets: List<BuildTarget>): Boolean {
-      if (!BazelCLionFeatureFlags.isCLionEnabled) return false
-
-      val target = targets.singleOrNull() ?: return false
-      return target.kind.includesCc() && target.kind.ruleType == RuleType.BINARY
+    @Override
+    public String getName() {
+        return BazelCLionCoreLocalize.runHandlerCcName().get();
     }
-  }
+
+    @Override
+    public boolean isTestHandler() {
+        return false;
+    }
+
+    @Override
+    public RunProfileState getRunProfileState(Executor executor, ExecutionEnvironment environment) {
+        if (executor instanceof DefaultDebugExecutor) {
+            return new CcDebugCommandLineState(environment, myState);
+        }
+        else {
+            return new BazelRunCommandLineState(environment, myState);
+        }
+    }
+
+    // consulo: upstream public top-level class of CcRunHandler.kt
+    public static class CcTestHandler implements BazelRunHandler {
+        private final GenericTestState myState = new GenericTestState();
+
+        @Override
+        public GenericTestState getState() {
+            return myState;
+        }
+
+        @Override
+        public String getName() {
+            return BazelCLionCoreLocalize.testHandlerCcName().get();
+        }
+
+        @Override
+        public boolean isTestHandler() {
+            return true;
+        }
+
+        @Override
+        public RunProfileState getRunProfileState(Executor executor, ExecutionEnvironment environment) {
+            if (executor instanceof DefaultDebugExecutor) {
+                return new CcDebugCommandLineState(environment, myState);
+            }
+            else {
+                return new BazelTestCommandLineState(environment, myState);
+            }
+        }
+    }
 }
 
-@ApiStatus.Internal
-class CcTestHandler : BazelRunHandler {
-  override val state: GenericTestState = GenericTestState()
-
-  override val name: String get() = BazelCLionCoreBundle.message("test.handler.cc.name")
-
-  override val isTestHandler: Boolean = true
-
-  override fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
-    return if (executor is DefaultDebugExecutor) {
-      CcDebugCommandLineState(environment, state)
+// TODO consulo: not registered (upstream cidr debugger.debugProfilesEnabler), CidrDebugProfilesEnabler
+//   (com.intellij.cidr.debugger.profiles) does not exist; consulo-native-dev chooses the debugger per session
+//   (NativeDebugSessionStarter), so CcDebugRunner needs no enabler
+class DebugProfileEnabler /* : CidrDebugProfilesEnabler */ {
+    public DebugProfileEnabler() {
     }
-    else {
-      BazelTestCommandLineState(environment, state)
+
+    public boolean debugProfilesEnabled(Project project, @Nullable RunConfiguration runConfiguration) {
+        return runConfiguration instanceof BazelRunConfiguration bazelRunConfiguration &&
+            (bazelRunConfiguration.getHandler() instanceof CcRunHandler ||
+                bazelRunConfiguration.getHandler() instanceof CcRunHandler.CcTestHandler);
     }
-  }
-
-  internal class Provider : RunHandlerProvider {
-    override val id: String = "CcTestHandlerProvider"
-
-    override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = CcTestHandler()
-
-    override fun canRun(project: Project, targets: List<BuildTarget>): Boolean {
-      if (!BazelCLionFeatureFlags.isCLionEnabled) return false
-      return targets.all { it.kind.includesCc() && it.kind.ruleType == RuleType.TEST }
-    }
-  }
-}
-
-internal class DebugProfileEnabler : CidrDebugProfilesEnabler {
-  override fun debugProfilesEnabled(project: Project, runConfiguration: RunConfiguration?): Boolean {
-    return runConfiguration is BazelRunConfiguration &&
-           (runConfiguration.handler is CcRunHandler || runConfiguration.handler is CcTestHandler)
-  }
 }

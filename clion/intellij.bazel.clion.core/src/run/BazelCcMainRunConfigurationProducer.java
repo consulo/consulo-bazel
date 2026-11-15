@@ -1,17 +1,24 @@
-package org.jetbrains.bazel.clion.run
+package org.jetbrains.bazel.clion.run;
 
-import com.intellij.psi.PsiElement
-import com.jetbrains.cidr.cpp.runfile.CppFileEntryPointDetector
-import org.jetbrains.bazel.clion.sync.includesCc
-import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.clion.sync.CcLanguageClass;
+import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelCcMainRunConfigurationProducer : BazelRunConfigurationProducer() {
-  override fun getGutterAction(element: PsiElement, target: BuildTarget): GutterAction? {
-    if (!target.kind.includesCc()) return null
-    if (CppFileEntryPointDetector.getInstance()?.isMainOrIsInMain(element) != true) {
-      return null
+// TODO consulo: not registered (upstream runConfigurationProducer), CppFileEntryPointDetector (com.jetbrains.cidr.cpp.runfile) does not
+//   exist in consulo-cpp, which cannot tell whether an element is the main function or inside it
+public class BazelCcMainRunConfigurationProducer extends BazelRunConfigurationProducer {
+    @Override
+    public @Nullable GutterAction getGutterAction(PsiElement element, BuildTarget target) {
+        if (!CcLanguageClass.includesCc(target.getKind())) {
+            return null;
+        }
+        // TODO consulo: CppFileEntryPointDetector does not exist in consulo-cpp, so no element is detected as the main function
+        // if (CppFileEntryPointDetector.getInstance()?.isMainOrIsInMain(element) != true) {
+        //   return null
+        // }
+        // return GutterAction()
+        return null;
     }
-    return GutterAction()
-  }
 }

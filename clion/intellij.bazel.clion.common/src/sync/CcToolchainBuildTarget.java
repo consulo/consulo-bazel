@@ -1,26 +1,30 @@
-package org.jetbrains.bazel.clion.sync
+package org.jetbrains.bazel.clion.sync;
 
-import org.jetbrains.bsp.protocol.BuildTargetData
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bsp.protocol.StringsCollection
+import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jetbrains.bsp.protocol.StringsCollection;
+import org.jspecify.annotations.Nullable;
 
-data class CcToolchainBuildTarget(
-  val targetName: String,
-  val compilerName: String,
-  val cppOption: StringsCollection,
-  val cOption: StringsCollection,
-  val cCompiler: OutputLocation,
-  val cppCompiler: OutputLocation,
-  val builtInIncludeDirectories: OutputLocationCollection,
-  val sysroot: OutputLocation?,
-  val cEnvironment: Map<String, String>,
-  val cppEnvironment: Map<String, String>,
-  val xcodeInfo: XcodeInfo?,
-) : BuildTargetData {
+import java.util.Map;
 
-  data class XcodeInfo(
-    val macosSdkVersion: String,
-    val xcodeVersion: String,
-  )
+public record CcToolchainBuildTarget(
+    String targetName,
+    String compilerName,
+    StringsCollection cppOption,
+    StringsCollection cOption,
+    OutputLocation cCompiler,
+    OutputLocation cppCompiler,
+    OutputLocationCollection builtInIncludeDirectories,
+    @Nullable OutputLocation sysroot,
+    Map<String, String> cEnvironment,
+    Map<String, String> cppEnvironment,
+    @Nullable XcodeInfo xcodeInfo
+) implements BuildTargetData {
+
+    public record XcodeInfo(
+        String macosSdkVersion,
+        String xcodeVersion
+    ) {
+    }
 }

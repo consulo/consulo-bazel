@@ -1,60 +1,89 @@
-@file:OptIn(ExperimentalStdlibApi::class)
+package org.jetbrains.bazel.clion.workspace;
 
-package org.jetbrains.bazel.clion.workspace
+import consulo.bazel.cpp.localize.BazelCLionCommonLocalize;
+import consulo.build.ui.event.MessageEvent;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jspecify.annotations.Nullable;
 
-import com.intellij.build.events.MessageEvent
-import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerId
-import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerKind
-import com.jetbrains.cidr.lang.workspace.compiler.isUnknown
-import com.jetbrains.cidr.lang.workspace.compiler.resolver.OCCompilerResolver
-import org.jetbrains.bazel.clion.BazelCLionCommonBundle
-import org.jetbrains.bsp.protocol.OutputLocation
-import java.nio.file.Path
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-internal class CcCompilerResolver(private val ctx: CcImportContext) {
+class CcCompilerResolver {
+    private final CcImportContext myCtx;
 
-  data class Result(val kind: OCCompilerKind, val path: Path)
-
-  private val cache = mutableMapOf<OutputLocation, Result?>()
-
-  fun resolve(location: OutputLocation, environment: CidrToolEnvironment): Result? {
-    return cache.getOrPutIfMissing(location) { doResolve(location, environment) }
-  }
-
-  private fun doResolve(location: OutputLocation, environment: CidrToolEnvironment): Result? {
-    val path = ctx.resolveOutputLocation(location) ?: return null
-    val kind = OCCompilerResolver.resolve(ctx.project, path, environment)
-
-    return Result(mapKind(kind), path)
-  }
-
-  private fun mapKind(kind: OCCompilerKind): OCCompilerKind {
-    return when (kind.getId()) {
-      OCCompilerId.CLANG -> CcCompilerKind.CLANG
-      OCCompilerId.GCC -> CcCompilerKind.GCC
-      OCCompilerId.APPLE_CLANG -> CcCompilerKind.APPLE_CLANG
-      else -> kind
-    }
-  }
-
-  fun reportProblems() {
-    val problems = cache.entries.mapNotNull { (location, result) ->
-      val compilerPath = ctx.resolveOutputLocation(location).toString()
-
-      when {
-        result == null -> BazelCLionCommonBundle.message("cc.compiler.path.resolve.failed", compilerPath)
-        result.kind.isUnknown() -> BazelCLionCommonBundle.message("cc.compiler.kind.resolve.failed", compilerPath)
-        else -> null
-      }
+    CcCompilerResolver(CcImportContext ctx) {
+        myCtx = ctx;
     }
 
-    if (problems.isEmpty()) return
+    record Result(CcCompilerKind kind, Path path) {
+    }
 
-    ctx.reportEvent(
-      message = BazelCLionCommonBundle.message("cc.compiler.resolve.failed"),
-      description = problems.joinToString("\n"),
-      severity = MessageEvent.Kind.WARNING,
-    )
-  }
+    private final Map<OutputLocation, @Nullable Result> myCache = new LinkedHashMap<>();
+
+    @Nullable Result resolve(OutputLocation location, CcToolEnvironment environment) {
+        // consulo: Kotlin getOrPutIfMissing, a null result is cached as well
+        if (myCache.containsKey(location)) {
+            return myCache.get(location);
+        }
+        Result result = doResolve(location, environment);
+        myCache.put(location, result);
+        return result;
+    }
+
+    private @Nullable Result doResolve(OutputLocation location, CcToolEnvironment environment) {
+        Path path = utils.resolveOutputLocation(myCtx, location);
+        if (path == null) {
+            return null;
+        }
+        // TODO consulo: CIDR OCCompilerResolver.resolve(project, path, environment) identifies the compiler kind by
+        //  running the compiler; consulo-cpp has no compiler resolver, the kind stays unknown
+        //  val kind = OCCompilerResolver.resolve(ctx.project, path, environment)
+        CcCompilerKind kind = CcCompilerKind.UNKNOWN;
+
+        return new Result(mapKind(kind), path);
+    }
+
+    private CcCompilerKind mapKind(CcCompilerKind kind) {
+        String id = kind.getId();
+        if ("CLANG".equals(id)) {
+            return CcCompilerKind.CLANG;
+        }
+        else if ("GCC".equals(id)) {
+            return CcCompilerKind.GCC;
+        }
+        else if ("APPLE_CLANG".equals(id)) {
+            return CcCompilerKind.APPLE_CLANG;
+        }
+        else {
+            return kind;
+        }
+    }
+
+    void reportProblems() {
+        List<String> problems = new ArrayList<>();
+        for (Map.Entry<OutputLocation, @Nullable Result> entry : myCache.entrySet()) {
+            String compilerPath = String.valueOf(utils.resolveOutputLocation(myCtx, entry.getKey()));
+            Result result = entry.getValue();
+
+            if (result == null) {
+                problems.add(BazelCLionCommonLocalize.ccCompilerPathResolveFailed(compilerPath).get());
+            }
+            else if (result.kind().isUnknown()) {
+                problems.add(BazelCLionCommonLocalize.ccCompilerKindResolveFailed(compilerPath).get());
+            }
+        }
+
+        if (problems.isEmpty()) {
+            return;
+        }
+
+        myCtx.reportEvent(
+            MessageEvent.Kind.WARNING,
+            BazelCLionCommonLocalize.ccCompilerResolveFailed(),
+            String.join("\n", problems)
+        );
+    }
 }

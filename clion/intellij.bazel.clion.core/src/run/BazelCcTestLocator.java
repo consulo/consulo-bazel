@@ -15,47 +15,85 @@
  * limitations under the License.
  */
 
-package org.jetbrains.bazel.clion.run
+package org.jetbrains.bazel.clion.run;
 
-import com.intellij.execution.Location
-import com.intellij.execution.testframework.sm.runner.SMTestLocator
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.ModificationTracker
-import com.intellij.psi.search.GlobalSearchScope
-import org.jetbrains.bazel.run.test.BazelTestLocatorProvider
-import org.jetbrains.bazel.run.test.CompositeModificationTracker
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.component.util.ModificationTracker;
+import consulo.execution.action.Location;
+import consulo.execution.test.sm.runner.SMTestLocator;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.project.Project;
+import org.jetbrains.bazel.run.test.BazelTestConsoleProperties.BazelTestLocatorProvider;
+import org.jetbrains.bazel.run.test.BazelTestConsoleProperties.CompositeModificationTracker;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Resolves the generic [BAZEL_CC_PROTOCOL] location URLs asking every registered [BazelCcTestFrameworkSupport] in turn.
+ * Resolves the generic {@link BazelCcTestLocationHintProvider#BAZEL_CC_PROTOCOL} location URLs asking every registered
+ * {@link BazelCcTestFrameworkSupport} in turn.
  */
-private object BazelCcTestLocator : SMTestLocator, DumbAware {
-  override fun getLocation(
-    protocol: String,
-    path: String,
-    project: Project,
-    scope: GlobalSearchScope,
-  ): List<Location<*>> {
-    if (protocol != BAZEL_CC_PROTOCOL) return emptyList()
+final class BazelCcTestLocator implements SMTestLocator, DumbAware {
+    static final BazelCcTestLocator INSTANCE = new BazelCcTestLocator();
 
-    return BazelCcTestFrameworkSupport.EP_NAME.extensionList
-             .firstNotNullOfOrNull { navigable(it.locate(path, project, scope)) }
-           ?: emptyList()
-  }
+    private BazelCcTestLocator() {
+    }
 
-  /** Discards results which resolved only to a non-navigable re-run placeholder. */
-  private fun navigable(locations: List<Location<*>>): List<Location<*>>? {
-    return locations.takeIf { list -> list.any { hasFile(it) } }
-  }
+    @Override
+    public List<Location> getLocation(
+        String protocol,
+        String path,
+        Project project,
+        GlobalSearchScope scope
+    ) {
+        if (!protocol.equals(BazelCcTestLocationHintProvider.BAZEL_CC_PROTOCOL)) {
+            return List.of();
+        }
 
-  private fun hasFile(location: Location<*>): Boolean {
-    return location.virtualFile != null
-  }
+        for (BazelCcTestFrameworkSupport it : BazelCcTestFrameworkSupport.getExtensions()) {
+            List<Location> locations = navigable(it.locate(path, project, scope));
+            if (locations != null) {
+                return locations;
+            }
+        }
+        return List.of();
+    }
 
-  override fun getLocationCacheModificationTracker(project: Project): ModificationTracker =
-    CompositeModificationTracker(BazelCcTestFrameworkSupport.EP_NAME.extensionList.map { it.getLocationCacheModificationTracker(project) })
+    /**
+     * Discards results which resolved only to a non-navigable re-run placeholder.
+     */
+    private @Nullable List<Location> navigable(List<Location> locations) {
+        for (Location it : locations) {
+            if (hasFile(it)) {
+                return locations;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasFile(Location location) {
+        return location.getVirtualFile() != null;
+    }
+
+    // consulo: SMTestLocator has no getLocationCacheModificationTracker(project), the method is kept without override
+    public ModificationTracker getLocationCacheModificationTracker(Project project) {
+        List<ModificationTracker> trackers = new ArrayList<>();
+        for (BazelCcTestFrameworkSupport it : BazelCcTestFrameworkSupport.getExtensions()) {
+            trackers.add(it.getLocationCacheModificationTracker(project));
+        }
+        return new CompositeModificationTracker(trackers);
+    }
 }
 
-internal class BazelCcTestLocatorProvider : BazelTestLocatorProvider {
-  override fun getTestLocator(): SMTestLocator = BazelCcTestLocator
+@ExtensionImpl
+class BazelCcTestLocatorProvider implements BazelTestLocatorProvider {
+    public BazelCcTestLocatorProvider() {
+    }
+
+    @Override
+    public SMTestLocator getTestLocator() {
+        return BazelCcTestLocator.INSTANCE;
+    }
 }

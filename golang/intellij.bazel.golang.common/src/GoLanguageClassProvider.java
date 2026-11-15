@@ -1,13 +1,24 @@
-package org.jetbrains.bazel.golang
+package org.jetbrains.bazel.golang;
 
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.commons.LanguageClassProvider
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.LanguageClass.LanguageClassProvider;
 
-internal object GoLanguageClass {
-  val GO = LanguageClass("go", setOf("go"))
-}
+import java.util.List;
+import java.util.Set;
 
-internal class GoLanguageClassProvider: LanguageClassProvider {
-  override val languages: List<LanguageClass>
-    get() = listOf(GoLanguageClass.GO)
+@ExtensionImpl
+public class GoLanguageClassProvider implements LanguageClassProvider {
+    // consulo: upstream top-level `internal object GoLanguageClass` of GoLanguageClassProvider.kt
+    public static final class GoLanguageClass {
+        private GoLanguageClass() {
+        }
+
+        public static final LanguageClass GO = new LanguageClass("go", Set.of("go"));
+    }
+
+    @Override
+    public List<LanguageClass> getLanguages() {
+        return List.of(GoLanguageClass.GO);
+    }
 }

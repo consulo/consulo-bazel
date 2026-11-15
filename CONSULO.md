@@ -295,9 +295,9 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `java/intellij.bazel.java.{common,sync,core,coverage}` | `consulo.bazel.java` (`consulo-bazel-java/`, optional library, needs consulo.java) | converted, builds |
 | `java/intellij.bazel.java.profiler` | - | not ported (IntelliJ Ultimate profiler API), stays `.kt` |
 | `kotlin/*` | optional library, needs consulo-kotlin | not started |
-| `golang/*` | `bazel` module in consulo-google-go | not started |
-| `python/*` | `bazel` module in consulo-python | not started |
-| `clion/*` | `bazel` module in incubating-consulo-cpp | not started |
+| `golang/*` | `consulo.bazel.go` (`consulo-bazel-go/`, optional library, needs consulo.google.go) | converted, builds (no Delve debugger, import resolver, coverage) |
+| `python/*` | optional library, needs consulo-python | not started |
+| `clion/*` | `consulo.bazel.cpp` (`consulo-bazel-cpp/`, optional library, needs consulo.cpp from consulo/consulo-cpp) | converted, builds, sync tested; per-file options via `CFileOptionsContributor`, debug via consulo-native-dev; no compiler detection or test frameworks |
 
 Order: `languages` -> `commons` -> `projectview` -> `backend` -> `core` -> language integrations.
 
@@ -342,13 +342,18 @@ classes under other names, the Java file is renamed. Upstream diffs of the left 
 | `java/intellij.bazel.java.core/.../fastbuild/ToolchainInfoSyncHook.kt` (the service) | `ToolchainInfoSyncHook.java` + `JvmToolchainInfoService.java` |
 | `java/intellij.bazel.java.core/.../jvm/run/JvmRunHandler.kt` (the provider) | `JvmRunHandler.java` + `JvmRunHandlerProvider.java` |
 | `java/intellij.bazel.java.core/.../jvm/run/JvmTestHandler.kt` (the provider) | `JvmTestHandler.java` + `JvmTestHandlerProvider.java` |
+| `golang/intellij.bazel.golang.common/.../sync/GoWorkspaceImporter.kt` (`Factory`) | `GoWorkspaceImporter.java` + `GoWorkspaceImporterFactory.java` |
+| `golang/intellij.bazel.golang.common/.../debug/BazelGoRunHandler.kt` (the provider) | `BazelGoRunHandler.java` + `BazelGoRunHandlerProvider.java` |
+| `golang/intellij.bazel.golang.common/.../debug/BazelGoTestHandler.kt` (the provider) | `BazelGoTestHandler.java` + `BazelGoTestHandlerProvider.java` |
+| `clion/intellij.bazel.clion.common/.../workspace/CcWorkspaceImporter.kt` (`Factory`, data classes) | `CcWorkspaceImporter.java`, `CcWorkspaceImporterFactory.java`, `CcCompilerInfo.java`, `CcResolveConfiguration.java` |
+| `clion/intellij.bazel.clion.core/.../run/CcRunHandler.kt` (the providers) | `CcRunHandler.java`, `CcRunHandlerProvider.java`, `CcTestHandlerProvider.java` |
 
 `KnownFlags.kt` is generated upstream and was converted mechanically: re-run the conversion when it changes
 (fields named after Java keywords - `long`, `null`, `short` - get a trailing underscore).
 
 Expected entries: the `clion/*` files that import `com.jetbrains.cidr.*` (compiler resolver, OC workspace,
-CIDR execution and debugger). They are replaced by code in `incubating-consulo-cpp/bazel`, built on
-`CPreprocessorOptions`, `CCompileSettings`, `SdkDialect` and consulo-dap.
+CIDR execution and debugger). In `consulo.bazel.cpp` they are mapped onto consulo-cpp (github.com/consulo/consulo-cpp:
+`CCompileSettings`, `SdkDialect`, consulo-dap), with `TODO consulo` where consulo-cpp has no counterpart yet.
 
 ## Aspect
 

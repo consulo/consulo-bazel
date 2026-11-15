@@ -13,36 +13,67 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.golang.treeview
+package org.jetbrains.bazel.golang.treeview;
 
-import com.intellij.navigation.ItemPresentation
-import com.intellij.openapi.roots.SyntheticLibrary
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import java.util.SortedSet
-import java.util.TreeSet
-import javax.swing.Icon
+import consulo.localize.LocalizeValue;
+import consulo.navigation.ItemPresentation;
+import consulo.ui.image.Image;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jspecify.annotations.Nullable;
 
-/** Represents a [SyntheticLibrary] with a mutable set of child files.  */
-internal class BazelGoExternalSyntheticLibrary(private val presentableText: String, childFiles: Collection<VirtualFile>) :
-  SyntheticLibrary(),
-  ItemPresentation {
-  private val childFiles: SortedSet<VirtualFile> = TreeSet(Comparator.comparing(VirtualFile::toString)).also { it.addAll(childFiles) }
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
-  fun addFiles(files: Collection<VirtualFile>) {
-    childFiles.addAll(files)
-  }
+/**
+ * Represents a {@code SyntheticLibrary} with a mutable set of child files.
+ */
+// TODO consulo: IntelliJ SyntheticLibrary is missing, the class keeps its data and presentation
+public class BazelGoExternalSyntheticLibrary implements ItemPresentation {
+    private final String myPresentableText;
+    private final SortedSet<VirtualFile> myChildFiles;
 
-  override fun getIcon(unused: Boolean): Icon = BazelPluginIcons.bazel
+    public BazelGoExternalSyntheticLibrary(String presentableText, Collection<VirtualFile> childFiles) {
+        myPresentableText = presentableText;
+        myChildFiles = new TreeSet<>(Comparator.comparing(VirtualFile::toString));
+        myChildFiles.addAll(childFiles);
+    }
 
-  override fun getSourceRoots(): SortedSet<VirtualFile> = childFiles
+    public void addFiles(Collection<VirtualFile> files) {
+        myChildFiles.addAll(files);
+    }
 
-  override fun equals(o: Any?): Boolean =
-    o is BazelGoExternalSyntheticLibrary &&
-      o.presentableText == presentableText &&
-      o.sourceRoots == sourceRoots
+    @Override
+    public Image getIcon() {
+        return BazelPluginIcons.bazel();
+    }
 
-  override fun hashCode(): Int = presentableText.hashCode()
+    public SortedSet<VirtualFile> getSourceRoots() {
+        return myChildFiles;
+    }
 
-  override fun getPresentableText(): String = presentableText
+    @Override
+    public boolean equals(@Nullable Object o) {
+        return o instanceof BazelGoExternalSyntheticLibrary other &&
+            other.myPresentableText.equals(myPresentableText) &&
+            other.getSourceRoots().equals(getSourceRoots());
+    }
+
+    @Override
+    public int hashCode() {
+        return myPresentableText.hashCode();
+    }
+
+    @Override
+    public LocalizeValue getPresentableText() {
+        return LocalizeValue.of(myPresentableText);
+    }
+
+    // consulo: ItemPresentation of Consulo also has the location string
+    @Override
+    public @Nullable String getLocationString() {
+        return null;
+    }
 }

@@ -14,23 +14,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.clion.run
+package org.jetbrains.bazel.clion.run;
 
-import com.intellij.execution.testframework.AbstractTestProxy
-import com.intellij.psi.search.GlobalSearchScope
-import org.jetbrains.bazel.run.BazelTestFilterRerunExtension
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
+import consulo.execution.test.AbstractTestProxy;
+import org.jetbrains.bazel.run.BazelTestRerunExtension.BazelTestFilterRerunExtension;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelCcTestRerunExtension : BazelTestFilterRerunExtension() {
-  override fun isApplicable(configuration: BazelRunConfiguration): Boolean =
-    configuration.handler is CcTestHandler
+import java.util.List;
 
-  override fun getTestFilter(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): String? {
-    val project = configuration.project
-    val testLocations = tests.mapNotNull { it.getLocation(project, GlobalSearchScope.allScope(project)) }
-    val testsAndFrameworks = testLocations.mapNotNull { BazelCcTestFrameworkSupport.findTestAndFramework(it.psiElement) }
-    // a single Bazel invocation carries one --test_filter, which is framework-specific
-    val frameworkSupport = testsAndFrameworks.map { it.second }.distinct().singleOrNull() ?: return null
-    return frameworkSupport.createTestFilter(testsAndFrameworks.map { it.first })
-  }
+// TODO consulo: not registered (upstream testRerunExtension), BazelCcTestFrameworkSupport.findTestAndFramework and
+//   createTestFilter need CidrTestScopeElement (com.jetbrains.cidr.execution.testing), which does not exist in consulo-cpp
+public class BazelCcTestRerunExtension extends BazelTestFilterRerunExtension {
+    @Override
+    public boolean isApplicable(BazelRunConfiguration configuration) {
+        return configuration.getHandler() instanceof CcRunHandler.CcTestHandler;
+    }
+
+    @Override
+    public @Nullable String getTestFilter(BazelRunConfiguration configuration, List<AbstractTestProxy> tests) {
+        // TODO consulo: CidrTestScopeElement does not exist in consulo-cpp
+        // val project = configuration.project
+        // val testLocations = tests.mapNotNull { it.getLocation(project, GlobalSearchScope.allScope(project)) }
+        // val testsAndFrameworks = testLocations.mapNotNull { BazelCcTestFrameworkSupport.findTestAndFramework(it.psiElement) }
+        // // a single Bazel invocation carries one --test_filter, which is framework-specific
+        // val frameworkSupport = testsAndFrameworks.map { it.second }.distinct().singleOrNull() ?: return null
+        // return frameworkSupport.createTestFilter(testsAndFrameworks.map { it.first })
+        return null;
+    }
 }

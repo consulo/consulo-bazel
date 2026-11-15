@@ -13,53 +13,115 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.golang.treeview
+package org.jetbrains.bazel.golang.treeview;
 
-import com.goide.GoIcons
-import com.intellij.ide.projectView.ViewSettings
-import com.intellij.ide.projectView.impl.nodes.SyntheticLibraryElementNode
-import com.intellij.ide.util.treeView.AbstractTreeNode
-import com.intellij.navigation.ItemPresentation
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.annotations.ApiStatus
-import java.util.SortedMap
-import javax.swing.Icon
+import com.goide.GoIcons;
+import consulo.localize.LocalizeValue;
+import consulo.navigation.ItemPresentation;
+import consulo.project.Project;
+import consulo.project.ui.view.tree.AbstractTreeNode;
+import consulo.project.ui.view.tree.ProjectViewNode;
+import consulo.project.ui.view.tree.ViewSettings;
+import consulo.ui.ex.tree.PresentationData;
+import consulo.ui.image.Image;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jspecify.annotations.Nullable;
+
+import java.util.Collection;
+import java.util.Map;
+import java.util.SortedMap;
 
 /**
  * Represents a Go directory node within the "External Libraries" project view.
- *
- *
+ * <p>
  * It can have an arbitrary amount of child nodes, forming a tree. Child nodes may be added and
  * queried with the appropriate methods.
  */
-@ApiStatus.Internal
-class GoSyntheticLibraryElementNode internal constructor(
-  project: Project,
-  library: BazelGoExternalSyntheticLibrary,
-  dirName: String,
-  settings: ViewSettings,
-  children: SortedMap<String, AbstractTreeNode<*>>,
-) : SyntheticLibraryElementNode(project, library, BazelGoLibraryItemPresentation(dirName), settings) {
-  private val children: MutableMap<String, AbstractTreeNode<*>> = children
+// TODO consulo: IntelliJ SyntheticLibraryElementNode is missing; the node is a ProjectViewNode with the presentation and
+//  the file containment of the library
+public class GoSyntheticLibraryElementNode extends ProjectViewNode<BazelGoExternalSyntheticLibrary> {
+    private final ItemPresentation myItemPresentation;
+    private final Map<String, AbstractTreeNode<?>> myChildren;
 
-  override fun getChildren(): Collection<AbstractTreeNode<*>> = children.values
+    GoSyntheticLibraryElementNode(
+        Project project,
+        BazelGoExternalSyntheticLibrary library,
+        String dirName,
+        ViewSettings settings,
+        SortedMap<String, AbstractTreeNode<?>> children
+    ) {
+        super(project, library, settings);
+        myItemPresentation = new BazelGoLibraryItemPresentation(dirName);
+        myChildren = children;
+    }
 
-  fun getChildNode(dirName: String): GoSyntheticLibraryElementNode? = children[dirName] as? GoSyntheticLibraryElementNode
+    @Override
+    public Collection<AbstractTreeNode<?>> getChildren() {
+        return myChildren.values();
+    }
 
-  fun addChild(dirName: String, child: AbstractTreeNode<*>) {
-    children[dirName] = child
-  }
+    public @Nullable GoSyntheticLibraryElementNode getChildNode(String dirName) {
+        return myChildren.get(dirName) instanceof GoSyntheticLibraryElementNode node ? node : null;
+    }
 
-  fun hasChild(dirName: String): Boolean = children.containsKey(dirName)
+    public void addChild(String dirName, AbstractTreeNode<?> child) {
+        myChildren.put(dirName, child);
+    }
 
-  fun addFiles(files: Collection<VirtualFile>) {
-    (value as? BazelGoExternalSyntheticLibrary)?.addFiles(files)
-  }
+    public boolean hasChild(String dirName) {
+        return myChildren.containsKey(dirName);
+    }
 
-  private class BazelGoLibraryItemPresentation(val myPresentableText: String) : ItemPresentation {
-    override fun getPresentableText(): String = myPresentableText
+    public void addFiles(Collection<VirtualFile> files) {
+        BazelGoExternalSyntheticLibrary library = getValue();
+        if (library != null) {
+            library.addFiles(files);
+        }
+    }
 
-    override fun getIcon(ignore: Boolean): Icon = GoIcons.PACKAGE
-  }
+    // consulo: upstream SyntheticLibraryElementNode.contains(file): the file is under a source root of the library
+    @Override
+    public boolean contains(VirtualFile file) {
+        BazelGoExternalSyntheticLibrary library = getValue();
+        if (library == null) {
+            return false;
+        }
+        for (VirtualFile root : library.getSourceRoots()) {
+            if (VirtualFileUtil.isAncestor(root, file, false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // consulo: upstream SyntheticLibraryElementNode.update(presentation) shows the item presentation
+    @Override
+    protected void update(PresentationData presentation) {
+        presentation.updateFrom(myItemPresentation);
+    }
+
+    private static class BazelGoLibraryItemPresentation implements ItemPresentation {
+        private final String myPresentableText;
+
+        BazelGoLibraryItemPresentation(String presentableText) {
+            myPresentableText = presentableText;
+        }
+
+        @Override
+        public LocalizeValue getPresentableText() {
+            return LocalizeValue.of(myPresentableText);
+        }
+
+        // consulo: ItemPresentation of Consulo also has the location string
+        @Override
+        public @Nullable String getLocationString() {
+            return null;
+        }
+
+        @Override
+        public Image getIcon() {
+            return GoIcons.PACKAGE;
+        }
+    }
 }

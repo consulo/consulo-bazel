@@ -1,135 +1,152 @@
-package org.jetbrains.bazel.golang.debug
+package org.jetbrains.bazel.golang.debug;
 
-import com.goide.dlv.location.DlvPositionConverter
-import com.goide.dlv.location.DlvPositionConverterFactory
-import com.goide.sdk.GoSdkService.getInstance
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.module.Module
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileManager
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.golang.sync.GoLanguagePlugin
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService
-import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams
-import org.jetbrains.bsp.protocol.BazelResolveRemoteToLocalParams
-import java.nio.file.Path
+import com.goide.sdk.GoSdkService;
+import consulo.logging.Logger;
+import consulo.module.Module;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.golang.sync.GoLanguagePlugin;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService;
+import org.jetbrains.bazel.commons.BazelInfo;
+import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams;
+import org.jetbrains.bsp.protocol.BazelResolveLocalToRemoteParams.BazelResolveRemoteToLocalParams;
+import org.jspecify.annotations.Nullable;
 
-private val logger: Logger = logger<BspDlvPositionConverter>()
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-internal class BazelDlvPosConverterFactory : DlvPositionConverterFactory {
-  override fun createPositionConverter(
-    project: Project,
-    module: Module?,
-    remotePaths: Set<String>,
-  ): DlvPositionConverter? {
-    if (!project.isBazelProject)
-      return null
-    return BspDlvPositionConverter(project, remotePaths, getInstance(project).getSdk(module).homePath)
-  }
-}
-
-private class BspDlvPositionConverter(
-  private val project: Project,
-  private val remotePaths: Set<String>,
-  private val goRoot: String,
-) : DlvPositionConverter {
-
-  private val localToRemoteCache = mutableMapOf<String, String>()
-  private val remoteToLocalCache = mutableMapOf<String, VirtualFile>()
-
-  init {
-    if (remotePaths.isNotEmpty()) {
-      val resolvedMap = resolveRemoteToLocalOnServer(remotePaths.toList())
-      resolvedMap.forEach { (remote, localPath) ->
-        val vf = VirtualFileManager.getInstance().findFileByNioPath(localPath)
-        if (vf != null && vf.isValid) {
-          remoteToLocalCache[remote] = vf
+// TODO consulo: not registered (upstream com.goide dlv.positionConverterFactory, order="first"). The Delve debugger API
+//  (com.goide.dlv.location.DlvPositionConverterFactory / DlvPositionConverter) is missing in consulo-google-go
+public class BazelDlvPosConverterFactory /* : DlvPositionConverterFactory */ {
+    public @Nullable BspDlvPositionConverter createPositionConverter(
+        Project project,
+        @Nullable Module module,
+        Set<String> remotePaths
+    ) {
+        if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            return null;
         }
-      }
+        // consulo: GoSdkService.getSdk(module).homePath -> GoSdkService.getSdkHomePath(module)
+        String goRoot = GoSdkService.getInstance(project).getSdkHomePath(module);
+        return new BspDlvPositionConverter(project, remotePaths, goRoot != null ? goRoot : "");
     }
-  }
-
-  /**
-   * Converts a local file path (IDE) to a remote debugger path.
-   * Checks cache first or makes a server call if not found.
-   * Saves the result in the cache.
-   */
-  override fun toRemotePath(localFile: VirtualFile): String {
-    val localPath = localFile.path
-
-    localToRemoteCache[localPath]?.let { cached ->
-      return cached
-    }
-
-    val resolvedMap = resolveLocalToRemoteOnServer(listOf(localPath))
-
-    val remotePath =
-      resolvedMap[localPath]
-      ?: run {
-        logger.warn("Server could not resolve local path '$localPath' to remote path. Using as-is.")
-        localPath
-      }
-
-    // Cache the result
-    localToRemoteCache[localPath] = remotePath
-    return remotePath
-  }
-
-  /**
-   * Converts a remote debugger path to a local VirtualFile.
-   * Checks cache first or makes a server call if not found.
-   * Saves the result in the cache.
-   */
-  override fun toLocalFile(remotePath: String): VirtualFile? {
-    remoteToLocalCache[remotePath]?.let { cachedVf ->
-      if (cachedVf.isValid) return cachedVf
-    }
-
-    val resolvedMap = resolveRemoteToLocalOnServer(listOf(remotePath))
-
-    val localAbsolute = resolvedMap[remotePath]
-    if (localAbsolute == null) {
-      logger.warn("Server could not resolve remote path '$remotePath' to local path.")
-      return null
-    }
-
-    val vf = VirtualFileManager.getInstance().findFileByNioPath(localAbsolute)
-    if (vf != null && vf.isValid) {
-      remoteToLocalCache[remotePath] = vf
-      return vf
-    }
-    return null
-  }
-
-  private fun resolveLocalToRemoteOnServer(localPaths: List<String>): Map<String, String> {
-    val params =
-      BazelResolveLocalToRemoteParams(
-        localPaths = localPaths,
-      )
-
-    val bazelInfo = project.service<WorkspaceSnapshotService>().snapshot.value.bazelInfo
-    val bazelPathsResolver = BazelPathsResolver(bazelInfo)
-    return GoLanguagePlugin
-      .resolveLocalToRemote(bazelPathsResolver, params)
-      .resolvedPaths
-  }
-
-  private fun resolveRemoteToLocalOnServer(remotePaths: List<String>): Map<String, Path> {
-    val params =
-      BazelResolveRemoteToLocalParams(
-        remotePaths = remotePaths,
-        goRoot = goRoot,
-      )
-
-    val bazelInfo = project.service<WorkspaceSnapshotService>().snapshot.value.bazelInfo
-    val bazelPathsResolver = BazelPathsResolver(bazelInfo)
-    return GoLanguagePlugin
-      .resolveRemoteToLocal(bazelPathsResolver, params)
-      .resolvedPaths
-  }
 }
 
+class BspDlvPositionConverter /* : DlvPositionConverter */ {
+    // consulo: upstream private top-level val of BazelDlvPosConverterFactory.kt
+    private static final Logger logger = Logger.getInstance(BspDlvPositionConverter.class);
+
+    private final Project myProject;
+    private final Set<String> myRemotePaths;
+    private final String myGoRoot;
+
+    private final Map<String, String> myLocalToRemoteCache = new HashMap<>();
+    private final Map<String, VirtualFile> myRemoteToLocalCache = new HashMap<>();
+
+    BspDlvPositionConverter(
+        Project project,
+        Set<String> remotePaths,
+        String goRoot
+    ) {
+        myProject = project;
+        myRemotePaths = remotePaths;
+        myGoRoot = goRoot;
+
+        if (!myRemotePaths.isEmpty()) {
+            Map<String, Path> resolvedMap = resolveRemoteToLocalOnServer(List.copyOf(myRemotePaths));
+            resolvedMap.forEach((remote, localPath) -> {
+                VirtualFile vf = VirtualFileManager.getInstance().findFileByNioPath(localPath);
+                if (vf != null && vf.isValid()) {
+                    myRemoteToLocalCache.put(remote, vf);
+                }
+            });
+        }
+    }
+
+    /**
+     * Converts a local file path (IDE) to a remote debugger path.
+     * Checks cache first or makes a server call if not found.
+     * Saves the result in the cache.
+     */
+    public String toRemotePath(VirtualFile localFile) {
+        String localPath = localFile.getPath();
+
+        String cached = myLocalToRemoteCache.get(localPath);
+        if (cached != null) {
+            return cached;
+        }
+
+        Map<String, String> resolvedMap = resolveLocalToRemoteOnServer(List.of(localPath));
+
+        String remotePath = resolvedMap.get(localPath);
+        if (remotePath == null) {
+            logger.warn("Server could not resolve local path '" + localPath + "' to remote path. Using as-is.");
+            remotePath = localPath;
+        }
+
+        // Cache the result
+        myLocalToRemoteCache.put(localPath, remotePath);
+        return remotePath;
+    }
+
+    /**
+     * Converts a remote debugger path to a local VirtualFile.
+     * Checks cache first or makes a server call if not found.
+     * Saves the result in the cache.
+     */
+    public @Nullable VirtualFile toLocalFile(String remotePath) {
+        VirtualFile cachedVf = myRemoteToLocalCache.get(remotePath);
+        if (cachedVf != null) {
+            if (cachedVf.isValid()) {
+                return cachedVf;
+            }
+        }
+
+        Map<String, Path> resolvedMap = resolveRemoteToLocalOnServer(List.of(remotePath));
+
+        Path localAbsolute = resolvedMap.get(remotePath);
+        if (localAbsolute == null) {
+            logger.warn("Server could not resolve remote path '" + remotePath + "' to local path.");
+            return null;
+        }
+
+        VirtualFile vf = VirtualFileManager.getInstance().findFileByNioPath(localAbsolute);
+        if (vf != null && vf.isValid()) {
+            myRemoteToLocalCache.put(remotePath, vf);
+            return vf;
+        }
+        return null;
+    }
+
+    private Map<String, String> resolveLocalToRemoteOnServer(List<String> localPaths) {
+        BazelResolveLocalToRemoteParams params =
+            new BazelResolveLocalToRemoteParams(
+                localPaths
+            );
+
+        BazelInfo bazelInfo = myProject.getInstance(WorkspaceSnapshotService.class).getSnapshot().get().bazelInfo();
+        BazelPathsResolver bazelPathsResolver = new BazelPathsResolver(bazelInfo);
+        return GoLanguagePlugin
+            .resolveLocalToRemote(bazelPathsResolver, params)
+            .resolvedPaths();
+    }
+
+    private Map<String, Path> resolveRemoteToLocalOnServer(List<String> remotePaths) {
+        BazelResolveRemoteToLocalParams params =
+            new BazelResolveRemoteToLocalParams(
+                remotePaths,
+                myGoRoot
+            );
+
+        BazelInfo bazelInfo = myProject.getInstance(WorkspaceSnapshotService.class).getSnapshot().get().bazelInfo();
+        BazelPathsResolver bazelPathsResolver = new BazelPathsResolver(bazelInfo);
+        return GoLanguagePlugin
+            .resolveRemoteToLocal(bazelPathsResolver, params)
+            .resolvedPaths();
+    }
+}

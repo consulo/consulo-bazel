@@ -1,82 +1,121 @@
-package org.jetbrains.bazel.clion.workspace
+package org.jetbrains.bazel.clion.workspace;
 
-import com.intellij.build.events.MessageEvent
-import com.intellij.util.system.OS
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
-import org.jetbrains.bazel.clion.BazelCLionCommonBundle
-import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.server.connection
-import org.jetbrains.bsp.protocol.RunParams
-import java.nio.file.InvalidPathException
-import java.nio.file.Path
+import consulo.bazel.cpp.localize.BazelCLionCommonLocalize;
+import consulo.build.ui.event.MessageEvent;
+import consulo.platform.Platform;
+import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.server.BazelServerConnection;
+import org.jetbrains.bsp.protocol.RunParams;
+import org.jetbrains.bsp.protocol.RunResult;
+import org.jspecify.annotations.Nullable;
 
-private val XCODE_LOCATOR = Label.parse("@bazel_tools//tools/osx:xcode-locator")
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
-private const val NO_CONVENIENCE_SYMLINKS = "--experimental_convenience_symlinks=ignore";
+// consulo: upstream takes the CoroutineScope the lookups run in; the cached futures replace it
+class CcXcodeLocator {
+    private static final Label XCODE_LOCATOR = Label.parse("@bazel_tools//tools/osx:xcode-locator");
 
-internal class CcXcodeLocator(private val ctx: CcImportContext, private val scope: CoroutineScope) {
+    private static final String NO_CONVENIENCE_SYMLINKS = "--experimental_convenience_symlinks=ignore";
 
-  data class Result(val developerDir: Path, val sdkRoot: Path)
+    private final CcImportContext myCtx;
 
-  private val cache = mutableMapOf<CcToolchainBuildTarget.XcodeInfo, Deferred<Result?>>()
-
-  suspend fun resolve(info: CcToolchainBuildTarget.XcodeInfo?): Result? {
-    @Suppress("OPT_IN_USAGE")
-    if (OS.CURRENT != OS.macOS || info == null || info.xcodeVersion.isEmpty() || info.macosSdkVersion.isEmpty()) return null
-
-    return cache.computeIfAbsent(info) { scope.async { doResolve(info) } }.await()
-  }
-
-  private suspend fun doResolve(info: CcToolchainBuildTarget.XcodeInfo): Result? {
-    val developerDir = locateDeveloperDir(info) ?: return null
-    val sdkVersion = "MacOSX${info.macosSdkVersion}.sdk"
-
-    return Result(
-      developerDir = developerDir,
-      sdkRoot = developerDir.resolve("Platforms", "MacOSX.platform", "Developer", "SDKs", sdkVersion)
-    )
-  }
-
-  private suspend fun locateDeveloperDir(info: CcToolchainBuildTarget.XcodeInfo): Path? {
-    val result = ctx.project.connection.runWithServer { server ->
-      val params = RunParams(
-        taskId = ctx.taskId,
-        target = XCODE_LOCATOR,
-        additionalBazelParams = listOf(NO_CONVENIENCE_SYMLINKS),
-        arguments = listOf(info.xcodeVersion),
-        checkVisibility = true,
-        captureStdout = true,
-      )
-
-      server.buildTargetRun(params)
+    CcXcodeLocator(CcImportContext ctx) {
+        myCtx = ctx;
     }
 
-    if (result.statusCode != BazelStatus.SUCCESS) return null
-    val path = result.stdout ?: return null
-
-    return try {
-      Path.of(path.trim())
-    } catch (_: InvalidPathException) {
-      null
-    }
-  }
-
-  suspend fun reportProblems() {
-    val problems = cache.entries.mapNotNull { (info, deferred) ->
-      if (deferred.await() != null) return@mapNotNull null
-      BazelCLionCommonBundle.message("cc.xcode.locate.failed", info.xcodeVersion, info.macosSdkVersion)
+    record Result(Path developerDir, Path sdkRoot) {
     }
 
-    if (problems.isEmpty()) return
+    private final Map<CcToolchainBuildTarget.XcodeInfo, CompletableFuture<@Nullable Result>> myCache = new LinkedHashMap<>();
 
-    ctx.reportEvent(
-      message = BazelCLionCommonBundle.message("cc.xcode.resolve.failed"),
-      description = problems.joinToString("\n"),
-      severity = MessageEvent.Kind.WARNING,
-    )
-  }
+    CompletableFuture<@Nullable Result> resolve(CcToolchainBuildTarget.@Nullable XcodeInfo info) {
+        if (!Platform.current().os().isMac() || info == null || info.xcodeVersion().isEmpty() || info.macosSdkVersion().isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        return myCache.computeIfAbsent(info, this::doResolve);
+    }
+
+    private CompletableFuture<@Nullable Result> doResolve(CcToolchainBuildTarget.XcodeInfo info) {
+        return locateDeveloperDir(info).thenApply(developerDir -> {
+            if (developerDir == null) {
+                return null;
+            }
+            String sdkVersion = "MacOSX" + info.macosSdkVersion() + ".sdk";
+
+            return new Result(
+                developerDir,
+                developerDir.resolve("Platforms").resolve("MacOSX.platform").resolve("Developer").resolve("SDKs").resolve(sdkVersion)
+            );
+        });
+    }
+
+    private CompletableFuture<@Nullable Path> locateDeveloperDir(CcToolchainBuildTarget.XcodeInfo info) {
+        CompletableFuture<RunResult> result = BazelServerConnection.getConnection(myCtx.getProject()).runWithServer(server -> {
+            RunParams params = new RunParams(
+                myCtx.getTaskId(),
+                XCODE_LOCATOR,
+                true,
+                List.of(info.xcodeVersion()),
+                Map.of(),
+                List.of(NO_CONVENIENCE_SYMLINKS),
+                null,
+                true
+            );
+
+            return server.buildTargetRun(params);
+        });
+
+        return result.thenApply(it -> {
+            if (it.statusCode() != BazelStatus.SUCCESS) {
+                return null;
+            }
+            String path = it.stdout();
+            if (path == null) {
+                return null;
+            }
+
+            try {
+                return Path.of(path.trim());
+            }
+            catch (InvalidPathException e) {
+                return null;
+            }
+        });
+    }
+
+    CompletableFuture<Void> reportProblems() {
+        List<Map.Entry<CcToolchainBuildTarget.XcodeInfo, CompletableFuture<@Nullable Result>>> entries =
+            new ArrayList<>(myCache.entrySet());
+        CompletableFuture<?>[] futures = entries.stream().map(Map.Entry::getValue).toArray(CompletableFuture[]::new);
+
+        return CompletableFuture.allOf(futures).thenAccept(ignored -> {
+            List<String> problems = new ArrayList<>();
+            for (Map.Entry<CcToolchainBuildTarget.XcodeInfo, CompletableFuture<@Nullable Result>> entry : entries) {
+                if (entry.getValue().join() != null) {
+                    continue;
+                }
+                CcToolchainBuildTarget.XcodeInfo info = entry.getKey();
+                problems.add(BazelCLionCommonLocalize.ccXcodeLocateFailed(info.xcodeVersion(), info.macosSdkVersion()).get());
+            }
+
+            if (problems.isEmpty()) {
+                return;
+            }
+
+            myCtx.reportEvent(
+                MessageEvent.Kind.WARNING,
+                BazelCLionCommonLocalize.ccXcodeResolveFailed(),
+                String.join("\n", problems)
+            );
+        });
+    }
 }

@@ -1,0 +1,44 @@
+action.Bazel.CLion.DebugBazelConfiguration.text:
+    text: "Bazel Info: Configuration Data"
+action.Bazel.CLion.DebugExcrootVFS.text:
+    text: "Bazel Info: Execroot VFS"
+action.Bazel.CLion.DebugOCResolveContext.text:
+    text: "Bazel Info: OC Resolve Context"
+action.Bazel.CLion.DebugTargetInfo.text:
+    text: "Bazel Info: Target"
+debug.error.invalid.state:
+    text: "Invalid state"
+debug.error.no.compiler:
+    text: "No compiler found for target {0}"
+debug.error.no.single.target:
+    text: "No single target"
+debug.error.script.create.failed:
+    text: "Failed to create script path file: {0}"
+debug.error.script.generate.failed:
+    text: "Generating script path file failed: {0}"
+debug.error.script.parse.failed:
+    text: "Failed to parse script path file: {0}"
+debug.error.script.read.failed:
+    text: "Failed to read script path file: {0}"
+debug.error.target.not.found:
+    text: "Target {0} not found"
+debug.popup.resolve.configurations.title:
+    text: "Resolve Configurations"
+debug.popup.targets.title:
+    text: "Targets"
+debug.task.discover.execution.environment:
+    text: "Discover execution environment"
+debug.task.discover.target:
+    text: "Discover target"
+debug.task.message:
+    text: "Preparing to debug {0}"
+debug.task.status.done:
+    text: "Done"
+debug.task.status.failed:
+    text: "Failed"
+debug.task.title:
+    text: "Preparing to Debug"
+run.handler.cc.name:
+    text: "Bazel C/C++ Run Handler"
+test.handler.cc.name:
+    text: "Bazel C/C++ Test Handler"

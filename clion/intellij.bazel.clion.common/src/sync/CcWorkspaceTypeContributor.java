@@ -1,17 +1,26 @@
-package org.jetbrains.bazel.clion.sync
+package org.jetbrains.bazel.clion.sync;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeEntry
-import org.jetbrains.bazel.sync.workspace.persistence.type
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor.WorkspaceTypeEntry;
 
-internal class CcWorkspaceTypeContributor : WorkspaceTypeContributor {
+import java.util.ArrayList;
+import java.util.List;
 
-  override fun contribute(project: Project): List<WorkspaceTypeEntry> = buildList {
-    type<CcBuildTarget>()
-    type<CcBuildTarget.RuleContext>()
-    type<CcBuildTarget.CompilationContext>()
-    type<CcToolchainBuildTarget>()
-    type<CcToolchainBuildTarget.XcodeInfo>()
-  }
+@ExtensionImpl
+public class CcWorkspaceTypeContributor implements WorkspaceTypeContributor {
+    public CcWorkspaceTypeContributor() {
+    }
+
+    @Override
+    public List<WorkspaceTypeEntry> contribute(Project project) {
+        List<WorkspaceTypeEntry> result = new ArrayList<>();
+        WorkspaceTypeContributor.type(result, CcBuildTarget.class);
+        WorkspaceTypeContributor.type(result, CcBuildTarget.RuleContext.class);
+        WorkspaceTypeContributor.type(result, CcBuildTarget.CompilationContext.class);
+        WorkspaceTypeContributor.type(result, CcToolchainBuildTarget.class);
+        WorkspaceTypeContributor.type(result, CcToolchainBuildTarget.XcodeInfo.class);
+        return result;
+    }
 }

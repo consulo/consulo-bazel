@@ -1,47 +1,46 @@
-package org.jetbrains.bazel.clion.workspace
+package org.jetbrains.bazel.clion.workspace;
 
-import com.intellij.build.events.MessageEvent
-import com.intellij.openapi.progress.EmptyProgressIndicator
-import com.intellij.util.containers.MultiMap
-import com.jetbrains.cidr.lang.workspace.OCWorkspace
-import com.jetbrains.cidr.lang.workspace.compiler.CompilerInfoCache
-import org.jetbrains.bazel.clion.BazelCLionCommonBundle
+import consulo.bazel.cpp.workspace.CcWorkspaceModel;
 
-context(ctx: CcImportContext)
-internal fun collectCompilerInfo(model: OCWorkspace.ModifiableModel, configurations: List<CcResolveConfiguration>) {
+import java.util.List;
+import java.util.Objects;
 
-  // TODO: can we use a real indicator here?
-  val session = CompilerInfoCache().createSession<String>(EmptyProgressIndicator())
-
-  try {
-    for (config in configurations) {
-      val identifier = config.id.encode()
-      val configModel = requireNotNull(model.getConfigurationById(identifier))
-
-      session.schedule(identifier, configModel, config.shared.compilerSettings.toolEnvironment, ctx.execroot.toString())
+// consulo: upstream Kotlin top-level functions of collectCompilerInfo.kt
+public final class collectCompilerInfo {
+    private collectCompilerInfo() {
     }
 
-    val messages = MultiMap<String, CompilerInfoCache.Message>()
-    session.waitForAll(messages)
+    // consulo: upstream `context(ctx: CcImportContext) internal fun collectCompilerInfo(model, configurations)`
+    public static void collectCompilerInfo(CcImportContext ctx, CcWorkspaceModel model, List<CcResolveConfiguration> configurations) {
 
-    reportProblems(messages)
-  }
-  finally {
-    session.dispose()
-  }
-}
+        // TODO consulo: CIDR CompilerInfoCache runs the compiler of every configuration to collect its compiler info
+        //  (predefined macros, builtin include directories, language standard). consulo-cpp has no compiler info
+        //  collection, so the configurations are only checked here.
+        //  // TODO: can we use a real indicator here?
+        //  val session = CompilerInfoCache().createSession<String>(EmptyProgressIndicator())
+        //  try {
+        //    for (config in configurations) { ...session.schedule(identifier, configModel, config.shared.compilerSettings.toolEnvironment, ctx.execroot.toString()) }
+        //    val messages = MultiMap<String, CompilerInfoCache.Message>()
+        //    session.waitForAll(messages)
+        //    reportProblems(messages)
+        //  }
+        //  finally {
+        //    session.dispose()
+        //  }
+        for (CcResolveConfiguration config : configurations) {
+            String identifier = buildEquivalenceClasses.encode(config.id());
+            CcWorkspaceModel.Configuration configModel = Objects.requireNonNull(model.getConfigurationById(identifier));
 
-context(ctx: CcImportContext)
-private fun reportProblems(problems: MultiMap<String, CompilerInfoCache.Message>) {
-  if (problems.isEmpty()) return
+            // TODO consulo: session.schedule(identifier, configModel, config.shared.compilerSettings.toolEnvironment, ctx.execroot.toString())
+        }
+    }
 
-  val description = problems.entrySet().filter { it.value.isNotEmpty() }.joinToString("\n") { (configId, messages) ->
-    messages.joinToString("\n") { problem -> "$configId: ${problem.type}: ${problem.text.trim()}" }
-  }
-
-  ctx.reportEvent(
-    message = BazelCLionCommonBundle.message("cc.compiler.info.failed", problems.keySet().size),
-    description = description,
-    severity = MessageEvent.Kind.WARNING,
-  )
+    // TODO consulo: reportProblems(problems: MultiMap<String, CompilerInfoCache.Message>) reports the messages of the CIDR
+    //  compiler info collection, which consulo-cpp does not have:
+    //  if (problems.isEmpty()) return
+    //  val description = problems.entrySet().filter { it.value.isNotEmpty() }.joinToString("\n") { (configId, messages) ->
+    //    messages.joinToString("\n") { problem -> "$configId: ${problem.type}: ${problem.text.trim()}" }
+    //  }
+    //  ctx.reportEvent(message = BazelCLionCommonLocalize.ccCompilerInfoFailed(problems.keySet().size), description = description,
+    //    severity = MessageEvent.Kind.WARNING)
 }

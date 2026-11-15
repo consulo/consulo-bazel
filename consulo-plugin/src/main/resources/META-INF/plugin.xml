@@ -20,6 +20,8 @@
     <vendor>consulo.io</vendor>
     <!-- Java/Kotlin/Scala import: the optional library consulo.bazel.java (consulo-bazel-java) -->
     <depends optional="true">consulo.java</depends>
+    <depends optional="true">consulo.cpp</depends>
+    <depends optional="true">consulo.google.go</depends>
     <description>Bazel support: Starlark, .bazelrc, Bazel query and .bazelversion languages. Based on the JetBrains Bazel plugin (hirschgarten).</description>
     <tags>
         <tag>custom.language</tag>

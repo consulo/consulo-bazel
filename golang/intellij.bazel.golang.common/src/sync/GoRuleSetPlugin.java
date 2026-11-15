@@ -1,17 +1,25 @@
-package org.jetbrains.bazel.golang.sync
+package org.jetbrains.bazel.golang.sync;
 
-import com.intellij.aspect.lib.Rules
-import org.jetbrains.bazel.util.BazelRuleSet
-import org.jetbrains.bazel.util.BazelRuleSetProvider
+import com.intellij.aspect.lib.Rules;
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.util.BazelRuleSetProvider;
+import org.jetbrains.bazel.util.BazelRuleSetProvider.BazelRuleSet;
 
-private val GoRuleSet = BazelRuleSet(
-  aspectLanguage = Rules.GO,
-  rulesetNames = listOf("rules_go", "io_bazel_rules_go"),
-  isBundled = false,
-  autoloadHints = listOf(),
-  hostLocations = listOf("https://github.com/bazel-contrib/rules_go/"),
-)
+import java.util.List;
 
-internal class GoRuleSetPlugin : BazelRuleSetProvider {
-  override fun ruleSets(): List<BazelRuleSet> = listOf(GoRuleSet)
+@ExtensionImpl
+public class GoRuleSetPlugin implements BazelRuleSetProvider {
+    // consulo: upstream private top-level val GoRuleSet
+    private static final BazelRuleSet GoRuleSet = new BazelRuleSet(
+        Rules.GO,
+        List.of("rules_go", "io_bazel_rules_go"),
+        false,
+        List.of(),
+        List.of("https://github.com/bazel-contrib/rules_go/")
+    );
+
+    @Override
+    public List<BazelRuleSet> ruleSets() {
+        return List.of(GoRuleSet);
+    }
 }
