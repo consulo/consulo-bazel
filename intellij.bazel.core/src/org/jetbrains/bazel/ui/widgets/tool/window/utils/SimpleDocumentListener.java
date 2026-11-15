@@ -1,18 +1,29 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.utils
+package org.jetbrains.bazel.ui.widgets.tool.window.utils;
 
-import javax.swing.event.DocumentEvent
-import javax.swing.event.DocumentListener
+import org.jspecify.annotations.Nullable;
 
-internal class SimpleDocumentListener(private val onUpdate: () -> Unit) : DocumentListener {
-  override fun insertUpdate(e: DocumentEvent?) {
-    onUpdate()
-  }
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
-  override fun removeUpdate(e: DocumentEvent?) {
-    onUpdate()
-  }
+public class SimpleDocumentListener implements DocumentListener {
+    private final Runnable myOnUpdate;
 
-  override fun changedUpdate(e: DocumentEvent?) {
-    onUpdate()
-  }
+    public SimpleDocumentListener(Runnable onUpdate) {
+        myOnUpdate = onUpdate;
+    }
+
+    @Override
+    public void insertUpdate(@Nullable DocumentEvent e) {
+        myOnUpdate.run();
+    }
+
+    @Override
+    public void removeUpdate(@Nullable DocumentEvent e) {
+        myOnUpdate.run();
+    }
+
+    @Override
+    public void changedUpdate(@Nullable DocumentEvent e) {
+        myOnUpdate.run();
+    }
 }

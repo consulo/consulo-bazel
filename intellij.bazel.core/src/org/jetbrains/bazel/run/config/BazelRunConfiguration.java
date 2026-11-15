@@ -1,269 +1,375 @@
-package org.jetbrains.bazel.run.config
+package org.jetbrains.bazel.run.config;
 
-import com.intellij.execution.BeforeRunTask
-import com.intellij.execution.Executor
-import com.intellij.execution.configurations.LocatableConfigurationBase
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.execution.configurations.RunConfigurationWithSuppressedDefaultDebugAction
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.configurations.RuntimeConfigurationError
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.execution.testframework.sm.runner.SMRunnerConsolePropertiesProvider
-import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.options.SettingsEditor
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.NlsActions
-import com.intellij.util.EventDispatcher
-import org.jdom.Element
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle.message
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.RunHandlerProvider
-import org.jetbrains.bazel.run.synthetic.SyntheticRunTaskMarker
-import org.jetbrains.bazel.run.test.BazelTestConsoleProperties
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bsp.protocol.id
-import java.util.EventListener
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.execution.ui.SettingsEditorRunConfigurationFragment;
+import consulo.disposer.Disposable;
+import consulo.execution.BeforeRunTask;
+import consulo.execution.RunManager;
+import consulo.execution.RuntimeConfigurationException;
+import consulo.execution.configuration.LocatableConfigurationBase;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.configuration.RuntimeConfigurationError;
+import consulo.execution.configuration.fragment.RunConfigurationFragment;
+import consulo.execution.configuration.ui.SettingsEditor;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.execution.test.sm.runner.SMRunnerConsolePropertiesProvider;
+import consulo.execution.test.sm.runner.SMTRunnerConsoleProperties;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.process.ExecutionException;
+import consulo.project.Project;
+import consulo.proxy.EventDispatcher;
+import consulo.util.dataholder.Key;
+import consulo.util.xml.serializer.InvalidDataException;
+import consulo.util.xml.serializer.WriteExternalException;
+import org.jdom.Element;
+import org.jetbrains.bazel.config.BazelPluginConstants;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.RunHandlerProvider;
+import org.jetbrains.bazel.run.test.BazelTestConsoleProperties;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.EventListener;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 // Use BazelRunConfigurationType.createTemplateConfiguration(project) to create a new BazelRunConfiguration.
-@ApiStatus.Internal
-class BazelRunConfiguration internal constructor(
-  private val project: Project,
-  name: String,
-  configurationType: BazelRunConfigurationType,
-) : LocatableConfigurationBase<RunProfileState>(project, configurationType, name),
-  RunConfigurationWithSuppressedDefaultDebugAction,
-    SMRunnerConsolePropertiesProvider {
+// TODO consulo: RunConfigurationWithSuppressedDefaultDebugAction is missing in Consulo
+public class BazelRunConfiguration extends LocatableConfigurationBase implements SMRunnerConsolePropertiesProvider {
+    private static final String TARGET_TAG = "bsp-target";
+    private static final String BSP_STATE_TAG = "bsp-state";
+    private static final String HANDLER_STATE_TAG = "handler-state";
+    private static final String HANDLER_PROVIDER_ATTR = "handler-provider-id";
+    private static final String CHECK_VISIBILITY_ATTR = "check-visibility";
 
-  var targets: List<Label> = emptyList()
-    private set // private because we need to set the targets directly when running readExternal
-
-  var doVisibilityCheck: Boolean = true
-    private set
-
-  override fun checkConfiguration() {
-    try {
-      checkConfigurationUnsafe()
-    } catch (e: RuntimeConfigurationError) {
-      // rethrow configuration error
-      throw e
-    } catch (e: Throwable) {
-      // exception here can prevent project from loading
-      logger.error("Error checking configuration", e)
-    }
-  }
-
-  fun checkConfigurationUnsafe() {
-    val utils = project.targetStorage
-    val selectedTargets = targets.map {
-      val target = utils.getTargetSummary(it) ?: return // skip validations when any target is missing
-      if (!target.kind.isExecutable) throw RuntimeConfigurationError(message("runconfig.bazel.errors.target.not.executable", it))
-      target
-    }
-    if (selectedTargets.isEmpty()) throw RuntimeConfigurationError(message("runconfig.bazel.errors.no.targets"))
-    val providers = selectedTargets
-      .mapTo(mutableSetOf()) { target ->
-        RunHandlerProvider
-          .getRunHandlerProvider(project, listOf(target))
-        ?: throw RuntimeConfigurationError(message("runconfig.bazel.errors.target.not.supported", target.id))
-      }
-    if (providers.size > 1) {
-      throw RuntimeConfigurationError(
-        message("runconfig.bazel.errors.multiple.platform.targets", providers.joinToString(", ") { it.id }),
-      )
-    }
-  }
-
-  fun updateTargets(newTargets: List<Label>, runHandlerProvider: RunHandlerProvider? = null) {
-    if (newTargets == targets) return
-    targets = newTargets
-    if (newTargets.isEmpty()) return
-    // `updateTargets` is called by the editor on each change. It must not fail, because it will spam with errors while editing
-    // `RunHandlerProvider.getRunHandlerProviderOrNull` is used as a workaround
-    val provider = runHandlerProvider ?: RunHandlerProvider.getRunHandlerProviderOrNull(project, newTargets)
-    if (provider == null) return
-    updateHandlerIfDifferentProvider(provider)
-  }
-
-  fun updateRunProvider(newTargets: List<Label>, runHandlerProvider: RunHandlerProvider) {
-    targets = newTargets
-    updateHandler(runHandlerProvider)
-  }
-
-  fun disableVisibilityCheck() {
-    doVisibilityCheck = false
-  }
-
-  private var handlerProvider: RunHandlerProvider? = null
-
-  var handler: BazelRunHandler? = null
-    private set
-
-  private val handlerChangedEventDispatcher = EventDispatcher.create(BazelRunHandlerChangedListener::class.java)
-
-  private fun updateHandlerIfDifferentProvider(newProvider: RunHandlerProvider) {
-    if (newProvider::class.java == handlerProvider?.let { it::class.java }) return
-    updateHandler(newProvider)
-  }
-
-  private fun updateHandler(newProvider: RunHandlerProvider) {
-    val bspBeforeChange = createBspElement()
-    val providerChanged = newProvider != handlerProvider
-    handlerProvider = newProvider
-    val newRunHandler = newProvider.createRunHandler(this)
-    this.handler = newRunHandler
-    if (bspBeforeChange != null) {
-      val oldHandlerState = bspBeforeChange.getChild(HANDLER_STATE_TAG) ?: return
-      try {
-        newRunHandler.state.readExternal(oldHandlerState)
-      }
-      catch (e: Exception) {
-        logger.error("Failed to read BSP state", e)
-      }
-    }
-
-    if (providerChanged) {
-      handlerChangedEventDispatcher.multicaster.onRunHandlerChanged(newRunHandler)
-    }
-  }
-
-  override fun clone(): RunConfiguration {
-    val result = super.clone() as BazelRunConfiguration
-    // Deep-clone the handler to allow changing handler.state without changing the original configuration
-    handlerProvider?.let {
-      result.updateHandler(it)
-    }
-    return result
-  }
-
-  override fun getConfigurationEditor(): SettingsEditor<BazelRunConfiguration> = BazelRunConfigurationDynamicEditor(this)
-
-  override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState? =
-    handler?.getRunProfileState(executor, environment)
-
-  override fun readExternal(element: Element) {
-    super.readExternal(element)
-
-    // FUCKING CLONE
-    val bspElement = element.getChild(BSP_STATE_TAG)?.clone() ?: return
-
-    val targets = mutableListOf<String>()
-    for (targetElement in bspElement.getChildren(TARGET_TAG)) {
-      targets.add(targetElement.text)
-    }
-
-    this.targets = targets.map { Label.parse(it) }
-
-    // It should be possible to load the configuration before the project is synchronized,
-    // so we can't access targets' data here. Instead, we have to use the stored provider ID.
-    // TODO: is that true?
-    val providerId = bspElement.getAttributeValue(HANDLER_PROVIDER_ATTR)
-    if (providerId == null) {
-      logger.warn("No handler provider ID found in run configuration")
-      return
-    }
-
-    val provider = RunHandlerProvider.findRunHandlerProvider(providerId)
-    if (provider != null) {
-      updateHandlerIfDifferentProvider(provider)
-      // TODO the above already reads
-
-      val handlerStateElement = bspElement.getChild(HANDLER_STATE_TAG) ?: return
-
-      try {
-        handler?.state?.readExternal(handlerStateElement)
-      } catch (e: Exception) {
-        logger.error("Failed to read BSP state", e)
-      }
-    } else {
-      logger.warn("Failed to find run handler provider with ID $providerId")
-      val newProvider = RunHandlerProvider.getRunHandlerProviderOrThrow(project, this.targets)
-      updateHandlerIfDifferentProvider(newProvider)
-    }
-
-    doVisibilityCheck = bspElement.getAttributeValue(CHECK_VISIBILITY_ATTR)?.toBoolean() ?: true
-
-    handler?.extensionsManager?.readExternal(this, element)
-  }
-
-  // TODO: ideally we'd use an existing serialization mechanism like https://plugins.jetbrains.com/docs/intellij/persisting-state-of-components.html
-  //  but it's hard to figure out how to implement it in our case, so for now let's use the franken-implementation
-  //  inspired by Google's plugin (which probably predates modern IJ state serialization)
-  override fun writeExternal(element: Element) {
-    super.writeExternal(element)
-    val bspState = createBspElement() ?: return
-    element.removeChildren(BSP_STATE_TAG)
-    element.addContent(bspState)
-    handler?.extensionsManager?.writeExternal(this, element)
-  }
-
-  /**
-   * HACK
-   * This method is called during deserialization of run tasks which happens AFTER the [BazelRunHandler]s are deserialized.
-   * So if the Bazel plugin uses a new logic for creating before run tasks in a newer version inside one of the handlers,
-   * it will be overruled by this deserialization unless we forcefully disable this.
-   * @see setBeforeRunTasksFromHandler
-   */
-  override fun setBeforeRunTasks(value: List<BeforeRunTask<*>>) {
-    val tasks = value.filter { it is SyntheticRunTaskMarker }
-    if (tasks.isNotEmpty()) {
-      super.setBeforeRunTasks(tasks)
-    }
-  }
-
-  fun setBeforeRunTasksFromHandler(value: List<BeforeRunTask<*>>) {
-    super.setBeforeRunTasks(value)
-  }
-
-  override fun createTestConsoleProperties(executor: Executor): SMTRunnerConsoleProperties =
-    BazelTestConsoleProperties(this, executor)
-
-  override fun suggestedName(): @NlsActions.ActionText String = targets.joinToString(" ")
-
-  private fun createBspElement(): Element? {
-    val provider = handlerProvider ?: return null
-    val handler = handler ?: return null
-    return Element(BSP_STATE_TAG).apply {
-      for (target in targets) {
-        val targetElement = Element(TARGET_TAG)
-        targetElement.text = target.toString()
-        addContent(targetElement)
-      }
-      setAttribute(HANDLER_PROVIDER_ATTR, provider.id)
-      val handlerState = Element(HANDLER_STATE_TAG)
-      handler.state.writeExternal(handlerState)
-      addContent(handlerState)
-
-      setAttribute(CHECK_VISIBILITY_ATTR, doVisibilityCheck.toString())
-    }
-  }
-
-  fun addOnRunHandlerChangedListener(listener: BazelRunHandlerChangedListener, parentDisposable: Disposable) {
-    handlerChangedEventDispatcher.addListener(listener, parentDisposable)
-  }
-
-  interface BazelRunHandlerChangedListener : EventListener {
-    fun onRunHandlerChanged(newRunHandler: BazelRunHandler)
-  }
-
-  companion object {
-    private const val TARGET_TAG = "bsp-target"
-    private const val BSP_STATE_TAG = "bsp-state"
-    private const val HANDLER_STATE_TAG = "handler-state"
-    private const val HANDLER_PROVIDER_ATTR = "handler-provider-id"
-    private const val CHECK_VISIBILITY_ATTR = "check-visibility"
-
-    private val logger: Logger = logger<BazelRunConfiguration>()
+    private static final Logger LOG = Logger.getInstance(BazelRunConfiguration.class);
 
     // Used in BazelRerunFailedTestsAction
-    public val BAZEL_RUN_CONFIGURATION_KEY = Key.create<BazelRunConfiguration>("BAZEL_RUN_CONFIGURATION_KEY")
+    public static final Key<BazelRunConfiguration> BAZEL_RUN_CONFIGURATION_KEY = Key.create("BAZEL_RUN_CONFIGURATION_KEY");
 
-    fun get(environment: ExecutionEnvironment): BazelRunConfiguration =
-      environment.getUserData(BAZEL_RUN_CONFIGURATION_KEY) ?: environment.runProfile as BazelRunConfiguration
-  }
+    // private because we need to set the targets directly when running readExternal
+    private List<Label> myTargets = List.of();
+
+    private boolean myDoVisibilityCheck = true;
+
+    private @Nullable RunHandlerProvider myHandlerProvider;
+
+    private @Nullable BazelRunHandler myHandler;
+
+    private final EventDispatcher<BazelRunHandlerChangedListener> myHandlerChangedEventDispatcher =
+        EventDispatcher.create(BazelRunHandlerChangedListener.class);
+
+    public BazelRunConfiguration(Project project, String name, BazelRunConfigurationType configurationType) {
+        super(project, configurationType, name);
+    }
+
+    public List<Label> getTargets() {
+        return myTargets;
+    }
+
+    public boolean getDoVisibilityCheck() {
+        return myDoVisibilityCheck;
+    }
+
+    @Override
+    public void checkConfiguration() throws RuntimeConfigurationException {
+        try {
+            checkConfigurationUnsafe();
+        }
+        catch (RuntimeConfigurationError e) {
+            // rethrow configuration error
+            throw e;
+        }
+        catch (Throwable e) {
+            // exception here can prevent project from loading
+            LOG.error("Error checking configuration", e);
+        }
+    }
+
+    public void checkConfigurationUnsafe() throws RuntimeConfigurationError {
+        TargetStorage utils = TargetStorage.getTargetStorage(getProject());
+        List<BuildTarget> selectedTargets = new ArrayList<>();
+        for (Label it : myTargets) {
+            BuildTarget target = utils.getTargetSummary(it);
+            if (target == null) {
+                return; // skip validations when any target is missing
+            }
+            if (!target.getKind().isExecutable()) {
+                throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsTargetNotExecutable(it));
+            }
+            selectedTargets.add(target);
+        }
+        if (selectedTargets.isEmpty()) {
+            throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsNoTargets());
+        }
+        Set<RunHandlerProvider> providers = new LinkedHashSet<>();
+        for (BuildTarget target : selectedTargets) {
+            RunHandlerProvider provider = RunHandlerProvider.getRunHandlerProvider(getProject(), List.of(target));
+            if (provider == null) {
+                throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsTargetNotSupported(BuildTarget.getId(target)));
+            }
+            providers.add(provider);
+        }
+        if (providers.size() > 1) {
+            throw new RuntimeConfigurationError(
+                BazelPluginLocalize.runconfigBazelErrorsMultiplePlatformTargets(
+                    providers.stream().map(RunHandlerProvider::getId).collect(Collectors.joining(", "))
+                )
+            );
+        }
+    }
+
+    public void updateTargets(List<Label> newTargets) {
+        updateTargets(newTargets, null);
+    }
+
+    public void updateTargets(List<Label> newTargets, @Nullable RunHandlerProvider runHandlerProvider) {
+        if (newTargets.equals(myTargets)) {
+            return;
+        }
+        myTargets = newTargets;
+        if (newTargets.isEmpty()) {
+            return;
+        }
+        // `updateTargets` is called by the editor on each change. It must not fail, because it will spam with errors while editing
+        // `RunHandlerProvider.getRunHandlerProviderOrNull` is used as a workaround
+        RunHandlerProvider provider =
+            runHandlerProvider != null ? runHandlerProvider : RunHandlerProvider.getRunHandlerProviderOrNull(getProject(), newTargets);
+        if (provider == null) {
+            return;
+        }
+        updateHandlerIfDifferentProvider(provider);
+    }
+
+    public void updateRunProvider(List<Label> newTargets, RunHandlerProvider runHandlerProvider) {
+        myTargets = newTargets;
+        updateHandler(runHandlerProvider);
+    }
+
+    public void disableVisibilityCheck() {
+        myDoVisibilityCheck = false;
+    }
+
+    public @Nullable BazelRunHandler getHandler() {
+        return myHandler;
+    }
+
+    private void updateHandlerIfDifferentProvider(RunHandlerProvider newProvider) {
+        RunHandlerProvider handlerProvider = myHandlerProvider;
+        if (handlerProvider != null && newProvider.getClass() == handlerProvider.getClass()) {
+            return;
+        }
+        updateHandler(newProvider);
+    }
+
+    private void updateHandler(RunHandlerProvider newProvider) {
+        Element bspBeforeChange = createBspElement();
+        boolean providerChanged = !Objects.equals(newProvider, myHandlerProvider);
+        myHandlerProvider = newProvider;
+        BazelRunHandler newRunHandler = newProvider.createRunHandler(this);
+        myHandler = newRunHandler;
+        if (bspBeforeChange != null) {
+            Element oldHandlerState = bspBeforeChange.getChild(HANDLER_STATE_TAG);
+            if (oldHandlerState == null) {
+                return;
+            }
+            try {
+                newRunHandler.getState().readExternal(oldHandlerState);
+            }
+            catch (Exception e) {
+                LOG.error("Failed to read BSP state", e);
+            }
+        }
+
+        if (providerChanged) {
+            myHandlerChangedEventDispatcher.getMulticaster().onRunHandlerChanged(newRunHandler);
+        }
+    }
+
+    @Override
+    public RunConfiguration clone() {
+        BazelRunConfiguration result = (BazelRunConfiguration) super.clone();
+        // Deep-clone the handler to allow changing handler.state without changing the original configuration
+        RunHandlerProvider handlerProvider = myHandlerProvider;
+        if (handlerProvider != null) {
+            result.updateHandler(handlerProvider);
+        }
+        return result;
+    }
+
+    // consulo: RunConfiguration has no getConfigurationEditor(), the editor is shown through createFragments()
+    public SettingsEditor<BazelRunConfiguration> getConfigurationEditor() {
+        return new BazelRunConfigurationDynamicEditor(this);
+    }
+
+    // consulo: the whole upstream editor (getConfigurationEditor()) is one Consulo run configuration fragment
+    @Override
+    public List<RunConfigurationFragment<?>> createFragments() {
+        return List.of(
+            new SettingsEditorRunConfigurationFragment<BazelRunConfiguration>(
+                "bazel.run.configuration",
+                LocalizeValue.of(BazelPluginConstants.BAZEL_DISPLAY_NAME),
+                this::getConfigurationEditor
+            )
+        );
+    }
+
+    @Override
+    public @Nullable RunProfileState getState(Executor executor, ExecutionEnvironment environment) throws ExecutionException {
+        BazelRunHandler handler = myHandler;
+        return handler == null ? null : handler.getRunProfileState(executor, environment);
+    }
+
+    @Override
+    public void readExternal(Element element) throws InvalidDataException {
+        super.readExternal(element);
+
+        // FUCKING CLONE
+        Element bspStateElement = element.getChild(BSP_STATE_TAG);
+        if (bspStateElement == null) {
+            return;
+        }
+        Element bspElement = bspStateElement.clone();
+
+        List<String> targets = new ArrayList<>();
+        for (Element targetElement : bspElement.getChildren(TARGET_TAG)) {
+            targets.add(targetElement.getText());
+        }
+
+        myTargets = targets.stream().map(Label::parse).toList();
+
+        // It should be possible to load the configuration before the project is synchronized,
+        // so we can't access targets' data here. Instead, we have to use the stored provider ID.
+        // TODO: is that true?
+        String providerId = bspElement.getAttributeValue(HANDLER_PROVIDER_ATTR);
+        if (providerId == null) {
+            LOG.warn("No handler provider ID found in run configuration");
+            return;
+        }
+
+        RunHandlerProvider provider = RunHandlerProvider.findRunHandlerProvider(providerId);
+        if (provider != null) {
+            updateHandlerIfDifferentProvider(provider);
+            // TODO the above already reads
+
+            Element handlerStateElement = bspElement.getChild(HANDLER_STATE_TAG);
+            if (handlerStateElement == null) {
+                return;
+            }
+
+            try {
+                BazelRunHandler handler = myHandler;
+                if (handler != null) {
+                    handler.getState().readExternal(handlerStateElement);
+                }
+            }
+            catch (Exception e) {
+                LOG.error("Failed to read BSP state", e);
+            }
+        }
+        else {
+            LOG.warn("Failed to find run handler provider with ID " + providerId);
+            RunHandlerProvider newProvider = RunHandlerProvider.getRunHandlerProviderOrThrow(getProject(), myTargets);
+            updateHandlerIfDifferentProvider(newProvider);
+        }
+
+        String checkVisibility = bspElement.getAttributeValue(CHECK_VISIBILITY_ATTR);
+        myDoVisibilityCheck = checkVisibility == null || Boolean.parseBoolean(checkVisibility);
+
+        // consulo: RunConfigurationExtensionsManager has no readExternal(), Consulo keeps the extension settings as fragment states
+        // handler?.extensionsManager?.readExternal(this, element)
+    }
+
+    // TODO: ideally we'd use an existing serialization mechanism like https://plugins.jetbrains.com/docs/intellij/persisting-state-of-components.html
+    //  but it's hard to figure out how to implement it in our case, so for now let's use the franken-implementation
+    //  inspired by Google's plugin (which probably predates modern IJ state serialization)
+    @Override
+    public void writeExternal(Element element) throws WriteExternalException {
+        super.writeExternal(element);
+        Element bspState = createBspElement();
+        if (bspState == null) {
+            return;
+        }
+        element.removeChildren(BSP_STATE_TAG);
+        element.addContent(bspState);
+        // consulo: RunConfigurationExtensionsManager has no writeExternal(), Consulo keeps the extension settings as fragment states
+        // handler?.extensionsManager?.writeExternal(this, element)
+    }
+
+    /**
+     * HACK
+     * This method is called during deserialization of run tasks which happens AFTER the {@link BazelRunHandler}s are deserialized.
+     * So if the Bazel plugin uses a new logic for creating before run tasks in a newer version inside one of the handlers,
+     * it will be overruled by this deserialization unless we forcefully disable this.
+     *
+     * @see #setBeforeRunTasksFromHandler
+     */
+    // consulo: Consulo keeps the before run tasks in RunManager, a run configuration cannot filter them while they are loaded
+    // override fun setBeforeRunTasks(value: List<BeforeRunTask<*>>) {
+    //   val tasks = value.filter { it is SyntheticRunTaskMarker }
+    //   if (tasks.isNotEmpty()) {
+    //     super.setBeforeRunTasks(tasks)
+    //   }
+    // }
+
+    public void setBeforeRunTasksFromHandler(List<BeforeRunTask> value) {
+        // consulo: upstream calls super.setBeforeRunTasks(value), Consulo keeps the before run tasks in RunManager
+        RunManager.getInstance(getProject()).setBeforeRunTasks(this, value, false);
+    }
+
+    @Override
+    public SMTRunnerConsoleProperties createTestConsoleProperties(Executor executor) {
+        return new BazelTestConsoleProperties(this, executor);
+    }
+
+    @Override
+    public String suggestedName() {
+        return myTargets.stream().map(Label::toString).collect(Collectors.joining(" "));
+    }
+
+    private @Nullable Element createBspElement() {
+        RunHandlerProvider provider = myHandlerProvider;
+        if (provider == null) {
+            return null;
+        }
+        BazelRunHandler handler = myHandler;
+        if (handler == null) {
+            return null;
+        }
+        Element element = new Element(BSP_STATE_TAG);
+        for (Label target : myTargets) {
+            Element targetElement = new Element(TARGET_TAG);
+            targetElement.setText(target.toString());
+            element.addContent(targetElement);
+        }
+        element.setAttribute(HANDLER_PROVIDER_ATTR, provider.getId());
+        Element handlerState = new Element(HANDLER_STATE_TAG);
+        handler.getState().writeExternal(handlerState);
+        element.addContent(handlerState);
+
+        element.setAttribute(CHECK_VISIBILITY_ATTR, String.valueOf(myDoVisibilityCheck));
+        return element;
+    }
+
+    public void addOnRunHandlerChangedListener(BazelRunHandlerChangedListener listener, Disposable parentDisposable) {
+        myHandlerChangedEventDispatcher.addListener(listener, parentDisposable);
+    }
+
+    public interface BazelRunHandlerChangedListener extends EventListener {
+        void onRunHandlerChanged(BazelRunHandler newRunHandler);
+    }
+
+    public static BazelRunConfiguration get(ExecutionEnvironment environment) {
+        BazelRunConfiguration configuration = environment.getUserData(BAZEL_RUN_CONFIGURATION_KEY);
+        return configuration != null ? configuration : (BazelRunConfiguration) environment.getRunProfile();
+    }
 }

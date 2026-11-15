@@ -1,109 +1,165 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.execution.lineMarker.RunLineMarkerContributor
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.elementType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement
-import org.jetbrains.bazel.languages.starlark.repomapping.calculateLabel
-import org.jetbrains.bazel.languages.starlark.repomapping.toCanonicalLabelOrThis
-import org.jetbrains.bazel.runnerAction.BuildTargetAction
-import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService
-import org.jetbrains.bazel.target.targetStorage
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.execution.lineMarker.RunLineMarkerContributor;
+import consulo.language.Language;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiUtilCore;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnAction;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.runnerAction.BuildTargetAction;
+import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class StarlarkRunLineMarkerContributor : RunLineMarkerContributor() {
-  override fun isDumbAware(): Boolean = true
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
-  protected open fun isProjectApplicable(project: Project): Boolean =
-    project.isBazelProject
-
-  override fun getInfo(element: PsiElement): Info? {
-    if (!isProjectApplicable(element.project)) return null
-    val grandParent = element.parent?.parent ?: return null
-    return if (element.shouldAddMarker(grandParent)) {
-      grandParent.calculateMarkerInfo()
+// consulo: upstream isDumbAware() = true -> DumbAware
+@ExtensionImpl
+public class StarlarkRunLineMarkerContributor extends RunLineMarkerContributor implements DumbAware {
+    protected boolean isProjectApplicable(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project);
     }
-    else {
-      null
+
+    @RequiredReadAction
+    @Override
+    public @Nullable Info getInfo(PsiElement element) {
+        if (!isProjectApplicable(element.getProject())) {
+            return null;
+        }
+        PsiElement parent = element.getParent();
+        PsiElement grandParent = parent != null ? parent.getParent() : null;
+        if (grandParent == null) {
+            return null;
+        }
+        if (shouldAddMarker(element, grandParent)) {
+            return calculateMarkerInfo(grandParent);
+        }
+        else {
+            return null;
+        }
     }
-  }
 
-  private fun PsiElement.shouldAddMarker(grandParent: PsiElement): Boolean =
-    this.elementType == StarlarkTokenTypes.IDENTIFIER &&
-    grandParent is StarlarkCallExpression &&
-    isTopLevelCall(
-      grandParent,
-    )
-
-  private fun isTopLevelCall(element: PsiElement): Boolean =
-    element.parent is StarlarkExpressionStatement && element.parent?.parent is StarlarkFile
-
-  private fun PsiElement.calculateMarkerInfo(): Info? {
-    val virtualFile = containingFile.virtualFile ?: return null
-    if (BazelFileType.ofFileName(virtualFile.name) != BazelFileType.BUILD) return null
-    val visitor = StarlarkCallExpressionVisitor()
-    this.accept(visitor)
-    val ruleName = visitor.ruleName ?: return null
-    val targetName = visitor.targetName ?: return null
-    val tags = visitor.tags
-    val targetLabel = calculateLabel(project, virtualFile, targetName) ?: return null
-    return calculateLineMarkerInfo(project, targetLabel, ruleName, tags).takeIf { it.actions.isNotEmpty() }
-  }
-
-  private fun calculateLineMarkerInfo(
-    project: Project,
-    targetLabel: ResolvedLabel,
-    ruleName: String,
-    tags: List<String>?,
-  ): Info {
-    val actions = calculateEligibleActions(project, targetLabel, ruleName, tags).toTypedArray()
-    val hasRunAction = actions.any { it !is BuildTargetAction }
-    return Info(
-      if (hasRunAction) AllIcons.Actions.Execute else AllIcons.Actions.Compile,
-      actions,
-    )
-  }
-
-  private fun calculateEligibleActions(
-    project: Project,
-    targetLabel: ResolvedLabel,
-    ruleName: String,
-    tags: List<String>?,
-  ): List<AnAction> = buildList {
-    val targetUtils = project.targetStorage
-    val targetInfo = targetUtils.getTargetSummary(targetLabel)
-    val targetKind = targetInfo?.kind ?: TargetKindService.getInstance().guessFromRuleName(ruleName)
-    val tags = targetInfo?.tags ?: tags ?: emptyList()
-
-    add(BuildTargetAction(targetLabel))
-
-    if (targetKind.isExecutable) {
-      val executableTarget =
-        targetInfo ?: NonImportedBuildTarget(targetLabel, targetKind, tags)
-      addAll(getExecutorActions(project, executableTarget))
+    private boolean shouldAddMarker(PsiElement receiver, PsiElement grandParent) {
+        return PsiUtilCore.getElementType(receiver) == StarlarkTokenTypes.IDENTIFIER &&
+            grandParent instanceof StarlarkCallExpression &&
+            isTopLevelCall(
+                grandParent
+            );
     }
-  }
+
+    private boolean isTopLevelCall(PsiElement element) {
+        PsiElement parent = element.getParent();
+        return parent instanceof StarlarkExpressionStatement && parent.getParent() instanceof StarlarkFile;
+    }
+
+    @RequiredReadAction
+    private @Nullable Info calculateMarkerInfo(PsiElement receiver) {
+        VirtualFile virtualFile = Objects.requireNonNull(receiver.getContainingFile()).getVirtualFile();
+        if (virtualFile == null) {
+            return null;
+        }
+        if (BazelFileType.ofFileName(virtualFile.getName()) != BazelFileType.BUILD) {
+            return null;
+        }
+        StarlarkCallExpressionVisitor visitor = new StarlarkCallExpressionVisitor();
+        receiver.accept(visitor);
+        String ruleName = visitor.ruleName;
+        if (ruleName == null) {
+            return null;
+        }
+        String targetName = visitor.targetName;
+        if (targetName == null) {
+            return null;
+        }
+        List<String> tags = visitor.tags;
+        Project project = receiver.getProject();
+        ResolvedLabel targetLabel = BazelRepoMappingUtils.calculateLabel(project, virtualFile, targetName);
+        if (targetLabel == null) {
+            return null;
+        }
+        Info info = calculateLineMarkerInfo(project, targetLabel, ruleName, tags);
+        return info.actions.length > 0 ? info : null;
+    }
+
+    @RequiredReadAction
+    private Info calculateLineMarkerInfo(
+        Project project,
+        ResolvedLabel targetLabel,
+        String ruleName,
+        @Nullable List<String> tags
+    ) {
+        AnAction[] actions = calculateEligibleActions(project, targetLabel, ruleName, tags).toArray(AnAction.EMPTY_ARRAY);
+        boolean hasRunAction = false;
+        for (AnAction it : actions) {
+            if (!(it instanceof BuildTargetAction)) {
+                hasRunAction = true;
+                break;
+            }
+        }
+        return new Info(
+            hasRunAction ? PlatformIconGroup.actionsExecute() : PlatformIconGroup.actionsCompile(),
+            null,
+            actions
+        );
+    }
+
+    @RequiredReadAction
+    private List<AnAction> calculateEligibleActions(
+        Project project,
+        ResolvedLabel targetLabel,
+        String ruleName,
+        @Nullable List<String> tags
+    ) {
+        List<AnAction> result = new ArrayList<>();
+        TargetStorage targetUtils = TargetStorage.getTargetStorage(project);
+        BuildTarget targetInfo = targetUtils.getTargetSummary(targetLabel);
+        TargetKind targetKind = targetInfo != null ? targetInfo.getKind() : TargetKindService.getInstance().guessFromRuleName(ruleName);
+        // consulo: upstream shadows the tags parameter with this local value
+        List<String> targetTags = targetInfo != null ? targetInfo.getTags() : tags != null ? tags : List.of();
+
+        result.add(new BuildTargetAction(targetLabel));
+
+        if (targetKind.isExecutable()) {
+            BuildTarget executableTarget =
+                targetInfo != null ? targetInfo : new NonImportedBuildTarget(targetLabel, targetKind, targetTags);
+            result.addAll(ExecutorActionsUtil.getExecutorActions(project, executableTarget));
+        }
+        return result;
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 }
 
-private class StarlarkCallExpressionVisitor : StarlarkElementVisitor() {
-  var ruleName: String? = null
-  var targetName: String? = null
-  var tags: List<String>? = null
+class StarlarkCallExpressionVisitor extends StarlarkElementVisitor {
+    @Nullable String ruleName = null;
+    @Nullable String targetName = null;
+    @Nullable List<String> tags = null;
 
-  override fun visitCallExpression(node: StarlarkCallExpression) {
-    ruleName = node.getCalledFunctionName()
-    targetName = node.getNameAttributeValue()
-    tags = node.getTags()
-  }
+    @Override
+    public void visitCallExpression(StarlarkCallExpression node) {
+        ruleName = node.getCalledFunctionName();
+        targetName = node.getNameAttributeValue();
+        tags = node.getTags();
+    }
 }

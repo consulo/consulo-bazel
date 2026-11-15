@@ -1,24 +1,26 @@
-package org.jetbrains.bazel.run.import
+// consulo: `import` is a Java keyword, the package gets a trailing underscore (the file keeps the upstream path)
+package org.jetbrains.bazel.run.import_;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.RunHandlerProvider
-import org.jetbrains.bazel.run.RunHandlerProvider.Companion.ep
+import org.jetbrains.bazel.run.RunHandlerProvider;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface GooglePluginAwareRunHandlerProvider : RunHandlerProvider {
-  /**
-   * Respective handler name in the Google Bazel plugin that should be used when importing run configurations.
-   */
-  val googleHandlerId: String
+public interface GooglePluginAwareRunHandlerProvider extends RunHandlerProvider {
+    /**
+     * Respective handler name in the Google Bazel plugin that should be used when importing run configurations.
+     */
+    String getGoogleHandlerId();
 
-  val isTestHandler: Boolean
+    boolean isTestHandler();
 
-  companion object {
-    fun getRunHandlerProvider(googleHandlerId: String, bazelCommand: String): RunHandlerProvider? {
-      val isTestCommand = bazelCommand == "test" || bazelCommand == "coverage"
-      return ep.extensionList.firstOrNull {
-        it is GooglePluginAwareRunHandlerProvider && it.googleHandlerId == googleHandlerId && it.isTestHandler == isTestCommand
-      }
+    static @Nullable RunHandlerProvider getRunHandlerProvider(String googleHandlerId, String bazelCommand) {
+        boolean isTestCommand = bazelCommand.equals("test") || bazelCommand.equals("coverage");
+        for (RunHandlerProvider it : RunHandlerProvider.getEp()) {
+            if (it instanceof GooglePluginAwareRunHandlerProvider provider
+                && provider.getGoogleHandlerId().equals(googleHandlerId)
+                && provider.isTestHandler() == isTestCommand) {
+                return it;
+            }
+        }
+        return null;
     }
-  }
 }

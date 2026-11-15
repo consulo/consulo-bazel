@@ -1,67 +1,94 @@
-package org.jetbrains.bazel.run.config
+package org.jetbrains.bazel.run.config;
 
-import com.intellij.execution.ui.BeforeRunComponent
-import com.intellij.execution.ui.BeforeRunFragment
-import com.intellij.execution.ui.CommonParameterFragments
-import com.intellij.execution.ui.CommonTags
-import com.intellij.execution.ui.RunConfigurationFragmentedEditor
-import com.intellij.execution.ui.SettingsEditorFragment
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.SettingsEditorFragmentContainer
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.BazelRunHandler
+import consulo.application.Application;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.execution.ui.CommonParameterFragments;
+import consulo.bazel.execution.ui.RunConfigurationFragmentedEditor;
+import consulo.bazel.execution.ui.SettingsEditorFragment;
+import consulo.bazel.execution.ui.SettingsEditorFragmentContainer;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 
 /**
  * The base editor for a Bazel run configuration.
  * Takes care of targets, the common settings and sets up the handler-specific settings editor.
  * handler changes won't be affected in the UI until the editor is recreated
  */
-@ApiStatus.Internal
-class BazelRunConfigurationEditor(
-  private val runConfiguration: BazelRunConfiguration,
-  val handler: BazelRunHandler? = runConfiguration.handler,
-) :
-  RunConfigurationFragmentedEditor<BazelRunConfiguration>(runConfiguration, handler?.extensionsManager) {
+public class BazelRunConfigurationEditor extends RunConfigurationFragmentedEditor<BazelRunConfiguration> {
+    private final BazelRunConfiguration myRunConfiguration;
+    private final @Nullable BazelRunHandler myHandler;
 
-  override fun initFragments(fragments: Collection<SettingsEditorFragment<BazelRunConfiguration, *>>) {
-    super.initFragments(fragments)
-    val allFragments = fragments.toList()
-    BazelRunConfigurationEditorCustomizer.EP_NAME.forEachExtensionSafe { it.fragmentsCreated(runConfiguration, allFragments) }
-  }
-
-  override fun resetEditorFrom(s: BazelRunConfiguration) {
-    super.resetEditorFrom(s)
-    val allFragments = fragments.toList()
-    BazelRunConfigurationEditorCustomizer.EP_NAME.forEachExtensionSafe { it.fragmentsReset(s, allFragments) }
-  }
-
-  override fun createRunFragments(): List<SettingsEditorFragment<BazelRunConfiguration, *>> =
-    SettingsEditorFragmentContainer.fragments {
-      add(CommonTags.parallelRun())
-      addBeforeRunFragment()
-      addTargetLabelsFragment()
-      addStateEditorFragment()
+    public BazelRunConfigurationEditor(BazelRunConfiguration runConfiguration, @Nullable BazelRunHandler handler) {
+        super(runConfiguration, handler == null ? null : handler.getExtensionsManager());
+        myRunConfiguration = runConfiguration;
+        myHandler = handler;
     }
 
-  private fun SettingsEditorFragmentContainer<BazelRunConfiguration>.addBeforeRunFragment() {
-    val beforeRunComponent = BeforeRunComponent(this@BazelRunConfigurationEditor)
-    add(BeforeRunFragment.createBeforeRun(beforeRunComponent, null))
-    addAll(BeforeRunFragment.createGroup())
-  }
-
-  private fun SettingsEditorFragmentContainer<BazelRunConfiguration>.addStateEditorFragment() {
-    val handler = handler ?: return
-    this.add(CommonParameterFragments.createHeader(BazelPluginBundle.message("runconfig.header")))
-    this.addAll(handler.state.createFragments(runConfiguration))
-  }
-
-  private fun SettingsEditorFragmentContainer<BazelRunConfiguration>.addTargetLabelsFragment() {
-    add(TargetsFragment(project))
-  }
-
-  fun focusTargetLabelsFragment() {
-    fragments.filterIsInstance<TargetsFragment>().forEach {
-      it.editorComponent.requestFocus()
+    public BazelRunConfigurationEditor(BazelRunConfiguration runConfiguration) {
+        this(runConfiguration, runConfiguration.getHandler());
     }
-  }
+
+    public @Nullable BazelRunHandler getHandler() {
+        return myHandler;
+    }
+
+    @Override
+    protected void initFragments(Collection<? extends SettingsEditorFragment<BazelRunConfiguration, ?>> fragments) {
+        super.initFragments(fragments);
+        List<SettingsEditorFragment<BazelRunConfiguration, ?>> allFragments = new ArrayList<>(fragments);
+        Application.get().getExtensionPoint(BazelRunConfigurationEditorCustomizer.class)
+            .forEachExtensionSafe(it -> it.fragmentsCreated(myRunConfiguration, allFragments));
+    }
+
+    @Override
+    protected void resetEditorFrom(BazelRunConfiguration s) {
+        super.resetEditorFrom(s);
+        List<SettingsEditorFragment<BazelRunConfiguration, ?>> allFragments = new ArrayList<>(getFragments());
+        Application.get().getExtensionPoint(BazelRunConfigurationEditorCustomizer.class)
+            .forEachExtensionSafe(it -> it.fragmentsReset(s, allFragments));
+    }
+
+    @Override
+    protected List<SettingsEditorFragment<BazelRunConfiguration, ?>> createRunFragments() {
+        return SettingsEditorFragmentContainer.<BazelRunConfiguration>fragments(container -> {
+            // consulo: CommonTags.parallelRun() and the before run fragments are dropped, the Consulo run configuration dialog
+            // already shows "allow parallel run" and the before run tasks
+            // add(CommonTags.parallelRun())
+            // addBeforeRunFragment()
+            addTargetLabelsFragment(container);
+            addStateEditorFragment(container);
+        });
+    }
+
+    // consulo: see createRunFragments(), BeforeRunComponent/BeforeRunFragment are not ported
+    // private fun SettingsEditorFragmentContainer<BazelRunConfiguration>.addBeforeRunFragment() {
+    //   val beforeRunComponent = BeforeRunComponent(this@BazelRunConfigurationEditor)
+    //   add(BeforeRunFragment.createBeforeRun(beforeRunComponent, null))
+    //   addAll(BeforeRunFragment.createGroup())
+    // }
+
+    private void addStateEditorFragment(SettingsEditorFragmentContainer<BazelRunConfiguration> receiver) {
+        BazelRunHandler handler = myHandler;
+        if (handler == null) {
+            return;
+        }
+        receiver.add(CommonParameterFragments.<BazelRunConfiguration>createHeader(BazelPluginLocalize.runconfigHeader()));
+        receiver.addAll(handler.getState().createFragments(myRunConfiguration));
+    }
+
+    private void addTargetLabelsFragment(SettingsEditorFragmentContainer<BazelRunConfiguration> receiver) {
+        receiver.add(new TargetsFragment(getProject()));
+    }
+
+    public void focusTargetLabelsFragment() {
+        for (SettingsEditorFragment<BazelRunConfiguration, ?> fragment : getFragments()) {
+            if (fragment instanceof TargetsFragment targetsFragment) {
+                targetsFragment.getEditorComponent().requestFocus();
+            }
+        }
+    }
 }

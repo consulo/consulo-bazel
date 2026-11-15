@@ -1,40 +1,72 @@
-package org.jetbrains.bazel.languages.starlark.completion
+package org.jetbrains.bazel.languages.starlark.completion;
 
-import com.intellij.util.Processor
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLoadLookupElement
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLookupElement
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkNamedLookupElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue
-import org.jetbrains.bazel.languages.starlark.utils.StarlarkQuote
+import consulo.application.util.function.Processor;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLoadLookupElement;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLookupElement;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkNamedLookupElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkQuote;
 
-internal class StarlarkCompletionProcessor(
-  val results: MutableMap<String, StarlarkLookupElement>,
-  private val inputElement: StarlarkElement,
-  private val inputWrapping: StarlarkQuote = StarlarkQuote.UNQUOTED,
-) : Processor<StarlarkElement> {
-  override fun process(currentElement: StarlarkElement): Boolean {
-    if (currentElement == inputElement) return true
-    processElement(currentElement)
-    return true
-  }
+import java.util.Map;
 
-  private fun processElement(currentElement: StarlarkElement) =
-    when (currentElement) {
-      is StarlarkNamedElement -> processNamedElement(currentElement)
-      is StarlarkStringLoadValue -> processLoadValue(currentElement)
-      else -> {}
+public class StarlarkCompletionProcessor implements Processor<StarlarkElement> {
+    private final Map<String, StarlarkLookupElement> myResults;
+    private final StarlarkElement myInputElement;
+    private final StarlarkQuote myInputWrapping;
+
+    public StarlarkCompletionProcessor(
+        Map<String, StarlarkLookupElement> results,
+        StarlarkElement inputElement,
+        StarlarkQuote inputWrapping
+    ) {
+        myResults = results;
+        myInputElement = inputElement;
+        myInputWrapping = inputWrapping;
     }
 
-  private fun processNamedElement(namedElement: StarlarkNamedElement) =
-    namedElement.name?.let {
-      results[it] = StarlarkNamedLookupElement(namedElement, inputWrapping)
+    // consulo: overload for the upstream default argument (inputWrapping = StarlarkQuote.UNQUOTED)
+    public StarlarkCompletionProcessor(
+        Map<String, StarlarkLookupElement> results,
+        StarlarkElement inputElement
+    ) {
+        this(results, inputElement, StarlarkQuote.UNQUOTED);
     }
 
-  private fun processLoadValue(stringLoadValue: StarlarkStringLoadValue) {
-    stringLoadValue.getLoadValueExpressionContent()?.let {
-      results.putIfAbsent(it, StarlarkLoadLookupElement(stringLoadValue))
+    public Map<String, StarlarkLookupElement> getResults() {
+        return myResults;
     }
-  }
+
+    @Override
+    public boolean process(StarlarkElement currentElement) {
+        if (currentElement.equals(myInputElement)) {
+            return true;
+        }
+        processElement(currentElement);
+        return true;
+    }
+
+    private void processElement(StarlarkElement currentElement) {
+        if (currentElement instanceof StarlarkNamedElement namedElement) {
+            processNamedElement(namedElement);
+        }
+        else if (currentElement instanceof StarlarkStringLoadValue stringLoadValue) {
+            processLoadValue(stringLoadValue);
+        }
+    }
+
+    private void processNamedElement(StarlarkNamedElement namedElement) {
+        String name = namedElement.getName();
+        if (name != null) {
+            myResults.put(name, new StarlarkNamedLookupElement(namedElement, myInputWrapping));
+        }
+    }
+
+    private void processLoadValue(StarlarkStringLoadValue stringLoadValue) {
+        String content = stringLoadValue.getLoadValueExpressionContent();
+        if (content != null) {
+            myResults.putIfAbsent(content, new StarlarkLoadLookupElement(stringLoadValue));
+        }
+    }
 }

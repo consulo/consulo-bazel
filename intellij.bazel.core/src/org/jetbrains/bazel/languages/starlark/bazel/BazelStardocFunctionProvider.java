@@ -1,21 +1,31 @@
-package org.jetbrains.bazel.languages.starlark.bazel
+package org.jetbrains.bazel.languages.starlark.bazel;
 
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import com.intellij.openapi.project.Project
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import consulo.util.lang.lazy.LazyValue;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.BazelGlobalFunction;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Provides external Bazel rule signatures for Starlark code completion and documentation.
- *
- * Reads `*.json` stardoc resources (generated offline by
- * `//plugins/bazel/tools/bazel_signatures/stardoc:generator`) and
- * deserializes the JSON into [BazelGlobalFunction] objects via Gson.
- *
- * See the KDoc on the generator's `main` function for the full generation pipeline and
+ * <p>
+ * Reads {@code *.json} stardoc resources (generated offline by
+ * {@code //plugins/bazel/tools/bazel_signatures/stardoc:generator}) and
+ * deserializes the JSON into {@link BazelGlobalFunction} objects via Gson.
+ * <p>
+ * See the KDoc on the generator's {@code main} function for the full generation pipeline and
  * usage instructions.
  *
- * ### Last regeneration commands
- * ```bash
+ * <h3>Last regeneration commands</h3>
+ * <pre>{@code
  * # rules_kotlin (v2.4.0)
  * bazel run //plugins/bazel/tools/bazel_signatures/stardoc:generator -- \
  *     --repo-url https://github.com/bazelbuild/rules_kotlin.git --ref v2.4.0 \
@@ -36,29 +46,48 @@ import com.intellij.openapi.project.Project
  *     --bzl-file //go/private/rules:transition.bzl --dep //go:def \
  *     --bzl-file //go/private/tools:path.bzl --dep //go:def \
  *     --output rules_go
- * ```
+ * }</pre>
  */
-internal class BazelStardocFunctionProvider : StarlarkGlobalFunctionProvider {
+@ExtensionImpl
+public class BazelStardocFunctionProvider implements StarlarkGlobalFunctionProvider {
 
-  private val stardocToLoad = listOf(
-    "/bazelSignatures/rules_kotlin@v2.4.0.json",
-    "/bazelSignatures/rules_go@v0.61.1.json",
-  )
+    private final List<String> myStardocToLoad = List.of(
+        "/bazelSignatures/rules_kotlin@v2.4.0.json",
+        "/bazelSignatures/rules_go@v0.61.1.json"
+    );
 
-  private val cachedFunctions by lazy { loadStardocFunctions() }
+    // consulo: Kotlin `by lazy` is synchronized, atomicNotNull keeps that
+    private final LazyValue<List<BazelGlobalFunction>> myCachedFunctions = LazyValue.atomicNotNull(this::loadStardocFunctions);
 
-  override fun functions(project: Project): List<BazelGlobalFunction> = cachedFunctions
-
-  private fun loadStardocFunctions(): List<BazelGlobalFunction> {
-    val cls = this::class.java
-    val gson = Gson()
-    return stardocToLoad.flatMap { path ->
-      cls.getResourceAsStream(path)
-        ?.use { it.bufferedReader().readText() }
-        ?.let { json -> gson.fromJson(json, bazelGlobalFunctionListTypeToken) }
-        .orEmpty()
+    @Override
+    public List<BazelGlobalFunction> functions(Project project) {
+        return myCachedFunctions.get();
     }
-  }
 
-  private val bazelGlobalFunctionListTypeToken = object : TypeToken<List<BazelGlobalFunction>>() {}
+    private List<BazelGlobalFunction> loadStardocFunctions() {
+        Class<?> cls = getClass();
+        Gson gson = new Gson();
+        List<BazelGlobalFunction> result = new ArrayList<>();
+        for (String path : myStardocToLoad) {
+            InputStream stream = cls.getResourceAsStream(path);
+            if (stream == null) {
+                continue;
+            }
+            String json;
+            try (stream) {
+                json = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            List<BazelGlobalFunction> functions = gson.fromJson(json, myBazelGlobalFunctionListTypeToken);
+            if (functions != null) {
+                result.addAll(functions);
+            }
+        }
+        return result;
+    }
+
+    private final TypeToken<List<BazelGlobalFunction>> myBazelGlobalFunctionListTypeToken = new TypeToken<List<BazelGlobalFunction>>() {
+    };
 }

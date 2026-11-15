@@ -1,5 +1,6 @@
 package org.jetbrains.bazel.languages.projectview;
 
+import consulo.application.ReadAction;
 import consulo.document.Document;
 import consulo.document.FileDocumentManager;
 import consulo.language.psi.PsiElement;
@@ -138,7 +139,10 @@ public final class ProjectViewFactory {
     ) {
         Path fileName = source != null ? source.getFileName() : null;
         String name = fileName != null ? fileName.toString() : Constants.DEFAULT_PROJECT_VIEW_FILE_NAME;
-        return fromPsiFile(createLightPsiFile(project, name, content), source, root, source != null ? Set.of(source) : Set.of());
+        // consulo: Consulo asserts read access for light PSI too (except ReadOnlyLightVirtualFile), the parse runs in a read action
+        return ReadAction.compute(() ->
+            fromPsiFile(createLightPsiFile(project, name, content), source, root, source != null ? Set.of(source) : Set.of())
+        );
     }
 
     private static ProjectView fromPsiFile(

@@ -1,28 +1,45 @@
-package org.jetbrains.bazel.flow.exclude
+package org.jetbrains.bazel.flow.exclude;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
-import com.intellij.openapi.startup.ProjectActivity
-import com.intellij.openapi.vfs.toNioPathOrNull
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.environment.bazelProjectInfo
-import java.nio.file.Path
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import consulo.project.startup.PostStartupActivity;
+import consulo.ui.UIAccess;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jspecify.annotations.Nullable;
+
+import java.nio.file.Path;
 
 /**
  * Scans the project workspace for Bazel convenience symlinks and excludes them when the project opens.
  * It intentionally doesn't check if it's a Bazel project, so it will work even when
  * the user hasn't yet requested to attach the Bazel support to the project.
  */
-@ApiStatus.Internal
-class BazelSymlinkExcludeStartupActivity : ProjectActivity {
-  override suspend fun execute(project: Project) {
-    val bazelWorkspace = project.guessBazelWorkspaceDir() ?: return
-    val bazelSymlinkExcludeService = BazelSymlinkExcludeService.getInstance(project)
-    bazelSymlinkExcludeService.scanForBazelSymlinksToExclude(bazelWorkspace)
-  }
+@ExtensionImpl
+public class BazelSymlinkExcludeStartupActivity implements PostStartupActivity {
+    @Override
+    public void runActivity(Project project, UIAccess uiAccess) {
+        Path bazelWorkspace = guessBazelWorkspaceDir(project);
+        if (bazelWorkspace == null) {
+            return;
+        }
+        BazelSymlinkExcludeService bazelSymlinkExcludeService = BazelSymlinkExcludeService.getInstance(project);
+        bazelSymlinkExcludeService.scanForBazelSymlinksToExclude(bazelWorkspace);
+    }
 
-  private fun Project.guessBazelWorkspaceDir(): Path? {
-    val virtualFile = bazelProjectInfo.projectRootDir ?: guessProjectDir()
-    return virtualFile?.toNioPathOrNull()
-  }
+    private @Nullable Path guessBazelWorkspaceDir(Project receiver) {
+        VirtualFile projectRootDir = BazelProjectInfoService.getBazelProjectInfo(receiver).getProjectRootDir();
+        // consulo: Consulo has no Project.guessProjectDir(), the project base directory is used
+        VirtualFile virtualFile = projectRootDir != null ? projectRootDir : receiver.getBaseDir();
+        if (virtualFile == null) {
+            return null;
+        }
+        // consulo: IntelliJ VirtualFile.toNioPathOrNull()
+        try {
+            return virtualFile.toNioPath();
+        }
+        catch (UnsupportedOperationException e) {
+            return null;
+        }
+    }
 }

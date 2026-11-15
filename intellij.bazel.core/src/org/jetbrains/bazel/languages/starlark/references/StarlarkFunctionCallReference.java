@@ -1,74 +1,121 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReferenceBase
-import com.intellij.util.Processor
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLookupElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.rename.RenameUtils
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.access.RequiredWriteAction;
+import consulo.application.util.function.Processor;
+import consulo.document.util.TextRange;
+import consulo.language.ast.ASTNode;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReferenceBase;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLookupElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList;
+import org.jetbrains.bazel.languages.starlark.rename.RenameUtils;
+import org.jspecify.annotations.Nullable;
 
-private fun getNamedArgumentValue(element: StarlarkCallExpression, argName: String): String? =
-  (
-    element
-      .getArgumentList()
-      ?.getArguments()
-      ?.find { arg ->
-        arg.name == argName
-      }?.getValue() as? StarlarkStringLiteralExpression
-  )?.getStringContents()
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
-private class BazelDepProcessor(private val lookingForModuleName: String) : Processor<StarlarkElement> {
-  val result: MutableList<StarlarkElement> = mutableListOf()
+class BazelDepProcessor implements Processor<StarlarkElement> {
+    private final String myLookingForModuleName;
+    private final List<StarlarkElement> myResult = new ArrayList<>();
 
-  private fun getFunctionName(element: StarlarkCallExpression): String? = element.getCalledFunctionName()
-
-  override fun process(element: StarlarkElement): Boolean {
-    if (element !is StarlarkCallExpression) return true
-    if (getFunctionName(element) != "bazel_dep") return true
-    if (getNamedArgumentValue(element, "name") == lookingForModuleName) {
-      result.add(element)
+    BazelDepProcessor(String lookingForModuleName) {
+        myLookingForModuleName = lookingForModuleName;
     }
-    return true
-  }
+
+    List<StarlarkElement> getResult() {
+        return myResult;
+    }
+
+    private @Nullable String getFunctionName(StarlarkCallExpression element) {
+        return element.getCalledFunctionName();
+    }
+
+    @Override
+    public boolean process(StarlarkElement element) {
+        if (!(element instanceof StarlarkCallExpression callExpression)) {
+            return true;
+        }
+        if (!Objects.equals(getFunctionName(callExpression), "bazel_dep")) {
+            return true;
+        }
+        if (Objects.equals(StarlarkFunctionCallReference.getNamedArgumentValue(callExpression, "name"), myLookingForModuleName)) {
+            myResult.add(callExpression);
+        }
+        return true;
+    }
 }
 
-internal class StarlarkFunctionCallReference(element: StarlarkReferenceExpression, rangeInElement: TextRange) :
-  PsiReferenceBase<StarlarkReferenceExpression>(element, rangeInElement, true) {
-  override fun resolve(): PsiElement? {
-    val element = myElement ?: return null
-    val callExpression = element.parent as? StarlarkCallExpression ?: return null
-    when (val calledFunctionName = element.text) {
-      null -> {
-        return null
-      }
-
-      "archive_override", "git_override" -> {
-        val moduleNameValue = getNamedArgumentValue(callExpression, "module_name") ?: return null
-        val processor = BazelDepProcessor(moduleNameValue)
-        val file = element.containingFile as? StarlarkFile ?: return null
-        file.searchInFunctionCalls(processor)
-        return processor.result.firstOrNull()
-      }
-
-      else -> {
-        val processor = StarlarkResolveProcessor(mutableListOf(), element, calledFunctionName)
-        SearchUtils.searchInFile(element, processor)
-        return processor.result.firstOrNull()
-      }
+public class StarlarkFunctionCallReference extends PsiReferenceBase<StarlarkReferenceExpression> {
+    static @Nullable String getNamedArgumentValue(StarlarkCallExpression element, String argName) {
+        StarlarkArgumentList argumentList = element.getArgumentList();
+        if (argumentList == null) {
+            return null;
+        }
+        for (StarlarkArgumentElement arg : argumentList.getArguments()) {
+            if (Objects.equals(arg.getName(), argName)) {
+                return arg.getValue() instanceof StarlarkStringLiteralExpression literal ? literal.getStringContents() : null;
+            }
+        }
+        return null;
     }
-  }
 
-  override fun getVariants(): Array<StarlarkLookupElement> = emptyArray()
+    public StarlarkFunctionCallReference(StarlarkReferenceExpression element, TextRange rangeInElement) {
+        super(element, rangeInElement, true);
+    }
 
-  override fun handleElementRename(name: String): PsiElement {
-    val oldNode = myElement.getNameIdentifier()?.node ?: return myElement
-    val newNode = RenameUtils.createNewName(myElement.project, name)
-    myElement.node.replaceChild(oldNode, newNode)
-    return myElement
-  }
+    @Override
+    @RequiredReadAction
+    public @Nullable PsiElement resolve() {
+        StarlarkReferenceExpression element = myElement;
+        if (!(element.getParent() instanceof StarlarkCallExpression callExpression)) {
+            return null;
+        }
+        String calledFunctionName = element.getText();
+        switch (calledFunctionName) {
+            case "archive_override", "git_override" -> {
+                String moduleNameValue = getNamedArgumentValue(callExpression, "module_name");
+                if (moduleNameValue == null) {
+                    return null;
+                }
+                BazelDepProcessor processor = new BazelDepProcessor(moduleNameValue);
+                if (!(element.getContainingFile() instanceof StarlarkFile file)) {
+                    return null;
+                }
+                file.searchInFunctionCalls(processor);
+                return processor.getResult().isEmpty() ? null : processor.getResult().get(0);
+            }
+
+            default -> {
+                StarlarkResolveProcessor processor = new StarlarkResolveProcessor(new ArrayList<>(), element, calledFunctionName);
+                SearchUtils.searchInFile(element, processor);
+                return processor.getResult().isEmpty() ? null : processor.getResult().get(0);
+            }
+        }
+    }
+
+    @Override
+    public StarlarkLookupElement[] getVariants() {
+        return new StarlarkLookupElement[0];
+    }
+
+    @Override
+    @RequiredWriteAction
+    public PsiElement handleElementRename(String name) {
+        PsiElement nameIdentifier = myElement.getNameIdentifier();
+        ASTNode oldNode = nameIdentifier == null ? null : nameIdentifier.getNode();
+        if (oldNode == null) {
+            return myElement;
+        }
+        ASTNode newNode = RenameUtils.createNewName(myElement.getProject(), name);
+        myElement.getNode().replaceChild(oldNode, newNode);
+        return myElement;
+    }
 }

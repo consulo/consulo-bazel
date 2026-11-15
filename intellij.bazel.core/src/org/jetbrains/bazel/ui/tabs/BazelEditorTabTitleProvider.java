@@ -1,20 +1,30 @@
-package org.jetbrains.bazel.ui.tabs
+package org.jetbrains.bazel.ui.tabs;
 
-import com.intellij.openapi.fileEditor.impl.EditorTabTitleProvider
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileUtils
+import consulo.annotation.component.ExtensionImpl;
+import consulo.fileEditor.EditorTabTitleProvider;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileUtils;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelEditorTabTitleProvider : EditorTabTitleProvider {
-  override fun getEditorTabTitle(project: Project, file: VirtualFile): String? =
-    if (requiresDecoration(project, file.name)) {
-      BazelFileUtils.getContainingDirectoryPresentablePath(project, file)
-    } else {
-      null
+import java.util.Arrays;
+
+@ExtensionImpl
+public class BazelEditorTabTitleProvider implements EditorTabTitleProvider {
+    @Override
+    public @Nullable String getEditorTabTitle(Project project, VirtualFile file) {
+        if (requiresDecoration(project, file.getName())) {
+            return BazelFileUtils.getContainingDirectoryPresentablePath(project, file);
+        }
+        else {
+            return null;
+        }
     }
 
-  private fun requiresDecoration(project: Project, fileName: String): Boolean =
-    project.isBazelProject && (fileName in Constants.BUILD_FILE_NAMES || fileName in Constants.WORKSPACE_FILE_NAMES)
+    private boolean requiresDecoration(Project project, String fileName) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project) &&
+            (Arrays.asList(Constants.BUILD_FILE_NAMES).contains(fileName)
+                || Arrays.asList(Constants.WORKSPACE_FILE_NAMES).contains(fileName));
+    }
 }

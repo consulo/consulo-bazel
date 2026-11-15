@@ -1,52 +1,94 @@
-package org.jetbrains.bazel.languages.starlark.documentation
+package org.jetbrains.bazel.languages.starlark.documentation;
 
-import com.intellij.codeInsight.documentation.DocumentationManagerProtocol
-import com.intellij.lang.documentation.QuickDocHighlightingHelper
-import com.intellij.openapi.editor.colors.TextAttributesKey
-import com.intellij.openapi.util.text.HtmlChunk
-import com.intellij.openapi.util.text.buildHtmlChunk
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.descendants
-import com.intellij.psi.util.elementType
-import com.intellij.xml.util.XmlStringUtil
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.highlighting.StarlarkSyntaxHighlighter
-import org.jetbrains.bazel.languages.starlark.highlighting.starlarkSemanticHighlightingColor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.isRuleTarget
+import consulo.application.util.HtmlBuilder;
+import consulo.application.util.HtmlChunk;
+import consulo.colorScheme.TextAttributesKey;
+import consulo.language.ast.IElementType;
+import consulo.language.editor.documentation.DocumentationManagerProtocol;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.PsiUtilCore;
+import consulo.language.psi.SyntaxTraverser;
+import consulo.util.lang.StringUtil;
+import consulo.util.lang.xml.XmlStringUtil;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.highlighting.StarlarkSemanticHighlighting;
+import org.jetbrains.bazel.languages.starlark.highlighting.StarlarkSyntaxHighlighter;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jspecify.annotations.Nullable;
 
-internal object StarlarkDocumentationLinks {
+import java.util.function.Function;
 
-  fun forTargetLabel(element: StarlarkStringLiteralExpression): String? {
-    val referenced = element.getReference()?.resolve() ?: return null
-    if (!referenced.isRuleTarget()) return null
-    val labelText = element.getStringContents()
-    return DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL + labelText
-  }
+public final class StarlarkPsiToHtml {
+    private StarlarkPsiToHtml() {
+    }
 
-  fun labelFrom(link: String): Label? {
-    if (!link.startsWith(DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL)) return null
-    val labelText = link.removePrefix(DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL)
-    return Label.parseOrNull(labelText)
-  }
-}
+    // consulo: overload for the upstream default argument (linkBuilder = { null })
+    public static HtmlChunk asHighlightedHtml(StarlarkElement receiver) {
+        return asHighlightedHtml(receiver, it -> null);
+    }
 
-internal fun StarlarkElement.asHighlightedHtml(linkBuilder: (PsiElement) -> String? = { null }): HtmlChunk = buildHtmlChunk {
-  descendants()
-    .filter { it.firstChild == null }
-    .forEach { leaf ->
-      val chunk = leaf.starlarkHighlightedHtmlChunk()
-      val link = linkBuilder(leaf)
-      append(if (link != null) HtmlChunk.link(link, chunk) else chunk)
+    public static HtmlChunk asHighlightedHtml(StarlarkElement receiver, Function<PsiElement, @Nullable String> linkBuilder) {
+        HtmlBuilder builder = new HtmlBuilder();
+        for (PsiElement leaf : SyntaxTraverser.psiTraverser(receiver).preOrderDfsTraversal()) {
+            if (leaf.getFirstChild() != null) {
+                continue;
+            }
+            HtmlChunk chunk = starlarkHighlightedHtmlChunk(leaf);
+            String link = linkBuilder.apply(leaf);
+            builder.append(link != null ? HtmlChunk.link(link, chunk) : chunk);
+        }
+        return builder.toFragment();
+    }
+
+    private static HtmlChunk starlarkHighlightedHtmlChunk(PsiElement receiver) {
+        TextAttributesKey key = starlarkHighlightingColor(receiver);
+        if (key == null) {
+            return HtmlChunk.text(receiver.getText());
+        }
+        // consulo: QuickDocHighlightingHelper.getStyledFragment(text, key) does not exist in Consulo,
+        // the escaped text is not styled
+        return HtmlChunk.raw(XmlStringUtil.escapeString(receiver.getText()));
+    }
+
+    private static @Nullable TextAttributesKey starlarkHighlightingColor(PsiElement receiver) {
+        TextAttributesKey semantic = StarlarkSemanticHighlighting.starlarkSemanticHighlightingColor(receiver);
+        if (semantic != null) {
+            return semantic;
+        }
+        IElementType elementType = PsiUtilCore.getElementType(receiver);
+        if (elementType == null) {
+            return null;
+        }
+        TextAttributesKey[] highlights = StarlarkSyntaxHighlighter.INSTANCE.getTokenHighlights(elementType);
+        return highlights.length == 0 ? null : highlights[0];
     }
 }
 
-private fun PsiElement.starlarkHighlightedHtmlChunk(): HtmlChunk {
-  val key = starlarkHighlightingColor() ?: return HtmlChunk.text(text)
-  return HtmlChunk.raw(QuickDocHighlightingHelper.getStyledFragment(XmlStringUtil.escapeString(text), key))
+final class StarlarkDocumentationLinks {
+    private StarlarkDocumentationLinks() {
+    }
+
+    static @Nullable String forTargetLabel(StarlarkStringLiteralExpression element) {
+        PsiReference reference = element.getReference();
+        PsiElement referenced = reference == null ? null : reference.resolve();
+        if (referenced == null) {
+            return null;
+        }
+        if (!StarlarkCallExpression.isRuleTarget(referenced)) {
+            return null;
+        }
+        String labelText = element.getStringContents();
+        return DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL + labelText;
+    }
+
+    static @Nullable Label labelFrom(String link) {
+        if (!link.startsWith(DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL)) {
+            return null;
+        }
+        String labelText = StringUtil.trimStart(link, DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL);
+        return Label.parseOrNull(labelText);
+    }
 }
-
-private fun PsiElement.starlarkHighlightingColor(): TextAttributesKey? =
-  starlarkSemanticHighlightingColor() ?: elementType?.let { StarlarkSyntaxHighlighter.getTokenHighlights(it).firstOrNull() }
-

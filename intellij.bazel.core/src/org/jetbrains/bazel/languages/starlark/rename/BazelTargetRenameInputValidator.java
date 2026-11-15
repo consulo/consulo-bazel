@@ -1,35 +1,49 @@
-package org.jetbrains.bazel.languages.starlark.rename
+package org.jetbrains.bazel.languages.starlark.rename;
 
-import com.intellij.patterns.ElementPattern
-import com.intellij.patterns.PatternCondition
-import com.intellij.patterns.PlatformPatterns
-import com.intellij.psi.PsiElement
-import com.intellij.refactoring.rename.RenameInputValidator
-import com.intellij.util.ProcessingContext
-import org.jetbrains.bazel.label.LabelValidator
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.editor.refactoring.rename.RenameInputValidator;
+import consulo.language.pattern.ElementPattern;
+import consulo.language.pattern.PatternCondition;
+import consulo.language.pattern.PlatformPatterns;
+import consulo.language.psi.PsiElement;
+import consulo.language.util.ProcessingContext;
+import org.jetbrains.bazel.label.LabelValidator;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelTargetRenameInputValidator : RenameInputValidator {
+@ExtensionImpl
+public class BazelTargetRenameInputValidator implements RenameInputValidator {
+    private final ElementPattern<StarlarkCallExpression> myPattern = PlatformPatterns
+        .psiElement(StarlarkCallExpression.class)
+        .with(BazelTargetRuleDeclarationPatternCondition.INSTANCE);
 
-  private val myPattern = PlatformPatterns
-    .psiElement(StarlarkCallExpression::class.java)
-    .with(BazelTargetRuleDeclarationPatternCondition)
+    @Override
+    public ElementPattern<? extends PsiElement> getPattern() {
+        return myPattern;
+    }
 
-  override fun getPattern(): ElementPattern<out PsiElement> = myPattern
-
-  override fun isInputValid(
-    newName: String,
-    element: PsiElement,
-    context: ProcessingContext,
-  ): Boolean = LabelValidator.isTargetNameValid(newName)
+    @Override
+    public boolean isInputValid(
+        String newName,
+        PsiElement element,
+        ProcessingContext context
+    ) {
+        return LabelValidator.isTargetNameValid(newName);
+    }
 }
 
-private object BazelTargetRuleDeclarationPatternCondition : PatternCondition<StarlarkCallExpression>(
-  "isTargetRuleDeclaration"
-) {
+class BazelTargetRuleDeclarationPatternCondition extends PatternCondition<StarlarkCallExpression> {
+    static final BazelTargetRuleDeclarationPatternCondition INSTANCE = new BazelTargetRuleDeclarationPatternCondition();
 
-  override fun accepts(
-    element: StarlarkCallExpression,
-    context: ProcessingContext?
-  ): Boolean = element.isRuleTarget()
+    private BazelTargetRuleDeclarationPatternCondition() {
+        super("isTargetRuleDeclaration");
+    }
+
+    @Override
+    public boolean accepts(
+        StarlarkCallExpression element,
+        @Nullable ProcessingContext context
+    ) {
+        return element.isRuleTarget();
+    }
 }

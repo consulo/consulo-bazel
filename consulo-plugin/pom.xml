@@ -106,7 +106,8 @@
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>
-        <!-- gRPC is provided by the platform -->
+        <!-- gRPC (grpc-api, grpc-stub, grpc-protobuf) and proto-google-common-protos are provided by the platform.
+             TODO: drop the versions once the published arch.managment manages ${grpc.version} -->
         <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-api</artifactId>
@@ -119,11 +120,34 @@
             <version>1.75.0</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
+            <version>1.75.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.api.grpc</groupId>
+            <artifactId>proto-google-common-protos</artifactId>
+            <version>2.59.2</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- backend libraries not shipped by the platform -->
         <dependency>
             <groupId>tools.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-xml</artifactId>
             <version>${jackson3.version}</version>
+        </dependency>
+        <!-- runtime dependencies of jackson-dataformat-xml (versions of jackson-bom) -->
+        <dependency>
+            <groupId>com.fasterxml.woodstox</groupId>
+            <artifactId>woodstox-core</artifactId>
+            <version>7.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.codehaus.woodstox</groupId>
+            <artifactId>stax2-api</artifactId>
+            <version>4.2.2</version>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
@@ -134,16 +158,6 @@
             <groupId>com.esotericsoftware</groupId>
             <artifactId>kryo5</artifactId>
             <version>5.6.0</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-protobuf</artifactId>
-            <version>1.75.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.google.api.grpc</groupId>
-            <artifactId>proto-google-common-protos</artifactId>
-            <version>2.59.2</version>
         </dependency>
     </dependencies>
 </project>

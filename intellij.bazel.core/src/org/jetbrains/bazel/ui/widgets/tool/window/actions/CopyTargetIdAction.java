@@ -1,39 +1,65 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.actions
+package org.jetbrains.bazel.ui.widgets.tool.window.actions;
 
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonShortcuts
-import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.project.Project
-import com.intellij.util.ui.TextTransferable
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
-import javax.swing.JComponent
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.localize.LocalizeValue;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.clipboard.DataTransfer;
+import consulo.ui.ex.CopyPasteManager;
+import consulo.ui.ex.action.AnAction;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.CommonShortcuts;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-internal sealed class CopyTargetIdAction : AnAction({ BazelPluginBundle.message("widget.copy.target.id") }, AllIcons.Actions.Copy) {
-  override fun actionPerformed(e: AnActionEvent) {
-    val project = e.project ?: return
-    getTargetInfo()?.copyIdToClipboard(project)
-  }
+import javax.swing.JComponent;
 
-  protected abstract fun getTargetInfo(): BuildTarget?
-
-  private fun BuildTarget.copyIdToClipboard(project: Project) {
-    val clipboard = CopyPasteManager.getInstance()
-    val transferable = TextTransferable(this.id.toShortString(project) as CharSequence)
-    clipboard.setContents(transferable)
-  }
-
-  abstract class FromContainer(component: JComponent) : CopyTargetIdAction() {
-    init {
-      registerCustomShortcutSet(CommonShortcuts.getCopy(), component)
+public abstract class CopyTargetIdAction extends AnAction {
+    protected CopyTargetIdAction() {
+        super(BazelPluginLocalize.widgetCopyTargetId(), LocalizeValue.empty(), PlatformIconGroup.actionsCopy());
     }
-  }
 
-  class FromTargetInfo(private val targetInfo: BuildTarget) : CopyTargetIdAction() {
-    override fun getTargetInfo(): BuildTarget = targetInfo
-  }
+    @Override
+    @RequiredUIAccess
+    public void actionPerformed(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+        if (project == null) {
+            return;
+        }
+        BuildTarget targetInfo = getTargetInfo();
+        if (targetInfo != null) {
+            copyIdToClipboard(targetInfo, project);
+        }
+    }
+
+    protected abstract @Nullable BuildTarget getTargetInfo();
+
+    @RequiredUIAccess
+    private void copyIdToClipboard(BuildTarget receiver, Project project) {
+        CopyPasteManager clipboard = CopyPasteManager.getInstance();
+        // consulo: DataTransfer instead of TextTransferable
+        DataTransfer transferable = DataTransfer.of(BazelRepoMappingUtils.toShortString(BuildTarget.getId(receiver), project));
+        clipboard.setContents(transferable);
+    }
+
+    public abstract static class FromContainer extends CopyTargetIdAction {
+        public FromContainer(JComponent component) {
+            registerCustomShortcutSet(CommonShortcuts.getCopy(), component);
+        }
+    }
+
+    public static class FromTargetInfo extends CopyTargetIdAction {
+        private final BuildTarget myTargetInfo;
+
+        public FromTargetInfo(BuildTarget targetInfo) {
+            myTargetInfo = targetInfo;
+        }
+
+        @Override
+        protected BuildTarget getTargetInfo() {
+            return myTargetInfo;
+        }
+    }
 }

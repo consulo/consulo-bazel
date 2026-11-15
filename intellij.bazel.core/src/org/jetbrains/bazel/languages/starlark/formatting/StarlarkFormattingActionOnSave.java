@@ -1,22 +1,59 @@
-package org.jetbrains.bazel.languages.starlark.formatting
+package org.jetbrains.bazel.languages.starlark.formatting;
 
-import com.intellij.ide.actionsOnSave.impl.ActionsOnSaveFileDocumentManagerListener
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.editor.Document
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiDocumentManager
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.settings.bazel.bazelProjectSettings
+import consulo.annotation.access.RequiredWriteAction;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.TopicImpl;
+import consulo.document.Document;
+import consulo.document.FileDocumentManager;
+import consulo.document.event.FileDocumentManagerListener;
+import consulo.language.psi.PsiDocumentManager;
+import consulo.language.psi.PsiFile;
+import consulo.project.Project;
+import consulo.project.ProjectLocator;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.settings.bazel.BazelProjectSettings;
 
-internal class StarlarkFormattingActionOnSave : ActionsOnSaveFileDocumentManagerListener.DocumentUpdatingActionOnSave() {
-  override val presentableName: String
-    get() = "buildifier"
+// consulo: IntelliJ ActionsOnSaveFileDocumentManagerListener.DocumentUpdatingActionOnSave does not exist; the action is a
+// FileDocumentManagerListener that formats the document right before it is written (like Consulo's TrailingSpacesStripper).
+// TODO consulo: there is no "Actions on Save" settings page (presentableName is unused) and the listener runs for every
+//  document save, not only for the explicit save actions handled by IntelliJ's ActionsOnSaveFileDocumentManagerListener
+@TopicImpl(ComponentScope.APPLICATION)
+public class StarlarkFormattingActionOnSave implements FileDocumentManagerListener {
+    public String getPresentableName() {
+        return "buildifier";
+    }
 
-  override fun isEnabledForProject(project: Project): Boolean = project.isBazelProject && project.bazelProjectSettings.runBuildifierOnSave
+    public boolean isEnabledForProject(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project)
+            && BazelProjectSettings.getBazelProjectSettings(project).runBuildifierOnSave();
+    }
 
-  override suspend fun updateDocument(project: Project, document: Document) {
-    val psiFile = readAction { PsiDocumentManager.getInstance(project).getPsiFile(document) } as? StarlarkFile ?: return
-    formatBuildFile(psiFile)
-  }
+    @RequiredWriteAction
+    public void updateDocument(Project project, Document document) {
+        // consulo: upstream readAction { }; beforeDocumentSaving() already runs in a write action
+        if (!(PsiDocumentManager.getInstance(project).getPsiFile(document) instanceof StarlarkFile psiFile)) {
+            return;
+        }
+        StarlarkFormattingService.formatBuildFile(psiFile);
+    }
+
+    @Override
+    @RequiredWriteAction
+    public void beforeDocumentSaving(Document document) {
+        // consulo: upstream ActionsOnSaveFileDocumentManagerListener calls isEnabledForProject()/updateDocument() for the project
+        // of the saved document
+        VirtualFile file = FileDocumentManager.getInstance().getFile(document);
+        if (file == null) {
+            return;
+        }
+        Project project = ProjectLocator.getInstance().guessProjectForFile(file);
+        if (project == null || project.isDisposed()) {
+            return;
+        }
+        if (!isEnabledForProject(project)) {
+            return;
+        }
+        updateDocument(project, document);
+    }
 }

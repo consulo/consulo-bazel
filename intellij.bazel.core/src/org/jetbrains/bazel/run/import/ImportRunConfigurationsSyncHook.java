@@ -1,119 +1,166 @@
-package org.jetbrains.bazel.run.import
+// consulo: `import` is a Java keyword, the package gets a trailing underscore (the file keeps the upstream path)
+package org.jetbrains.bazel.run.import_;
 
-import com.intellij.execution.RunManager
-import com.intellij.execution.RunnerAndConfigurationSettings
-import com.intellij.execution.configuration.EnvironmentVariablesData
-import com.intellij.execution.configurations.runConfigurationType
-import com.intellij.execution.impl.RunManagerImpl
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.JDOMUtil
-import org.jdom.Element
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.projectview.importRunConfigurations
-import org.jetbrains.bazel.run.RunHandlerProvider
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.config.BazelRunConfigurationType
-import org.jetbrains.bazel.run.state.HasBazelParams
-import org.jetbrains.bazel.run.state.HasEnv
-import org.jetbrains.bazel.run.state.HasProgramArguments
-import org.jetbrains.bazel.sync.ProjectSyncHook
-import org.jetbrains.bazel.sync.withSubtask
-import java.nio.file.Path
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.RunManager;
+import consulo.execution.RunnerAndConfigurationSettings;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.configuration.ConfigurationTypeUtil;
+import consulo.execution.configuration.EnvironmentVariablesData;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.jdom.JDOMUtil;
+import org.jdom.Element;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
+import org.jetbrains.bazel.run.BazelRunConfigurationState;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.RunHandlerProvider;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
+import org.jetbrains.bazel.run.state.Common;
+import org.jetbrains.bazel.sync.ProjectSyncHook;
+import org.jspecify.annotations.Nullable;
 
-private const val GOOGLE_BAZEL_RUN_CONFIG_TYPE = "BlazeCommandRunConfigurationType"
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
-internal class ImportRunConfigurationsSyncHook : ProjectSyncHook {
-  private val log = logger<ImportRunConfigurationsSyncHook>()
+import static org.jetbrains.bazel.config.project.getRootDir;
 
-  override suspend fun onSync(environment: ProjectSyncHook.ProjectSyncHookEnvironment) {
-    environment.withSubtask("Import run configurations") {
-      val project = environment.project
-      val projectView = environment.server.projectView
+@ExtensionImpl
+public class ImportRunConfigurationsSyncHook implements ProjectSyncHook {
+    private static final String GOOGLE_BAZEL_RUN_CONFIG_TYPE = "BlazeCommandRunConfigurationType";
 
-      val runManager = RunManager.getInstance(project)
-      val shouldSetSelectedConfiguration = runManager.selectedConfiguration == null
-      val workspaceRoot = environment.project.rootDir.toNioPath()
-      val runConfigurations =
-        projectView.importRunConfigurations.map { workspaceRoot.resolve(it) }.mapNotNull { runConfigurationPath ->
-          try {
-            importRunConfiguration(project, runConfigurationPath)
-          } catch (e: Exception) {
-            log.warn("Could not import $runConfigurationPath", e)
-            null
-          }
+    private final Logger myLog = Logger.getInstance(ImportRunConfigurationsSyncHook.class);
+
+    @Override
+    public CompletableFuture<Void> onSync(ProjectSyncHook.ProjectSyncHookEnvironment environment) {
+        // TODO consulo: move the subtask text to the BazelPluginLocalize YAML (upstream hard-codes it)
+        return environment.withSubtask(LocalizeValue.localizeTODO("Import run configurations"), taskId -> {
+            Project project = environment.project();
+            ProjectView projectView = environment.server().getProjectView();
+
+            RunManager runManager = RunManager.getInstance(project);
+            boolean shouldSetSelectedConfiguration = runManager.getSelectedConfiguration() == null;
+            Path workspaceRoot = getRootDir(environment.project()).toNioPath();
+            List<RunnerAndConfigurationSettings> runConfigurations = new ArrayList<>();
+            for (Path it : ProjectViewExtensions.getImportRunConfigurations(projectView)) {
+                Path runConfigurationPath = workspaceRoot.resolve(it);
+                try {
+                    RunnerAndConfigurationSettings settings = importRunConfiguration(project, runConfigurationPath);
+                    if (settings != null) {
+                        runConfigurations.add(settings);
+                    }
+                }
+                catch (Exception e) {
+                    myLog.warn("Could not import " + runConfigurationPath, e);
+                }
+            }
+
+            if (shouldSetSelectedConfiguration) {
+                runManager.setSelectedConfiguration(runConfigurations.isEmpty() ? null : runConfigurations.get(0));
+            }
+            return CompletableFuture.<Void>completedFuture(null);
+        });
+    }
+
+    private @Nullable RunnerAndConfigurationSettings importRunConfiguration(Project project, Path runConfigurationPath) throws Exception {
+        Element runConfigurationXml = getConfigurationElement(JDOMUtil.load(runConfigurationPath.toFile()));
+        if (runConfigurationXml == null) {
+            return null;
+        }
+        RunnerAndConfigurationSettings settings;
+        if (Objects.requireNonNull(runConfigurationXml.getAttributeValue("type")).equals(GOOGLE_BAZEL_RUN_CONFIG_TYPE)) {
+            settings = loadGoogleBazelRunConfiguration(project, runConfigurationXml);
+        }
+        else {
+            settings = loadRunConfigurationXmlNormally(project, runConfigurationXml);
+        }
+        return settings;
+    }
+
+    private @Nullable Element getConfigurationElement(Element runConfigurationXml) {
+        Element element = runConfigurationXml;
+        if (element.getName().equals("component") && "ProjectRunConfigurationManager".equals(element.getAttributeValue("name"))) {
+            List<Element> children = element.getChildren();
+            if (children.isEmpty()) {
+                return null;
+            }
+            element = children.get(0);
+        }
+        return element.getName().equals("configuration") ? element : null;
+    }
+
+    private RunnerAndConfigurationSettings loadGoogleBazelRunConfiguration(Project project, Element runConfigurationXml) {
+        String name = Objects.requireNonNull(runConfigurationXml.getAttributeValue("name"));
+        Element blazeSettings = Objects.requireNonNull(runConfigurationXml.getChild("blaze-settings"));
+        String googleHandlerId = Objects.requireNonNull(blazeSettings.getAttributeValue("handler-id"));
+        String bazelCommand = Objects.requireNonNull(blazeSettings.getAttributeValue("blaze-command"));
+        Label target = Label.parse(Objects.requireNonNull(blazeSettings.getChild("blaze-target")).getText());
+        Element userFlag = blazeSettings.getChild("blaze-user-flag");
+        String additionalBazelParams = userFlag == null ? null : replaceProjectDir(userFlag.getText(), project);
+        Element userExeFlag = blazeSettings.getChild("blaze-user-exe-flag");
+        String programArguments = userExeFlag == null ? null : replaceProjectDir(userExeFlag.getText(), project);
+
+        Map<String, String> envsMap = new LinkedHashMap<>();
+        Element envState = blazeSettings.getChild("env_state");
+        Element envs = envState == null ? null : envState.getChild("envs");
+        if (envs != null) {
+            for (Element env : envs.getChildren()) {
+                String envName = Objects.requireNonNull(env.getAttributeValue("name"));
+                String value = replaceProjectDir(Objects.requireNonNull(env.getAttributeValue("value")), project);
+                envsMap.put(envName, value);
+            }
         }
 
-      if (shouldSetSelectedConfiguration) {
-        runManager.selectedConfiguration = runConfigurations.firstOrNull()
-      }
+        ConfigurationFactory factory =
+            ConfigurationTypeUtil.findConfigurationType(BazelRunConfigurationType.class).getConfigurationFactories()[0];
+        RunManager runManager = RunManager.getInstance(project);
+        RunnerAndConfigurationSettings settings = runManager.createRunConfiguration(name, factory);
+        BazelRunConfiguration configuration = (BazelRunConfiguration) settings.getConfiguration();
+        List<Label> targets = List.of(target);
+        RunHandlerProvider googleRunHandler = GooglePluginAwareRunHandlerProvider.getRunHandlerProvider(googleHandlerId, bazelCommand);
+        RunHandlerProvider runHandler =
+            googleRunHandler != null ? googleRunHandler : RunHandlerProvider.getRunHandlerProviderOrThrow(project, targets);
+        configuration.updateTargets(targets, runHandler);
+        BazelRunHandler handler = configuration.getHandler();
+        BazelRunConfigurationState<?> state = handler == null ? null : handler.getState();
+        if (state instanceof Common.HasBazelParams hasBazelParams) {
+            hasBazelParams.setAdditionalBazelParams(additionalBazelParams);
+        }
+        if (state instanceof Common.HasProgramArguments hasProgramArguments) {
+            hasProgramArguments.setProgramArguments(programArguments);
+        }
+        if (state instanceof Common.HasEnv hasEnv) {
+            hasEnv.getEnv().set(EnvironmentVariablesData.create(envsMap, true));
+        }
+
+        runManager.addConfiguration(settings);
+        return settings;
     }
-  }
 
-  private fun importRunConfiguration(project: Project, runConfigurationPath: Path): RunnerAndConfigurationSettings? {
-    val runConfigurationXml = getConfigurationElement(JDOMUtil.load(runConfigurationPath)) ?: return null
-    val settings =
-      if (checkNotNull(runConfigurationXml.getAttributeValue("type")) == GOOGLE_BAZEL_RUN_CONFIG_TYPE) {
-        loadGoogleBazelRunConfiguration(project, runConfigurationXml)
-      } else {
-        loadRunConfigurationXmlNormally(project, runConfigurationXml)
-      }
-    return settings
-  }
-
-  private fun getConfigurationElement(runConfigurationXml: Element): Element? {
-    var element: Element = runConfigurationXml
-    if (element.name == "component" && element.getAttributeValue("name") == "ProjectRunConfigurationManager") {
-      element = element.children.firstOrNull() ?: return null
+    /**
+     * todo remove
+     * Google's plugin sets the $PROJECT_DIR$ to <workspace_root>/.ijwb, while we instead use plain <workspace_root>.
+     * That means that even if we just copied Google's run configurations, loading them directly would still not be possible.
+     * Example: Google's plugin serializes the path to MODULE.bazel as $PROJECT_DIR$/../MODULE.bazel instead of $PROJECT_DIR$/MODULE.bazel
+     */
+    private String replaceProjectDir(String receiver, Project project) {
+        return receiver.replace("$PROJECT_DIR$/..", getRootDir(project).getPath());
     }
-    return element.takeIf { it.name == "configuration" }
-  }
 
-  private fun loadGoogleBazelRunConfiguration(project: Project, runConfigurationXml: Element): RunnerAndConfigurationSettings {
-    val name = checkNotNull(runConfigurationXml.getAttributeValue("name"))
-    val blazeSettings: Element = checkNotNull(runConfigurationXml.getChild("blaze-settings"))
-    val googleHandlerId: String = checkNotNull(blazeSettings.getAttributeValue("handler-id"))
-    val bazelCommand: String = checkNotNull(blazeSettings.getAttributeValue("blaze-command"))
-    val target = Label.parse(checkNotNull(blazeSettings.getChild("blaze-target")).text)
-    val additionalBazelParams = blazeSettings.getChild("blaze-user-flag")?.text?.replaceProjectDir(project)
-    val programArguments = blazeSettings.getChild("blaze-user-exe-flag")?.text?.replaceProjectDir(project)
-
-    val envsMap =
-      blazeSettings.getChild("env_state")?.getChild("envs")?.children.orEmpty().associate { env ->
-        val name = checkNotNull(env.getAttributeValue("name"))
-        val value = checkNotNull(env.getAttributeValue("value")).replaceProjectDir(project)
-        name to value
-      }
-
-    val factory = runConfigurationType<BazelRunConfigurationType>().configurationFactories.first()
-    val runManager = RunManager.getInstance(project)
-    val settings = runManager.createConfiguration(name, factory)
-    val configuration = settings.configuration as BazelRunConfiguration
-    val targets = listOf(target)
-    val runHandler =
-      GooglePluginAwareRunHandlerProvider.getRunHandlerProvider(googleHandlerId, bazelCommand)
-      ?: RunHandlerProvider.getRunHandlerProviderOrThrow(project, targets)
-    configuration.updateTargets(targets, runHandler)
-    val state = configuration.handler?.state
-    (state as? HasBazelParams)?.additionalBazelParams = additionalBazelParams
-    (state as? HasProgramArguments)?.programArguments = programArguments
-    (state as? HasEnv)?.env?.set(EnvironmentVariablesData.create(envsMap, true))
-
-    runManager.addConfiguration(settings)
-    return settings
-  }
-
-  /**
-   * todo remove
-   * Google's plugin sets the $PROJECT_DIR$ to <workspace_root>/.ijwb, while we instead use plain <workspace_root>.
-   * That means that even if we just copied Google's run configurations, loading them directly would still not be possible.
-   * Example: Google's plugin serializes the path to MODULE.bazel as $PROJECT_DIR$/../MODULE.bazel instead of $PROJECT_DIR$/MODULE.bazel
-   */
-  private fun String.replaceProjectDir(project: Project): String = replace("\$PROJECT_DIR$/..", project.rootDir.path)
-
-  private fun loadRunConfigurationXmlNormally(project: Project, runConfigurationXml: Element): RunnerAndConfigurationSettings {
-    val runManager = RunManagerImpl.getInstanceImpl(project)
-    return runManager.loadConfiguration(runConfigurationXml, false)
-  }
+    private @Nullable RunnerAndConfigurationSettings loadRunConfigurationXmlNormally(Project project, Element runConfigurationXml) {
+        // TODO consulo: RunManagerImpl.loadConfiguration(Element, boolean) is internal in Consulo (execution-impl), such run
+        //  configurations are not imported
+        // val runManager = RunManagerImpl.getInstanceImpl(project)
+        // return runManager.loadConfiguration(runConfigurationXml, false)
+        return null;
+    }
 }

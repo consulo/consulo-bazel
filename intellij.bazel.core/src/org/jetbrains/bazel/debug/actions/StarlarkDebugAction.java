@@ -1,53 +1,71 @@
-package org.jetbrains.bazel.debug.actions
+package org.jetbrains.bazel.debug.actions;
 
-import com.intellij.execution.ExecutorRegistry
-import com.intellij.execution.ProgramRunnerUtil
-import com.intellij.execution.RunManager
-import com.intellij.execution.RunManagerEx
-import com.intellij.execution.RunnerAndConfigurationSettings
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.debug.configuration.StarlarkDebugConfiguration
-import org.jetbrains.bazel.debug.configuration.StarlarkDebugConfigurationType
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.ProgramRunnerUtil;
+import consulo.execution.RunManager;
+import consulo.execution.RunnerAndConfigurationSettings;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.debug.DefaultDebugExecutor;
+import consulo.execution.debug.icon.ExecutionDebugIconGroup;
+import consulo.execution.executor.Executor;
+import consulo.execution.executor.ExecutorRegistry;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnActionEvent;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.debug.configuration.StarlarkDebugConfiguration;
+import org.jetbrains.bazel.debug.configuration.StarlarkDebugConfigurationType;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
 
-internal class StarlarkDebugAction(private val targetId: Label) :
-  SuspendableAction(
-    text = BazelPluginBundle.message("starlark.debug.action.name"),
-    icon = AllIcons.Actions.StartDebugger,
-  ) {
-  override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-    val config = createConfigSettings(project)
-    config.isTemporary = true
-    config.save(project)
-    config.execute()
-  }
+import java.util.concurrent.CompletableFuture;
 
-  private fun createConfigSettings(project: Project): RunnerAndConfigurationSettings {
-    val runManager = RunManager.getInstance(project)
-    val configName = BazelPluginBundle.message("starlark.debug.config.template", targetId.toShortString(project))
-    val factory = StarlarkDebugConfigurationType().configurationFactories.first()
-    return runManager.createConfiguration(configName, factory).withTarget(targetId)
-  }
-}
+public class StarlarkDebugAction extends SuspendableAction {
+    private final Label myTargetId;
 
-private fun RunnerAndConfigurationSettings.withTarget(target: Label): RunnerAndConfigurationSettings {
-  (this.configuration as? StarlarkDebugConfiguration)?.setTarget(target.toString())
-  return this
-}
+    public StarlarkDebugAction(Label targetId) {
+        super(
+            BazelPluginLocalize.starlarkDebugActionName(),
+            ExecutionDebugIconGroup.actionStartdebugger()
+        );
+        myTargetId = targetId;
+    }
 
-private fun RunnerAndConfigurationSettings.save(project: Project) {
-  RunManagerEx.getInstanceEx(project).setTemporaryConfiguration(this)
-}
+    @Override
+    protected CompletableFuture<?> actionPerformed(Project project, AnActionEvent e) {
+        RunnerAndConfigurationSettings config = createConfigSettings(project);
+        config.setTemporary(true);
+        save(config, project);
+        execute(config);
+        return CompletableFuture.completedFuture(null);
+    }
 
-private fun RunnerAndConfigurationSettings.execute() {
-  val executor =
-    ExecutorRegistry.getInstance().getExecutorById(DefaultDebugExecutor.EXECUTOR_ID)
-      ?: error("Failed to obtain the executor")
-  ProgramRunnerUtil.executeConfiguration(this, executor)
+    private RunnerAndConfigurationSettings createConfigSettings(Project project) {
+        RunManager runManager = RunManager.getInstance(project);
+        String configName = BazelPluginLocalize.starlarkDebugConfigTemplate(BazelRepoMappingUtils.toShortString(myTargetId, project)).get();
+        ConfigurationFactory factory = new StarlarkDebugConfigurationType().getConfigurationFactories()[0];
+        // consulo: RunManager.createConfiguration(name, factory) is createRunConfiguration(name, factory)
+        return withTarget(runManager.createRunConfiguration(configName, factory), myTargetId);
+    }
+
+    private static RunnerAndConfigurationSettings withTarget(RunnerAndConfigurationSettings receiver, Label target) {
+        if (receiver.getConfiguration() instanceof StarlarkDebugConfiguration configuration) {
+            configuration.setTarget(target.toString());
+        }
+        return receiver;
+    }
+
+    private static void save(RunnerAndConfigurationSettings receiver, Project project) {
+        // consulo: RunManagerEx.setTemporaryConfiguration is internal API; it adds the (temporary) settings and selects them
+        RunManager runManager = RunManager.getInstance(project);
+        runManager.addConfiguration(receiver);
+        runManager.setSelectedConfiguration(receiver);
+    }
+
+    private static void execute(RunnerAndConfigurationSettings receiver) {
+        Executor executor = ExecutorRegistry.getInstance().getExecutorById(DefaultDebugExecutor.EXECUTOR_ID);
+        if (executor == null) {
+            throw new IllegalStateException("Failed to obtain the executor");
+        }
+        ProgramRunnerUtil.executeConfiguration(receiver, executor);
+    }
 }

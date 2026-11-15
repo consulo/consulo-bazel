@@ -1,45 +1,78 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.execution.Location
-import com.intellij.execution.PsiLocation
-import com.intellij.execution.actions.MultipleRunLocationsProvider
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
+import consulo.execution.action.Location;
+import consulo.execution.action.PsiLocation;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.config.project;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Stream;
 
 /**
- * Needed because [com.intellij.execution.actions.RunConfigurationProducer] can only produce one configuration per one location.
+ * Needed because {@link consulo.execution.action.RunConfigurationProducer} can only produce one configuration per one location.
  */
-@ApiStatus.Internal
-class BazelContainingTargetsLocationsProvider : MultipleRunLocationsProvider() {
-  override fun getAlternativeLocations(originalLocation: Location<*>): List<Location<*>> {
-    if (!originalLocation.project.isBazelProject) return emptyList()
-    if (originalLocation !is PsiLocation) return emptyList()
-    val targets = getTargets(originalLocation.psiElement)
-    if (targets.isEmpty()) return emptyList()
-    return targets.map { target ->
-      BazelRunLocation(target, originalLocation)
-    } + listOf(originalLocation)
-  }
+// TODO consulo: MultipleRunLocationsProvider (com.intellij.execution.actions) is missing; the class is not registered
+//  (upstream <multipleRunLocationsProvider>) and its methods override nothing
+public class BazelContainingTargetsLocationsProvider {
+    public List<Location<?>> getAlternativeLocations(Location<?> originalLocation) {
+        if (!project.isBazelProject(originalLocation.getProject())) {
+            return List.of();
+        }
+        if (!(originalLocation instanceof PsiLocation<?> psiLocation)) {
+            return List.of();
+        }
+        List<BuildTarget> targets = getTargets(psiLocation.getPsiElement());
+        if (targets.isEmpty()) {
+            return List.of();
+        }
+        List<Location<?>> result = new ArrayList<>();
+        for (BuildTarget target : targets) {
+            result.add(new BazelRunLocation(target, psiLocation));
+        }
+        result.add(originalLocation);
+        return result;
+    }
 
-  /**
-   * This can also include non-executable targets (for synthetic run gutters)
-   */
-  private fun getTargets(element: PsiElement): List<BuildTarget> {
-    val targetUtils = element.project.targetStorage
-    val containingFile = element.containingFile?.virtualFile ?: return emptyList()
-    val normalTargets = targetUtils.getTargetsForFile(containingFile)
-      .mapNotNull { targetUtils.getTargetSummary(it) }
-    val executableTargets = targetUtils.getExecutableTargetsForFile(containingFile)
-      .mapNotNull { targetUtils.getTargetSummary(it) }
-    return (normalTargets + executableTargets).distinctBy { it.id }
-  }
+    /**
+     * This can also include non-executable targets (for synthetic run gutters)
+     */
+    private List<BuildTarget> getTargets(PsiElement element) {
+        TargetStorage targetUtils = TargetStorage.getTargetStorage(element.getProject());
+        PsiFile file = element.getContainingFile();
+        VirtualFile containingFile = file != null ? file.getVirtualFile() : null;
+        if (containingFile == null) {
+            return List.of();
+        }
+        List<BuildTarget> normalTargets = targetUtils.getTargetsForFile(containingFile)
+            .stream()
+            .map(targetUtils::getTargetSummary)
+            .filter(Objects::nonNull)
+            .toList();
+        List<BuildTarget> executableTargets = targetUtils.getExecutableTargetsForFile(containingFile)
+            .stream()
+            .map(targetUtils::getTargetSummary)
+            .filter(Objects::nonNull)
+            .toList();
+        Set<Label> seenIds = new HashSet<>();
+        return Stream.concat(normalTargets.stream(), executableTargets.stream())
+            .filter(it -> seenIds.add(BuildTarget.getId(it)))
+            .toList();
+    }
 
-  override fun getLocationDisplayName(
-    locationCreatedFrom: Location<*>,
-    originalLocation: Location<*>,
-  ): String? = null
+    public @Nullable String getLocationDisplayName(
+        Location<?> locationCreatedFrom,
+        Location<?> originalLocation
+    ) {
+        return null;
+    }
 }

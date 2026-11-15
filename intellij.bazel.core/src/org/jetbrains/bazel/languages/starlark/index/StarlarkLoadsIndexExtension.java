@@ -1,47 +1,113 @@
-package org.jetbrains.bazel.languages.starlark.index
+package org.jetbrains.bazel.languages.starlark.index;
 
-import com.intellij.psi.util.childrenOfType
-import com.intellij.util.indexing.DataIndexer
-import com.intellij.util.indexing.DefaultFileTypeSpecificInputFilter
-import com.intellij.util.indexing.FileBasedIndexExtension
-import com.intellij.util.indexing.FileContent
-import com.intellij.util.indexing.ID
-import com.intellij.util.indexing.impl.CollectionDataExternalizer
-import com.intellij.util.io.EnumeratorStringDescriptor
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkNamedLoadValue
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue
+import consulo.annotation.component.ExtensionImpl;
+import consulo.index.io.DataIndexer;
+import consulo.index.io.EnumeratorStringDescriptor;
+import consulo.index.io.ID;
+import consulo.index.io.data.DataExternalizer;
+import consulo.index.io.data.DataInputOutputUtil;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.stub.DefaultFileTypeSpecificInputFilter;
+import consulo.language.psi.stub.FileBasedIndexExtension;
+import consulo.language.psi.stub.FileContent;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage.StarlarkFileType;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadValue;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkNamedLoadValue;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue;
 
-internal class StarlarkLoadsIndexExtension : FileBasedIndexExtension<String, Collection<String>>() {
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-  override fun getName(): ID<String, Collection<String>> = StarlarkLoadsIndex.NAME
-
-  override fun dependsOnFileContent(): Boolean = true
-
-  override fun getKeyDescriptor(): EnumeratorStringDescriptor = EnumeratorStringDescriptor.INSTANCE
-
-  override fun getValueExternalizer(): CollectionDataExternalizer<String> = CollectionDataExternalizer(EnumeratorStringDescriptor.INSTANCE)
-
-  override fun getInputFilter(): DefaultFileTypeSpecificInputFilter = DefaultFileTypeSpecificInputFilter(StarlarkFileType)
-
-  override fun getVersion(): Int = 1
-
-  override fun getIndexer(): DataIndexer<String, Collection<String>, FileContent> = DataIndexer { fileContent ->
-    val indexes = mutableMapOf<String, MutableList<String>>()
-    val file = fileContent.psiFile
-    val loadStatements = file.childrenOfType<StarlarkLoadStatement>()
-    for (loadStatement in loadStatements) {
-      val loadFileName = loadStatement.getLoadedFileNamePsi()?.getStringContents() ?: continue
-      for (loadValue in loadStatement.getLoadedSymbolsPsi()) {
-        val symbolName = when (loadValue) {
-          is StarlarkStringLoadValue, is StarlarkNamedLoadValue -> loadValue.getLoadValueExpressionContent()
-          else -> null
-        } ?: continue
-        val loadFileNames = indexes.getOrPut(symbolName, ::mutableListOf)
-        loadFileNames.add(loadFileName)
-      }
+@ExtensionImpl
+public class StarlarkLoadsIndexExtension extends FileBasedIndexExtension<String, Collection<String>> {
+    @Override
+    public ID<String, Collection<String>> getName() {
+        return StarlarkLoadsIndex.NAME;
     }
-    return@DataIndexer indexes
-  }
+
+    @Override
+    public boolean dependsOnFileContent() {
+        return true;
+    }
+
+    @Override
+    public EnumeratorStringDescriptor getKeyDescriptor() {
+        return EnumeratorStringDescriptor.INSTANCE;
+    }
+
+    @Override
+    public DataExternalizer<Collection<String>> getValueExternalizer() {
+        return new CollectionDataExternalizer<>(EnumeratorStringDescriptor.INSTANCE);
+    }
+
+    @Override
+    public DefaultFileTypeSpecificInputFilter getInputFilter() {
+        return new DefaultFileTypeSpecificInputFilter(StarlarkFileType.INSTANCE);
+    }
+
+    @Override
+    public int getVersion() {
+        return 1;
+    }
+
+    @Override
+    public DataIndexer<String, Collection<String>, FileContent> getIndexer() {
+        return fileContent -> {
+            Map<String, List<String>> indexes = new HashMap<>();
+            PsiFile file = fileContent.getPsiFile();
+            List<StarlarkLoadStatement> loadStatements = PsiTreeUtil.getChildrenOfTypeAsList(file, StarlarkLoadStatement.class);
+            for (StarlarkLoadStatement loadStatement : loadStatements) {
+                StarlarkStringLiteralExpression loadedFileNamePsi = loadStatement.getLoadedFileNamePsi();
+                String loadFileName = loadedFileNamePsi == null ? null : loadedFileNamePsi.getStringContents();
+                if (loadFileName == null) {
+                    continue;
+                }
+                for (StarlarkElement loadValue : loadStatement.getLoadedSymbolsPsi()) {
+                    String symbolName;
+                    if (loadValue instanceof StarlarkStringLoadValue || loadValue instanceof StarlarkNamedLoadValue) {
+                        symbolName = ((StarlarkLoadValue) loadValue).getLoadValueExpressionContent();
+                    }
+                    else {
+                        symbolName = null;
+                    }
+                    if (symbolName == null) {
+                        continue;
+                    }
+                    List<String> loadFileNames = indexes.computeIfAbsent(symbolName, k -> new ArrayList<>());
+                    loadFileNames.add(loadFileName);
+                }
+            }
+            // consulo: Kotlin read-only maps are covariant, Java needs a copy typed Map<String, Collection<String>>
+            return new HashMap<>(indexes);
+        };
+    }
+
+    // consulo: upstream uses com.intellij.util.indexing.impl.CollectionDataExternalizer, which Consulo does not have
+    private static class CollectionDataExternalizer<T> implements DataExternalizer<Collection<T>> {
+        private final DataExternalizer<T> myElementExternalizer;
+
+        CollectionDataExternalizer(DataExternalizer<T> elementExternalizer) {
+            myElementExternalizer = elementExternalizer;
+        }
+
+        @Override
+        public void save(DataOutput out, Collection<T> value) throws IOException {
+            DataInputOutputUtil.writeSeq(out, value, it -> myElementExternalizer.save(out, it));
+        }
+
+        @Override
+        public Collection<T> read(DataInput in) throws IOException {
+            return DataInputOutputUtil.readSeq(in, () -> myElementExternalizer.read(in));
+        }
+    }
 }

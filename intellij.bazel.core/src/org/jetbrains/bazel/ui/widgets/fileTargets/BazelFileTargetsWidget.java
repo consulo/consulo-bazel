@@ -1,143 +1,199 @@
-package org.jetbrains.bazel.ui.widgets.fileTargets
+package org.jetbrains.bazel.ui.widgets.fileTargets;
 
-import com.intellij.openapi.actionSystem.ActionGroup
-import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.ui.popup.ListPopup
-import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.wm.StatusBar
-import com.intellij.openapi.wm.StatusBarWidget
-import com.intellij.openapi.wm.StatusBarWidgetFactory
-import com.intellij.openapi.wm.impl.status.EditorBasedStatusBarPopup
-import com.intellij.openapi.wm.impl.status.widget.StatusBarWidgetsManager
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.debug.actions.StarlarkDebugAction
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
-import org.jetbrains.bazel.runnerAction.BuildTargetAction
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bazel.ui.gutters.getExecutorActions
-import org.jetbrains.bazel.ui.widgets.BazelJumpToBuildFileAction
-import org.jetbrains.bazel.ui.widgets.tool.window.actions.CopyTargetIdAction
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
-import javax.swing.Icon
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.dataContext.DataContext;
+import consulo.disposer.Disposer;
+import consulo.fileEditor.statusBar.EditorBasedStatusBarPopup;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.project.ui.wm.StatusBar;
+import consulo.project.ui.wm.StatusBarWidget;
+import consulo.project.ui.wm.StatusBarWidgetFactory;
+import consulo.project.ui.wm.StatusBarWidgetsManager;
+import consulo.ui.ex.action.ActionGroup;
+import consulo.ui.ex.action.DefaultActionGroup;
+import consulo.ui.ex.popup.JBPopupFactory;
+import consulo.ui.ex.popup.ListPopup;
+import consulo.ui.image.Image;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.debug.actions.StarlarkDebugAction;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.runnerAction.BuildTargetAction;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bazel.ui.gutters.ExecutorActionsUtil;
+import org.jetbrains.bazel.ui.widgets.BazelJumpToBuildFileAction;
+import org.jetbrains.bazel.ui.widgets.tool.window.actions.CopyTargetIdAction;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Make sure this id matches the one of the extension registration <statusBarWidgetFactory/> in the plugin.xml file
- */
-private const val WIDGET_ID = "BazelFileTargetsWidget"
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
-internal class BazelFileTargetsWidget(project: Project) : EditorBasedStatusBarPopup(project, false) {
-  override fun ID(): String = WIDGET_ID
+public class BazelFileTargetsWidget extends EditorBasedStatusBarPopup {
+    /**
+     * Make sure this id matches the one of the extension registration <statusBarWidgetFactory/> in the plugin.xml file
+     */
+    static final String WIDGET_ID = "BazelFileTargetsWidget";
 
-  override fun getWidgetState(file: VirtualFile?): WidgetState =
-    if (file == null) {
-      inactiveWidgetState(BazelPluginIcons.bazel)
-    } else {
-      activeWidgetStateIfIncludedInAnyTargetOrInactiveState(file, BazelPluginIcons.bazel)
+    // consulo: Consulo's EditorBasedStatusBarPopup takes the widget factory
+    public BazelFileTargetsWidget(Project project, StatusBarWidgetFactory factory) {
+        super(project, factory, false);
     }
 
-  private fun activeWidgetStateIfIncludedInAnyTargetOrInactiveState(file: VirtualFile, icon: Icon): WidgetState {
-    val targets = project.targetStorage.getTargetsForFile(file)
-    return if (targets.isEmpty()) {
-      inactiveWidgetState(icon)
-    } else {
-      activeWidgetState(targets.firstOrNull(), icon)
-    }
-  }
-
-  private fun inactiveWidgetState(icon: Icon): WidgetState {
-    val state = WidgetState(BazelPluginBundle.message("widget.tooltip.text.inactive"), "", false)
-    state.icon = icon
-
-    return state
-  }
-
-  private fun activeWidgetState(loadedTarget: Label?, icon: Icon): WidgetState {
-    val text = loadedTarget?.toShortString(project) ?: ""
-    val state = WidgetState(BazelPluginBundle.message("widget.tooltip.text.active"), text, true)
-    state.icon = icon
-
-    return state
-  }
-
-  override fun createPopup(context: DataContext): ListPopup {
-    val file = CommonDataKeys.VIRTUAL_FILE.getData(context)!!
-    val group = calculatePopupGroup(file)
-    val mnemonics = JBPopupFactory.ActionSelectionAid.MNEMONICS
-    val title = BazelPluginBundle.message("widget.title")
-
-    return JBPopupFactory.getInstance().createActionGroupPopup(title, group, context, mnemonics, true)
-  }
-
-  private fun calculatePopupGroup(file: VirtualFile): ActionGroup {
-    val targetUtils = project.targetStorage
-    val targetIds = targetUtils.getTargetsForFile(file)
-    val executableTargetIds = targetUtils.getExecutableTargetsForFile(file) - targetIds.toSet()
-
-    val targets = targetIds.getTargetInfos()
-    val executableTargets = executableTargetIds.getTargetInfos()
-
-    return DefaultActionGroup().also {
-      it.addAll(targets.map { it.calculatePopupGroup() })
-      if (targets.isNotEmpty() && executableTargets.isNotEmpty()) it.addSeparator()
-      it.addAll(executableTargets.map { it.calculatePopupGroup() })
-    }
-  }
-
-  private fun List<Label>.getTargetInfos(): List<BuildTarget> {
-    val targetUtils = project.targetStorage
-    return this.mapNotNull { targetUtils.getTargetSummary(it) }
-  }
-
-  private fun BuildTarget.calculatePopupGroup(): ActionGroup =
-    createActionGroup(id.toShortString(project)).also {
-      it.add(CopyTargetIdAction.FromTargetInfo(this))
-      it.addSeparator()
-      it.add(BuildTargetAction(id))
-      it.addAll(getExecutorActions(project, this))
-      it.addSeparator()
-      it.add(BazelJumpToBuildFileAction.NonXmlRegistered({ this }))
-      it.add(StarlarkDebugAction(this.id))
+    // consulo: StatusBarWidget.ID() -> getId()
+    @Override
+    public String getId() {
+        return WIDGET_ID;
     }
 
-  private fun createActionGroup(name: String) =
-    DefaultActionGroup(name, true)
-      .apply { templatePresentation.setText(name, false) } // BAZEL-3104 - do not parse label as mnemonic text
+    @Override
+    protected WidgetState getWidgetState(@Nullable VirtualFile file) {
+        if (file == null) {
+            return inactiveWidgetState(BazelPluginIcons.bazel());
+        }
+        else {
+            return activeWidgetStateIfIncludedInAnyTargetOrInactiveState(file, BazelPluginIcons.bazel());
+        }
+    }
 
-  override fun createInstance(project: Project): StatusBarWidget = BazelFileTargetsWidget(project)
+    private WidgetState activeWidgetStateIfIncludedInAnyTargetOrInactiveState(VirtualFile file, Image icon) {
+        List<Label> targets = TargetStorage.getTargetStorage(getProject()).getTargetsForFile(file);
+        if (targets.isEmpty()) {
+            return inactiveWidgetState(icon);
+        }
+        else {
+            return activeWidgetState(targets.get(0), icon);
+        }
+    }
+
+    private WidgetState inactiveWidgetState(Image icon) {
+        WidgetState state = new WidgetState(BazelPluginLocalize.widgetTooltipTextInactive(), LocalizeValue.empty(), false);
+        state.setIcon(icon);
+
+        return state;
+    }
+
+    private WidgetState activeWidgetState(@Nullable Label loadedTarget, Image icon) {
+        String text = loadedTarget != null ? BazelRepoMappingUtils.toShortString(loadedTarget, getProject()) : "";
+        WidgetState state = new WidgetState(BazelPluginLocalize.widgetTooltipTextActive(), LocalizeValue.of(text), true);
+        state.setIcon(icon);
+
+        return state;
+    }
+
+    @Override
+    protected ListPopup createPopup(DataContext context) {
+        VirtualFile file = Objects.requireNonNull(context.getData(VirtualFile.KEY));
+        ActionGroup group = calculatePopupGroup(file);
+        JBPopupFactory.ActionSelectionAid mnemonics = JBPopupFactory.ActionSelectionAid.MNEMONICS;
+        String title = BazelPluginLocalize.widgetTitle().get();
+
+        return JBPopupFactory.getInstance().createActionGroupPopup(title, group, context, mnemonics, true);
+    }
+
+    private ActionGroup calculatePopupGroup(VirtualFile file) {
+        TargetStorage targetUtils = TargetStorage.getTargetStorage(getProject());
+        List<Label> targetIds = targetUtils.getTargetsForFile(file);
+        Set<Label> targetIdSet = new HashSet<>(targetIds);
+        List<Label> executableTargetIds = targetUtils.getExecutableTargetsForFile(file).stream()
+            .filter(it -> !targetIdSet.contains(it))
+            .toList();
+
+        List<BuildTarget> targets = getTargetInfos(targetIds);
+        List<BuildTarget> executableTargets = getTargetInfos(executableTargetIds);
+
+        DefaultActionGroup it = new DefaultActionGroup();
+        it.addAll(targets.stream().map(this::calculatePopupGroup).toList());
+        if (!targets.isEmpty() && !executableTargets.isEmpty()) {
+            it.addSeparator();
+        }
+        it.addAll(executableTargets.stream().map(this::calculatePopupGroup).toList());
+        return it;
+    }
+
+    private List<BuildTarget> getTargetInfos(List<Label> receiver) {
+        TargetStorage targetUtils = TargetStorage.getTargetStorage(getProject());
+        return receiver.stream().map(targetUtils::getTargetSummary).filter(Objects::nonNull).map(Objects::requireNonNull).toList();
+    }
+
+    private ActionGroup calculatePopupGroup(BuildTarget receiver) {
+        Label id = BuildTarget.getId(receiver);
+        DefaultActionGroup it = createActionGroup(BazelRepoMappingUtils.toShortString(id, getProject()));
+        it.add(new CopyTargetIdAction.FromTargetInfo(receiver));
+        it.addSeparator();
+        it.add(new BuildTargetAction(id));
+        it.addAll(ExecutorActionsUtil.getExecutorActions(getProject(), receiver));
+        it.addSeparator();
+        it.add(new BazelJumpToBuildFileAction.NonXmlRegistered(() -> receiver));
+        it.add(new StarlarkDebugAction(id));
+        return it;
+    }
+
+    private DefaultActionGroup createActionGroup(String name) {
+        DefaultActionGroup group = new DefaultActionGroup(LocalizeValue.of(name), true);
+        group.getTemplatePresentation().setText(name, false); // BAZEL-3104 - do not parse label as mnemonic text
+        return group;
+    }
+
+    @Override
+    protected StatusBarWidget createInstance(Project project) {
+        return new BazelFileTargetsWidget(project, myFactory);
+    }
+
+    public static CompletableFuture<Void> updateBazelFileTargetsWidget(Project project) {
+        if (!Application.get().isHeadlessEnvironment()) {
+            StatusBarWidgetsManager statusBarWidgetsManager = StatusBarWidgetsManager.getInstance(project);
+            // consulo: Consulo's StatusBarWidgetsManager.updateWidget takes the UI access
+            statusBarWidgetsManager.updateWidget(BazelFileTargetsWidgetFactory.class, project.getUIAccess());
+        }
+        return CompletableFuture.completedFuture(null);
+    }
 }
 
-internal class BazelFileTargetsWidgetFactory : StatusBarWidgetFactory {
-  override fun getId(): String = WIDGET_ID
+@ExtensionImpl(id = BazelFileTargetsWidget.WIDGET_ID)
+class BazelFileTargetsWidgetFactory implements StatusBarWidgetFactory {
+    public BazelFileTargetsWidgetFactory() {
+    }
 
-  override fun getDisplayName(): String = BazelPluginBundle.message("widget.factory.display.name")
+    @Override
+    public String getId() {
+        return BazelFileTargetsWidget.WIDGET_ID;
+    }
 
-  override fun isAvailable(project: Project): Boolean = project.isBazelProject
+    @Override
+    public String getDisplayName() {
+        return BazelPluginLocalize.widgetFactoryDisplayName().get();
+    }
 
-  override fun createWidget(project: Project): StatusBarWidget = BazelFileTargetsWidget(project)
+    @Override
+    public boolean isAvailable(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project);
+    }
 
-  override fun disposeWidget(widget: StatusBarWidget) {
-    Disposer.dispose(widget)
-  }
+    @Override
+    public StatusBarWidget createWidget(Project project) {
+        return new BazelFileTargetsWidget(project, this);
+    }
 
-  override fun canBeEnabledOn(statusBar: StatusBar): Boolean = true
+    @Override
+    public void disposeWidget(StatusBarWidget widget) {
+        Disposer.dispose(widget);
+    }
 
-  override fun isEnabledByDefault(): Boolean = true
-}
+    @Override
+    public boolean canBeEnabledOn(StatusBar statusBar) {
+        return true;
+    }
 
-internal suspend fun updateBazelFileTargetsWidget(project: Project) {
-  if (!ApplicationManager.getApplication().isHeadlessEnvironment) {
-    val statusBarWidgetsManager = project.serviceAsync<StatusBarWidgetsManager>()
-    statusBarWidgetsManager.updateWidget(BazelFileTargetsWidgetFactory::class.java)
-  }
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
 }

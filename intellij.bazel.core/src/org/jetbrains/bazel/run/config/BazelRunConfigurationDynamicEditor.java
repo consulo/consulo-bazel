@@ -1,97 +1,103 @@
-package org.jetbrains.bazel.run.config
+package org.jetbrains.bazel.run.config;
 
-import com.intellij.execution.impl.RunnerAndConfigurationSettingsImpl
-import com.intellij.execution.ui.RunnerAndConfigurationAwareSettingsEditor
-import com.intellij.openapi.options.SettingsEditor
-import com.intellij.openapi.options.SettingsEditorListener
-import com.intellij.openapi.util.Disposer
-import com.intellij.ui.components.panels.Wrapper
-import org.jetbrains.bazel.run.BazelRunHandler
-import javax.swing.JComponent
+import consulo.configurable.ConfigurationException;
+import consulo.disposer.Disposer;
+import consulo.execution.configuration.ui.SettingsEditor;
+import consulo.ui.Component;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.awt.Wrapper;
+import consulo.ui.ex.awtUnsafe.TargetAWT;
+import org.jetbrains.bazel.run.BazelRunHandler;
+
+import javax.swing.*;
 
 /**
- * Delegates to [BazelRunConfigurationEditor] and recreates it whenever [BazelRunHandler] changes.
- *
- * Code based on [com.intellij.execution.ui.RunnerAndConfigurationSettingsEditor] which also deals with [SettingsEditor] delegation.
+ * Delegates to {@link BazelRunConfigurationEditor} and recreates it whenever {@link BazelRunHandler} changes.
+ * <p>
+ * Code based on {@code com.intellij.execution.ui.RunnerAndConfigurationSettingsEditor} which also deals with {@link SettingsEditor} delegation.
  */
-internal class BazelRunConfigurationDynamicEditor(
-  private val runConfiguration: BazelRunConfiguration,
-) : SettingsEditor<BazelRunConfiguration>(), RunnerAndConfigurationAwareSettingsEditor {
-  private var delegate: BazelRunConfigurationEditor
-  private var runnerAndConfigurationSettings: RunnerAndConfigurationSettingsImpl? = null
+// consulo: RunnerAndConfigurationAwareSettingsEditor (and RunnerAndConfigurationSettingsImpl) are not available in Consulo, the
+// editor only edits the run configuration
+class BazelRunConfigurationDynamicEditor extends SettingsEditor<BazelRunConfiguration> {
+    private final BazelRunConfiguration myRunConfiguration;
+    private BazelRunConfigurationEditor myDelegate;
+    // private var runnerAndConfigurationSettings: RunnerAndConfigurationSettingsImpl? = null
 
-  init {
-    delegate = BazelRunConfigurationEditor(runConfiguration)
-    registerDelegateListeners()
-  }
-
-  private fun registerDelegateListeners() {
-    Disposer.register(this, delegate)
-    delegate.addSettingsEditorListener(SettingsEditorListener { fireEditorStateChanged() })
-  }
-
-  override fun resetEditorFrom(s: BazelRunConfiguration) {
-    delegate.resetEditorFrom(s)
-  }
-
-  override fun applyEditorTo(s: BazelRunConfiguration) {
-    delegate.applyEditorTo(s)
-  }
-
-  override fun createEditor(): JComponent {
-    val wrapper = Wrapper(delegate.component)
-    val listener = object : BazelRunConfiguration.BazelRunHandlerChangedListener {
-      override fun onRunHandlerChanged(newRunHandler: BazelRunHandler) {
-        if (delegate.handler != newRunHandler) {
-          runnerAndConfigurationSettings?.let { delegate.applyEditorTo(it) }
-          delegate.applyTo(runConfiguration)
-          Disposer.dispose(delegate)
-
-          delegate = BazelRunConfigurationEditor(runConfiguration)
-          registerDelegateListeners()
-          runnerAndConfigurationSettings?.let { delegate.resetEditorFrom(it) }
-          delegate.resetFrom(runConfiguration)
-          wrapper.setContent(delegate.component)
-          // Run handler can only change if we're typing new targets.
-          // Make sure the focus is still on the edit field after the run config is recreated.
-          delegate.focusTargetLabelsFragment()
-        }
-      }
+    BazelRunConfigurationDynamicEditor(BazelRunConfiguration runConfiguration) {
+        myRunConfiguration = runConfiguration;
+        myDelegate = new BazelRunConfigurationEditor(runConfiguration);
+        registerDelegateListeners();
     }
-    runConfiguration.addOnRunHandlerChangedListener(listener, this)
-    return wrapper
-  }
 
-  override fun disposeEditor() {
-    delegate.disposeEditor()
-  }
+    private void registerDelegateListeners() {
+        Disposer.register(this, myDelegate);
+        myDelegate.addSettingsEditorListener(editor -> fireEditorStateChanged());
+    }
 
-  override fun getSnapshot(): BazelRunConfiguration {
-    return delegate.getSnapshot()
-  }
+    @Override
+    protected void resetEditorFrom(BazelRunConfiguration s) {
+        myDelegate.resetEditorFrom(s);
+    }
 
-  override fun isSpecificallyModified(): Boolean {
-    return delegate.isSpecificallyModified
-  }
+    @Override
+    protected void applyEditorTo(BazelRunConfiguration s) throws ConfigurationException {
+        // consulo: applyEditorTo() of the delegate is not accessible here, applyTo() calls it
+        myDelegate.applyTo(s);
+    }
 
-  override fun isReadyForApply(): Boolean {
-    return delegate.isReadyForApply
-  }
+    @RequiredUIAccess
+    @Override
+    protected Component createUIComponent() {
+        Wrapper wrapper = new Wrapper((JComponent) TargetAWT.to(myDelegate.getUIComponent()));
+        BazelRunConfiguration.BazelRunHandlerChangedListener listener = new BazelRunConfiguration.BazelRunHandlerChangedListener() {
+            @RequiredUIAccess
+            @Override
+            public void onRunHandlerChanged(BazelRunHandler newRunHandler) {
+                if (myDelegate.getHandler() != newRunHandler) {
+                    // runnerAndConfigurationSettings?.let { delegate.applyEditorTo(it) }
+                    try {
+                        myDelegate.applyTo(myRunConfiguration);
+                    }
+                    catch (ConfigurationException e) {
+                        throw new RuntimeException(e);
+                    }
+                    Disposer.dispose(myDelegate);
 
-  override fun resetEditorFrom(s: RunnerAndConfigurationSettingsImpl) {
-    runnerAndConfigurationSettings = s
-    delegate.resetEditorFrom(s)
-  }
+                    myDelegate = new BazelRunConfigurationEditor(myRunConfiguration);
+                    registerDelegateListeners();
+                    // runnerAndConfigurationSettings?.let { delegate.resetEditorFrom(it) }
+                    myDelegate.resetFrom(myRunConfiguration);
+                    wrapper.setContent((JComponent) TargetAWT.to(myDelegate.getUIComponent()));
+                    // Run handler can only change if we're typing new targets.
+                    // Make sure the focus is still on the edit field after the run config is recreated.
+                    myDelegate.focusTargetLabelsFragment();
+                }
+            }
+        };
+        myRunConfiguration.addOnRunHandlerChangedListener(listener, this);
+        return TargetAWT.wrap(wrapper);
+    }
 
-  override fun applyEditorTo(s: RunnerAndConfigurationSettingsImpl) {
-    delegate.applyEditorTo(s)
-  }
+    // consulo: the delegate is disposed together with this editor (Disposer.register in registerDelegateListeners())
+    // override fun disposeEditor() {
+    //   delegate.disposeEditor()
+    // }
 
-  override fun targetChanged(targetName: String?) {
-    delegate.targetChanged(targetName)
-  }
+    @Override
+    public BazelRunConfiguration getSnapshot() throws ConfigurationException {
+        return myDelegate.getSnapshot();
+    }
 
-  override fun isInplaceValidationSupported(): Boolean {
-    return delegate.isInplaceValidationSupported()
-  }
+    // consulo: Consulo's SettingsEditor has no isSpecificallyModified(), isReadyForApply(), isInplaceValidationSupported() and
+    // the RunnerAndConfigurationAwareSettingsEditor methods (resetEditorFrom/applyEditorTo of RunnerAndConfigurationSettingsImpl,
+    // targetChanged)
+    // override fun isSpecificallyModified(): Boolean = delegate.isSpecificallyModified
+    // override fun isReadyForApply(): Boolean = delegate.isReadyForApply
+    // override fun resetEditorFrom(s: RunnerAndConfigurationSettingsImpl) {
+    //   runnerAndConfigurationSettings = s
+    //   delegate.resetEditorFrom(s)
+    // }
+    // override fun applyEditorTo(s: RunnerAndConfigurationSettingsImpl) = delegate.applyEditorTo(s)
+    // override fun targetChanged(targetName: String?) = delegate.targetChanged(targetName)
+    // override fun isInplaceValidationSupported(): Boolean = delegate.isInplaceValidationSupported()
 }

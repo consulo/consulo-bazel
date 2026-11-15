@@ -1,94 +1,144 @@
-package org.jetbrains.bazel.action.registered.projectViewDirectories
+package org.jetbrains.bazel.action.registered.projectViewDirectories;
 
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.DumbService
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiDocumentManager
-import org.jetbrains.bazel.config.BazelPluginBundle.message
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.languages.projectview.psi.addDirectoriesInclude
-import org.jetbrains.bazel.languages.projectview.psi.directoriesContainsInclude
-import org.jetbrains.bazel.languages.projectview.psi.isDirectoriesNullOrEmpty
-import org.jetbrains.bazel.languages.projectview.psi.removeDirectoriesExclude
-import org.jetbrains.bazel.project.projectViewFile
-import org.jetbrains.bazel.project.projectViewFilePsiFile
-import org.jetbrains.bazel.sync.environment.BazelProjectInfoService
-import org.jetbrains.bazel.utils.findNearestParent
-import org.jetbrains.bazel.utils.selectedDirectory
-import org.jetbrains.bazel.workspace.excludedRoots
-import org.jetbrains.bazel.workspace.includedRoots
+import consulo.annotation.component.ActionImpl;
+import consulo.application.ReadAction;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.language.editor.WriteCommandAction;
+import consulo.language.psi.PsiDocumentManager;
+import consulo.project.DumbService;
+import consulo.project.Project;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.action.AnAction;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.AnActionWithSyncUpdate;
+import consulo.util.lang.function.ThrowableRunnable;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile;
+import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFileDirectories;
+import org.jetbrains.bazel.project.DefaultProjectViewService;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jetbrains.bazel.utils.AnActionEventUtils;
+import org.jetbrains.bazel.utils.VfsUtils;
+import org.jetbrains.bazel.workspace.BazelProjectDirectoriesUtils;
+import org.jspecify.annotations.Nullable;
 
-internal class AddToProjectViewDirectoriesAction : AnAction() {
+import java.util.HashSet;
+import java.util.Set;
 
-  override fun actionPerformed(e: AnActionEvent) {
-    val directory = e.selectedDirectory ?: return
-    val project = e.project ?: return
-    val projectViewPsi = project.projectViewFilePsiFile ?: return
-    val includes = project.explicitlyIncludedRoots()
-    val excludes = project.excludedRoots().orEmpty()
-    val nearestParent = directory.findNearestParent(includes + excludes - directory)
-    val isNotIncluded = nearestParent !in includes
-    val isExplicitlyExcluded = directory in excludes
-    if (!isExplicitlyExcluded && !isNotIncluded) return
-    projectViewPsi.navigate(/* requestFocus = */ true)
-    if (projectViewPsi.directoriesContainsInclude(directory)) return
-    WriteCommandAction.writeCommandAction(project, projectViewPsi).compute<Unit, Throwable> {
-      if (projectViewPsi.isDirectoriesNullOrEmpty()) {
-        projectViewPsi.addDirectoriesInclude(project.rootDir)
-      }
-      if (isExplicitlyExcluded) {
-        projectViewPsi.removeDirectoriesExclude(directory)
-      }
-      if (isNotIncluded) {
-        projectViewPsi.addDirectoriesInclude(directory)
-      }
-      PsiDocumentManager
-        .getInstance(project)
-        .commitAllDocuments()
+@ActionImpl(id = "Bazel.AddToProjectViewDirectoriesAction")
+public class AddToProjectViewDirectoriesAction extends AnAction implements AnActionWithSyncUpdate {
+    public AddToProjectViewDirectoriesAction() {
+        // consulo: the template text needs its argument, update() sets the real project view file name
+        super(
+            BazelPluginLocalize.actionBazelAddtoprojectviewdirectoriesactionText(BazelPluginLocalize.toolWindowGenericConfigFile()),
+            BazelPluginLocalize.actionBazelAddtoprojectviewdirectoriesactionDescription()
+        );
     }
-  }
 
-  override fun update(e: AnActionEvent) {
-    val project = e.project
-    val projectViewFile = project?.getProjectViewIfApplicableTo(e)
-    val rootDir = project?.service<BazelProjectInfoService>()?.projectRootDir
-    if (projectViewFile == null || rootDir == null) {
-      e.presentation.isEnabledAndVisible = false
-      return
+    @RequiredUIAccess
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+        VirtualFile directory = AnActionEventUtils.getSelectedDirectory(e);
+        if (directory == null) {
+            return;
+        }
+        Project project = e.getData(Project.KEY);
+        if (project == null) {
+            return;
+        }
+        ProjectViewPsiFile projectViewPsi = DefaultProjectViewService.getProjectViewFilePsiFile(project);
+        if (projectViewPsi == null) {
+            return;
+        }
+        Set<VirtualFile> includes = explicitlyIncludedRoots(project);
+        Set<VirtualFile> excludedRoots = BazelProjectDirectoriesUtils.excludedRoots(project);
+        Set<VirtualFile> excludes = excludedRoots != null ? excludedRoots : Set.of();
+        Set<VirtualFile> candidates = new HashSet<>(includes);
+        candidates.addAll(excludes);
+        candidates.remove(directory);
+        VirtualFile nearestParent = VfsUtils.findNearestParent(directory, candidates);
+        boolean isNotIncluded = nearestParent == null || !includes.contains(nearestParent);
+        boolean isExplicitlyExcluded = excludes.contains(directory);
+        if (!isExplicitlyExcluded && !isNotIncluded) {
+            return;
+        }
+        projectViewPsi.navigate(/* requestFocus = */ true);
+        if (ProjectViewPsiFileDirectories.directoriesContainsInclude(projectViewPsi, directory)) {
+            return;
+        }
+        // consulo: Consulo takes the project from the file (upstream writeCommandAction(project, projectViewPsi))
+        WriteCommandAction.writeCommandAction(projectViewPsi).run((ThrowableRunnable<RuntimeException>) () -> {
+            if (ProjectViewPsiFileDirectories.isDirectoriesNullOrEmpty(projectViewPsi)) {
+                ProjectViewPsiFileDirectories.addDirectoriesInclude(projectViewPsi, org.jetbrains.bazel.config.project.getRootDir(project));
+            }
+            if (isExplicitlyExcluded) {
+                ProjectViewPsiFileDirectories.removeDirectoriesExclude(projectViewPsi, directory);
+            }
+            if (isNotIncluded) {
+                ProjectViewPsiFileDirectories.addDirectoriesInclude(projectViewPsi, directory);
+            }
+            PsiDocumentManager
+                .getInstance(project)
+                .commitAllDocuments();
+        });
     }
-    e.presentation.isEnabledAndVisible = true
-    e.presentation.text = message("action.Bazel.AddToProjectViewDirectoriesAction.text", projectViewFile.name)
-  }
 
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
-
-  private fun Project.getProjectViewIfApplicableTo(e: AnActionEvent): VirtualFile? {
-    if (!isBazelProject) return null
-    if (DumbService.isDumb(this)) return null
-    val directory = e.selectedDirectory ?: return null
-    val includes = explicitlyIncludedRoots()
-    val excludes = excludedRoots().orEmpty()
-    return when (directory) {
-      in includes -> null
-      in excludes -> projectViewFile
-      else -> when (directory.findNearestParent(includes + excludes)) {
-        in includes -> null
-        else -> projectViewFile
-      }
+    @Override
+    public void update(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+        VirtualFile projectViewFile = project != null ? getProjectViewIfApplicableTo(project, e) : null;
+        VirtualFile rootDir = project != null ? project.getInstance(BazelProjectInfoService.class).getProjectRootDir() : null;
+        if (projectViewFile == null || rootDir == null) {
+            e.getPresentation().setEnabledAndVisible(false);
+            return;
+        }
+        e.getPresentation().setEnabledAndVisible(true);
+        e.getPresentation().setText(BazelPluginLocalize.actionBazelAddtoprojectviewdirectoriesactionText(projectViewFile.getName()));
     }
-  }
-}
 
-internal fun Project.explicitlyIncludedRoots(): Set<VirtualFile> {
-  if (ReadAction.nonBlocking<Boolean> { projectViewFilePsiFile?.isDirectoriesNullOrEmpty() == true }.executeSynchronously()) {
-    return emptySet()
-  }
-  return includedRoots().orEmpty()
+    // consulo: AnActionWithSyncUpdate always updates in background (upstream ActionUpdateThread.BGT)
+
+    private @Nullable VirtualFile getProjectViewIfApplicableTo(Project receiver, AnActionEvent e) {
+        if (!org.jetbrains.bazel.config.project.isBazelProject(receiver)) {
+            return null;
+        }
+        if (DumbService.isDumb(receiver)) {
+            return null;
+        }
+        VirtualFile directory = AnActionEventUtils.getSelectedDirectory(e);
+        if (directory == null) {
+            return null;
+        }
+        Set<VirtualFile> includes = explicitlyIncludedRoots(receiver);
+        Set<VirtualFile> excludedRoots = BazelProjectDirectoriesUtils.excludedRoots(receiver);
+        Set<VirtualFile> excludes = excludedRoots != null ? excludedRoots : Set.of();
+        if (includes.contains(directory)) {
+            return null;
+        }
+        else if (excludes.contains(directory)) {
+            return DefaultProjectViewService.getProjectViewFile(receiver);
+        }
+        else {
+            Set<VirtualFile> candidates = new HashSet<>(includes);
+            candidates.addAll(excludes);
+            VirtualFile nearestParent = VfsUtils.findNearestParent(directory, candidates);
+            if (nearestParent != null && includes.contains(nearestParent)) {
+                return null;
+            }
+            else {
+                return DefaultProjectViewService.getProjectViewFile(receiver);
+            }
+        }
+    }
+
+    public static Set<VirtualFile> explicitlyIncludedRoots(Project receiver) {
+        if (ReadAction.nonBlocking(() -> {
+            ProjectViewPsiFile projectViewPsiFile = DefaultProjectViewService.getProjectViewFilePsiFile(receiver);
+            return projectViewPsiFile != null && ProjectViewPsiFileDirectories.isDirectoriesNullOrEmpty(projectViewPsiFile);
+        }).executeSynchronously()) {
+            return Set.of();
+        }
+        Set<VirtualFile> includedRoots = BazelProjectDirectoriesUtils.includedRoots(receiver);
+        return includedRoots != null ? includedRoots : Set.of();
+    }
 }

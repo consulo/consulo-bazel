@@ -13,20 +13,36 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.workspacePath
+package org.jetbrains.bazel.workspacePath;
 
-import org.jetbrains.bazel.commons.WorkspacePath
-import org.jetbrains.bazel.workspace.WorkspaceRoot
-import java.nio.file.Path
+import org.jetbrains.bazel.commons.WorkspacePath;
+import org.jetbrains.bazel.workspace.WorkspaceRoot;
+import org.jspecify.annotations.Nullable;
 
-/** Uses the package path locations to resolve a workspace path.  */
-internal data class WorkspacePathResolverImpl(private val workspaceRoot: WorkspaceRoot) : WorkspacePathResolver {
-  override fun resolveToIncludeDirectories(relativePath: WorkspacePath): List<Path> = listOf(workspaceRoot.fileForPath(relativePath))
+import java.nio.file.Path;
+import java.util.List;
 
-  override fun findPackageRoot(relativePath: String): Path = workspaceRoot.directory
+/**
+ * Uses the package path locations to resolve a workspace path.
+ */
+public record WorkspacePathResolverImpl(WorkspaceRoot workspaceRoot) implements WorkspacePathResolver {
+    @Override
+    public List<Path> resolveToIncludeDirectories(WorkspacePath relativePath) {
+        return List.of(workspaceRoot.fileForPath(relativePath));
+    }
 
-  override fun getWorkspacePath(absolutePath: Path): WorkspacePath? = workspaceRoot.workspacePathForSafe(absolutePath)
+    @Override
+    public Path findPackageRoot(String relativePath) {
+        return workspaceRoot.directory();
+    }
 
-  override fun findWorkspaceRoot(absolutePath: Path): WorkspaceRoot? =
-    if (workspaceRoot.isInWorkspace(absolutePath)) workspaceRoot else null
+    @Override
+    public @Nullable WorkspacePath getWorkspacePath(Path absolutePath) {
+        return workspaceRoot.workspacePathForSafe(absolutePath);
+    }
+
+    @Override
+    public @Nullable WorkspaceRoot findWorkspaceRoot(Path absolutePath) {
+        return workspaceRoot.isInWorkspace(absolutePath) ? workspaceRoot : null;
+    }
 }

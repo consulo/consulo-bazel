@@ -1,29 +1,36 @@
-package org.jetbrains.bazel.ui.widgets
+package org.jetbrains.bazel.ui.widgets;
 
-import com.intellij.openapi.actionSystem.ActionPlaces
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.util.elementType
-import com.intellij.psi.util.findParentOfType
-import com.intellij.util.ui.TextTransferable
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.action.getEditor
-import org.jetbrains.bazel.action.getPsiFile
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement
-import org.jetbrains.bazel.languages.starlark.repomapping.calculateLabel
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
-import org.jetbrains.bazel.target.targetStorage
+import consulo.annotation.component.ActionImpl;
+import consulo.annotation.component.ActionParentRef;
+import consulo.annotation.component.ActionRef;
+import consulo.application.ReadAction;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.codeEditor.Caret;
+import consulo.codeEditor.Editor;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiUtilCore;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.project.Project;
+import consulo.ui.clipboard.DataTransfer;
+import consulo.ui.ex.CopyPasteManager;
+import consulo.ui.ex.action.ActionPlaces;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 // TODO: https://youtrack.jetbrains.com/issue/BAZEL-1158
 
@@ -32,104 +39,171 @@ import org.jetbrains.bazel.target.targetStorage
  * while pressing on rule's name or value of the name argument of that rule.
  * Also available in the right click menu on regular source files that are included in project.
  */
-internal class CopyTargetIdAction : SuspendableAction({ BazelPluginBundle.message("editor.action.copy.target.id") }) {
-  override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-    performCopyTargetIdAction(
-      psiFile = readAction { e.getPsiFile() } ?: return,
-      psiElement = readAction { e.getPsiElement() },
-      editor = e.getEditor(),
-    )
-  }
-
-  private suspend fun performCopyTargetIdAction(
-    psiFile: PsiFile,
-    psiElement: PsiElement?,
-    editor: Editor?,
-  ) {
-    val targetId = calculateTargetId(psiFile, psiElement, editor) ?: return
-    val clipboard = CopyPasteManager.getInstance()
-    val transferable = TextTransferable(targetId as CharSequence)
-    clipboard.setContents(transferable)
-  }
-
-  private suspend fun calculateTargetId(
-    psiFile: PsiFile,
-    psiElement: PsiElement?,
-    editor: Editor?,
-  ): String? {
-    if (psiFile is StarlarkFile) {
-      return readAction { psiElement?.findParentOfType<StarlarkCallExpression>()?.calculateTargetId() }
-    } else {
-      val virtualFile = readAction { psiFile.virtualFile } ?: return null
-      return psiFile.project.targetStorage
-        .getTargetsForFile(virtualFile)
-        .chooseTarget(editor)
-        ?.toShortString(psiFile.project)
+@ActionImpl(
+    id = "CopyTargetIdAction",
+    parents = {
+        @ActionParentRef(@ActionRef(id = "EditorPopupMenu")),
+        @ActionParentRef(@ActionRef(id = "EditorTabPopupMenu")),
     }
-  }
+)
+// This shortcut doesn't mean anything, it's just not taken by anyone and is easy to type
+// TODO consulo: default shortcut control alt G, H
+public class CopyTargetIdAction extends SuspendableAction {
+    private static final List<String> ALLOWED_ACTION_PLACES =
+        List.of(
+            ActionPlaces.EDITOR_POPUP,
+            ActionPlaces.KEYBOARD_SHORTCUT,
+            ActionPlaces.ACTION_SEARCH,
+            ActionPlaces.EDITOR_TAB_POPUP
+        );
 
-  private fun StarlarkCallExpression.calculateTargetId(): String? {
-    val targetName = getNameAttributeValue() ?: return null
-    val containingFile = containingFile?.virtualFile ?: return null
-    return calculateLabel(project, containingFile, targetName)?.toShortString(project)
-  }
-
-  override fun update(project: Project, e: AnActionEvent) {
-    e.presentation.isEnabledAndVisible = shouldBeEnabledAndVisible(project, e)
-  }
-
-  private fun shouldBeEnabledAndVisible(project: Project, e: AnActionEvent): Boolean {
-    if (!ALLOWED_ACTION_PLACES.contains(e.place)) return false
-    val file = e.getPsiFile() ?: return false
-    return if (file is StarlarkFile) {
-      shouldAddActionToStarlarkFile(file, e)
-    } else {
-      file.virtualFile?.let { virtualFile ->
-        project.targetStorage.getTargetsForFile(virtualFile).isNotEmpty()
-      } ?: false
+    public CopyTargetIdAction() {
+        // consulo: the icon comes from the upstream XML registration
+        super(BazelPluginLocalize.editorActionCopyTargetId(), BazelPluginIcons.bazel());
     }
-  }
 
-  private fun shouldAddActionToStarlarkFile(file: StarlarkFile, e: AnActionEvent): Boolean =
-    file.isBuildFile() && shouldAddActionToElement(e.getPsiElement())
+    @Override
+    protected CompletableFuture<Void> actionPerformed(Project project, AnActionEvent e) {
+        // consulo: readAction { } -> blocking read action
+        @Nullable PsiFile psiFile = ReadAction.<@Nullable PsiFile, RuntimeException>compute(() -> getPsiFile(e));
+        if (psiFile == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return performCopyTargetIdAction(
+            psiFile,
+            ReadAction.<@Nullable PsiElement, RuntimeException>compute(() -> getPsiElement(e)),
+            getEditor(e)
+        );
+    }
 
-  private fun shouldAddActionToElement(psiElement: PsiElement?): Boolean =
-    psiElement != null &&
-      (psiElement.isValidTarget() || psiElement.isNameArgumentOfValidTarget())
+    private CompletableFuture<Void> performCopyTargetIdAction(
+        PsiFile psiFile,
+        @Nullable PsiElement psiElement,
+        @Nullable Editor editor
+    ) {
+        return calculateTargetId(psiFile, psiElement, editor).thenCompose(targetId -> {
+            if (targetId == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            // consulo: the Consulo clipboard (DataTransfer instead of TextTransferable) is written on the UI thread
+            return CompletableFuture.runAsync(
+                () -> {
+                    CopyPasteManager clipboard = CopyPasteManager.getInstance();
+                    DataTransfer transferable = DataTransfer.of(targetId);
+                    clipboard.setContents(transferable);
+                },
+                psiFile.getProject().getUIAccess()
+            );
+        });
+    }
 
-  private fun AnActionEvent.getPsiElement(): PsiElement? {
-    val psiFile = getPsiFile()
-    return getData(CommonDataKeys.CARET)?.offset?.let { psiFile?.findElementAt(it) }
-  }
+    private CompletableFuture<@Nullable String> calculateTargetId(
+        PsiFile psiFile,
+        @Nullable PsiElement psiElement,
+        @Nullable Editor editor
+    ) {
+        if (psiFile instanceof StarlarkFile) {
+            return CompletableFuture.completedFuture(ReadAction.<@Nullable String, RuntimeException>compute(() -> {
+                StarlarkCallExpression callExpression = PsiTreeUtil.getParentOfType(psiElement, StarlarkCallExpression.class);
+                return callExpression != null ? calculateTargetId(callExpression) : null;
+            }));
+        }
+        else {
+            @Nullable VirtualFile virtualFile = ReadAction.<@Nullable VirtualFile, RuntimeException>compute(psiFile::getVirtualFile);
+            if (virtualFile == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return ChooseTarget.chooseTarget(
+                    TargetStorage.getTargetStorage(psiFile.getProject()).getTargetsForFile(virtualFile),
+                    editor
+                )
+                .thenApply(label -> label != null ? BazelRepoMappingUtils.toShortString(label, psiFile.getProject()) : null);
+        }
+    }
 
-  private fun PsiElement.isValidTarget(): Boolean =
-    this.elementType == StarlarkTokenTypes.IDENTIFIER &&
-      isPartOfTopLevelCallExpression()
+    private @Nullable String calculateTargetId(StarlarkCallExpression receiver) {
+        String targetName = receiver.getNameAttributeValue();
+        if (targetName == null) {
+            return null;
+        }
+        PsiFile containingFile = receiver.getContainingFile();
+        VirtualFile virtualFile = containingFile != null ? containingFile.getVirtualFile() : null;
+        if (virtualFile == null) {
+            return null;
+        }
+        Label label = BazelRepoMappingUtils.calculateLabel(receiver.getProject(), virtualFile, targetName);
+        return label != null ? BazelRepoMappingUtils.toShortString(label, receiver.getProject()) : null;
+    }
 
-  private fun PsiElement.isNameArgumentOfValidTarget(): Boolean {
-    val starlarkStringLiteralExpression = this.parent
-    val starlarkNamedArgumentExpression = starlarkStringLiteralExpression?.parent ?: return false
-    return starlarkNamedArgumentExpression is StarlarkNamedArgumentExpression &&
-      starlarkNamedArgumentExpression.isNameArgument() &&
-      starlarkNamedArgumentExpression.isPartOfTopLevelCallExpression()
-  }
+    @Override
+    protected void update(Project project, AnActionEvent e) {
+        e.getPresentation().setEnabledAndVisible(shouldBeEnabledAndVisible(project, e));
+    }
 
-  private fun PsiElement.isPartOfTopLevelCallExpression(): Boolean {
-    val starlarkReferenceExpression = this.parent
-    val starlarkCallExpression = starlarkReferenceExpression?.parent ?: return false
-    return starlarkCallExpression is StarlarkCallExpression &&
-      isTopLevelCall(starlarkCallExpression) &&
-      starlarkCallExpression.getNameAttributeValue() != null
-  }
+    private boolean shouldBeEnabledAndVisible(Project project, AnActionEvent e) {
+        if (!ALLOWED_ACTION_PLACES.contains(e.getPlace())) {
+            return false;
+        }
+        PsiFile file = getPsiFile(e);
+        if (file == null) {
+            return false;
+        }
+        if (file instanceof StarlarkFile starlarkFile) {
+            return shouldAddActionToStarlarkFile(starlarkFile, e);
+        }
+        else {
+            VirtualFile virtualFile = file.getVirtualFile();
+            return virtualFile != null && !TargetStorage.getTargetStorage(project).getTargetsForFile(virtualFile).isEmpty();
+        }
+    }
 
-  private fun isTopLevelCall(element: PsiElement): Boolean =
-    element.parent is StarlarkExpressionStatement && element.parent?.parent is StarlarkFile
+    private boolean shouldAddActionToStarlarkFile(StarlarkFile file, AnActionEvent e) {
+        return file.isBuildFile() && shouldAddActionToElement(getPsiElement(e));
+    }
+
+    private boolean shouldAddActionToElement(@Nullable PsiElement psiElement) {
+        return psiElement != null &&
+            (isValidTarget(psiElement) || isNameArgumentOfValidTarget(psiElement));
+    }
+
+    private @Nullable PsiElement getPsiElement(AnActionEvent receiver) {
+        PsiFile psiFile = getPsiFile(receiver);
+        Caret caret = receiver.getData(Caret.KEY);
+        if (caret == null) {
+            return null;
+        }
+        return psiFile != null ? psiFile.findElementAt(caret.getOffset()) : null;
+    }
+
+    private boolean isValidTarget(PsiElement receiver) {
+        return PsiUtilCore.getElementType(receiver) == StarlarkTokenTypes.IDENTIFIER &&
+            isPartOfTopLevelCallExpression(receiver);
+    }
+
+    private boolean isNameArgumentOfValidTarget(PsiElement receiver) {
+        PsiElement starlarkStringLiteralExpression = receiver.getParent();
+        PsiElement starlarkNamedArgumentExpression = starlarkStringLiteralExpression != null ? starlarkStringLiteralExpression.getParent() : null;
+        if (starlarkNamedArgumentExpression == null) {
+            return false;
+        }
+        return starlarkNamedArgumentExpression instanceof StarlarkNamedArgumentExpression namedArgumentExpression &&
+            namedArgumentExpression.isNameArgument() &&
+            isPartOfTopLevelCallExpression(namedArgumentExpression);
+    }
+
+    private boolean isPartOfTopLevelCallExpression(PsiElement receiver) {
+        PsiElement starlarkReferenceExpression = receiver.getParent();
+        PsiElement starlarkCallExpression = starlarkReferenceExpression != null ? starlarkReferenceExpression.getParent() : null;
+        if (starlarkCallExpression == null) {
+            return false;
+        }
+        return starlarkCallExpression instanceof StarlarkCallExpression callExpression &&
+            isTopLevelCall(callExpression) &&
+            callExpression.getNameAttributeValue() != null;
+    }
+
+    private boolean isTopLevelCall(PsiElement element) {
+        PsiElement parent = element.getParent();
+        return parent instanceof StarlarkExpressionStatement && parent.getParent() instanceof StarlarkFile;
+    }
 }
-
-private val ALLOWED_ACTION_PLACES =
-  listOf(
-    ActionPlaces.EDITOR_POPUP,
-    ActionPlaces.KEYBOARD_SHORTCUT,
-    ActionPlaces.ACTION_SEARCH,
-    ActionPlaces.EDITOR_TAB_POPUP,
-  )

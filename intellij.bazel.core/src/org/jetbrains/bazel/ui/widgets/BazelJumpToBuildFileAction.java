@@ -1,117 +1,173 @@
-package org.jetbrains.bazel.ui.widgets
+package org.jetbrains.bazel.ui.widgets;
 
-import com.intellij.icons.AllIcons
-import com.intellij.ide.util.EditorHelper
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.keymap.KeymapUtil
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.util.concurrency.annotations.RequiresReadLock
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.action.getEditor
-import org.jetbrains.bazel.action.getPsiFile
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement
-import org.jetbrains.bazel.languages.starlark.references.resolveLabel
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
-import javax.swing.JComponent
+import consulo.annotation.access.RequiredReadAction;
+import consulo.application.ReadAction;
+import consulo.application.concurrent.coroutine.ReadLock;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.language.editor.util.EditorHelper;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.ui.UIAction;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.ShortcutSet;
+import consulo.ui.ex.keymap.util.KeymapUtil;
+import consulo.util.concurrent.coroutine.Coroutine;
+import consulo.util.concurrent.coroutine.CoroutineScope;
+import consulo.util.lang.StringUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement;
+import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-internal sealed class BazelJumpToBuildFileAction :
-  SuspendableAction({ BazelPluginBundle.message("widget.open.build.file") }, AllIcons.Actions.OpenNewTab) {
-  protected abstract suspend fun getTargetLabel(project: Project, e: AnActionEvent): Label?
+import javax.swing.JComponent;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
-  override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-    val target = getTargetLabel(project, e) ?: return
-    jumpToBuildFile(project, target)
-  }
-
-  @Suppress("ComponentNotRegistered", "unused") // it is registered in plugin.xml
-  class XmlRegistered : BazelJumpToBuildFileAction() {
-    override suspend fun getTargetLabel(project: Project, e: AnActionEvent): Label? {
-      val virtualFile = readAction { e.getPsiFile()?.virtualFile } ?: return null
-      return project.targetStorage.getTargetsForFile(virtualFile).chooseTarget(e.getEditor())
+public abstract class BazelJumpToBuildFileAction extends SuspendableAction {
+    protected BazelJumpToBuildFileAction() {
+        super(BazelPluginLocalize.widgetOpenBuildFile(), PlatformIconGroup.generalOpennewtab());
     }
 
-    override fun update(project: Project, e: AnActionEvent) {
-      e.presentation.isEnabledAndVisible = shouldBeEnabledAndVisible(project, e)
+    protected abstract CompletableFuture<@Nullable Label> getTargetLabel(Project project, AnActionEvent e);
+
+    @Override
+    protected CompletableFuture<Void> actionPerformed(Project project, AnActionEvent e) {
+        return getTargetLabel(project, e).thenCompose(target -> {
+            if (target == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return jumpToBuildFile(project, target);
+        });
     }
 
-    private fun shouldBeEnabledAndVisible(project: Project, e: AnActionEvent): Boolean =
-      e.getPsiFile()?.virtualFile?.let {
-        project.targetStorage.getTargetsForFile(it).isNotEmpty()
-      } == true
-  }
+    // it is registered in plugin.xml
+    // consulo: the registered action is the top-level BazelJumpToBuildFileActionXmlRegistered (@ActionImpl on nested classes is not supported)
+    public static class XmlRegistered extends BazelJumpToBuildFileAction {
+        @Override
+        protected CompletableFuture<@Nullable Label> getTargetLabel(Project project, AnActionEvent e) {
+            // consulo: readAction { } -> blocking read action
+            @Nullable VirtualFile virtualFile = ReadAction.<@Nullable VirtualFile, RuntimeException>compute(() -> {
+                PsiFile psiFile = getPsiFile(e);
+                return psiFile != null ? psiFile.getVirtualFile() : null;
+            });
+            if (virtualFile == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return ChooseTarget.chooseTarget(TargetStorage.getTargetStorage(project).getTargetsForFile(virtualFile), getEditor(e));
+        }
 
-  class NonXmlRegistered(private val getTarget: () -> BuildTarget?) : BazelJumpToBuildFileAction() {
-    override suspend fun getTargetLabel(project: Project, e: AnActionEvent): Label? = getTarget()?.id
+        @Override
+        protected void update(Project project, AnActionEvent e) {
+            e.getPresentation().setEnabledAndVisible(shouldBeEnabledAndVisible(project, e));
+        }
 
-    fun registerShortcut(component: JComponent) {
-      val shortcutSet = KeymapUtil.getActiveKeymapShortcuts("EditSource")
-      registerCustomShortcutSet(shortcutSet, component)
+        private boolean shouldBeEnabledAndVisible(Project project, AnActionEvent e) {
+            PsiFile psiFile = getPsiFile(e);
+            VirtualFile virtualFile = psiFile != null ? psiFile.getVirtualFile() : null;
+            return virtualFile != null && !TargetStorage.getTargetStorage(project).getTargetsForFile(virtualFile).isEmpty();
+        }
     }
-  }
-}
 
-@ApiStatus.Internal
-suspend fun jumpToBuildFile(project: Project, target: Label) {
-  val definition =
-    readAction {
-      findDefinition(project, target)
-    } ?: return
+    public static class NonXmlRegistered extends BazelJumpToBuildFileAction {
+        private final Supplier<@Nullable BuildTarget> myGetTarget;
 
-  withContext(Dispatchers.EDT) {
-    EditorHelper.openInEditor(definition, true, true)
-  }
-}
+        public NonXmlRegistered(Supplier<@Nullable BuildTarget> getTarget) {
+            myGetTarget = getTarget;
+        }
 
-@RequiresReadLock(generateAssertion = false /* IJPL-115548 */)
-private fun findDefinition(project: Project, target: Label): PsiElement? {
-  val file = resolveLabel(project, target)
-  if (file !is StarlarkFile) return file
+        @Override
+        protected CompletableFuture<@Nullable Label> getTargetLabel(Project project, AnActionEvent e) {
+            BuildTarget target = myGetTarget.get();
+            return CompletableFuture.completedFuture(target != null ? BuildTarget.getId(target) : null);
+        }
 
-  val definition = findDefinitionByLongestPrefix(file, target)
-  return definition ?: file
-}
-
-/**
- * Uses a simple longest prefix heuristic to find the corresponding definition
- * inside the BUILD file. Similar to what the Google plugin does.
- */
-private fun findDefinitionByLongestPrefix(file: StarlarkFile, target: Label): PsiElement? {
-  val name = target.targetName
-
-  var candidate: PsiElement? = null
-  var candidateScore = 0
-
-  for (expr in file.findChildrenByClass(StarlarkExpressionStatement::class.java)) {
-    val score = getCallCommonPrefix(expr, name)
-
-    if (score > candidateScore) {
-      candidate = expr
-      candidateScore = score
+        public void registerShortcut(JComponent component) {
+            ShortcutSet shortcutSet = KeymapUtil.getActiveKeymapShortcuts("EditSource");
+            registerCustomShortcutSet(shortcutSet, component);
+        }
     }
-  }
 
-  return candidate
-}
+    // consulo: the coroutine has no input, Consulo coroutines are started with a null input
+    @SuppressWarnings("NullAway")
+    public static CompletableFuture<Void> jumpToBuildFile(Project project, Label target) {
+        // consulo: readAction { } + withContext(Dispatchers.EDT) { } -> ReadLock + UIAction steps
+        return Coroutine
+            .first(ReadLock.<@Nullable Object, @Nullable PsiElement>apply(ignored -> findDefinition(project, target)))
+            .then(UIAction.<@Nullable PsiElement, @Nullable Void>apply(definition -> {
+                if (definition != null) {
+                    // consulo: EditorHelper.openInEditor has no focusEditor parameter
+                    EditorHelper.openInEditor(definition, true);
+                }
+                return null;
+            }))
+            .runAsync(CoroutineScope.of(project.coroutineContext()), null)
+            .toFuture();
+    }
 
-private fun getCallCommonPrefix(expr: StarlarkExpressionStatement, value: String): Int {
-  val name = getCallName(expr) ?: return 0
-  return name.commonPrefixWith(value).length
-}
+    @RequiredReadAction
+    private static @Nullable PsiElement findDefinition(Project project, Label target) {
+        PsiElement file = LabelResolveUtils.resolveLabel(project, target, null, false);
+        if (!(file instanceof StarlarkFile starlarkFile)) {
+            return file;
+        }
 
-private fun getCallName(expr: StarlarkExpressionStatement): String? {
-  val call = expr.callExpressionOrNull() ?: return null
-  val args = call.getArgumentList() ?: return null
-  val name = args.getKeywordArgument("name") ?: return null
-  return name.getArgumentStringValue()
+        PsiElement definition = findDefinitionByLongestPrefix(starlarkFile, target);
+        return definition != null ? definition : starlarkFile;
+    }
+
+    /**
+     * Uses a simple longest prefix heuristic to find the corresponding definition
+     * inside the BUILD file. Similar to what the Google plugin does.
+     */
+    private static @Nullable PsiElement findDefinitionByLongestPrefix(StarlarkFile file, Label target) {
+        String name = target.getTargetName();
+
+        PsiElement candidate = null;
+        int candidateScore = 0;
+
+        for (StarlarkExpressionStatement expr : file.findChildrenByClass(StarlarkExpressionStatement.class)) {
+            int score = getCallCommonPrefix(expr, name);
+
+            if (score > candidateScore) {
+                candidate = expr;
+                candidateScore = score;
+            }
+        }
+
+        return candidate;
+    }
+
+    private static int getCallCommonPrefix(StarlarkExpressionStatement expr, String value) {
+        String name = getCallName(expr);
+        if (name == null) {
+            return 0;
+        }
+        return StringUtil.commonPrefixLength(name, value);
+    }
+
+    private static @Nullable String getCallName(StarlarkExpressionStatement expr) {
+        StarlarkCallExpression call = expr.callExpressionOrNull();
+        if (call == null) {
+            return null;
+        }
+        StarlarkArgumentList args = call.getArgumentList();
+        if (args == null) {
+            return null;
+        }
+        StarlarkNamedArgumentExpression name = args.getKeywordArgument("name");
+        if (name == null) {
+            return null;
+        }
+        return name.getArgumentStringValue();
+    }
 }

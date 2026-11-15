@@ -1,95 +1,155 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.VirtualFileVisitor
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Canonical
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.label.Package
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bazel.label.SingleTarget
-import org.jetbrains.bazel.languages.starlark.repomapping.canonicalRepoNameToPath
-import org.jetbrains.bazel.sync.SyncCache
-import org.jetbrains.bazel.workspace.excludedRoots
-import java.nio.file.Path
-import kotlin.io.path.invariantSeparatorsPathString
-import kotlin.io.path.relativeToOrNull
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import consulo.virtualFileSystem.util.VirtualFileVisitor;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.label.Label.Canonical;
+import org.jetbrains.bazel.label.Label.Package;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.label.Label.SingleTarget;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingProvider;
+import org.jetbrains.bazel.sync.SyncCache;
+import org.jetbrains.bazel.workspace.BazelProjectDirectoriesUtils;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-fun getCanonicalRepoNameToBzlFiles(project: Project): Map<String, List<Label>> =
-  SyncCache.getInstance(project).get(canonicalRepoNameToBzlFilesValue)
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
-private val canonicalRepoNameToBzlFilesValue =
-  SyncCache.SyncCacheComputable { project ->
-    calculateApparentRepoNameToFiles(project)
-  }
+// consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name
+public final class BazelBzlFileService {
+    private BazelBzlFileService() {
+    }
 
-private fun calculateApparentRepoNameToFiles(project: Project): Map<String, List<ResolvedLabel>> {
-  val newMap = mutableMapOf<String, List<ResolvedLabel>>()
+    // consulo: Kotlin read-only collections are covariant, Java needs the unchecked cast
+    @SuppressWarnings("unchecked")
+    public static Map<String, List<Label>> getCanonicalRepoNameToBzlFiles(Project project) {
+        return (Map<String, List<Label>>) (Map<String, ?>) SyncCache.getInstance(project).get(CANONICAL_REPO_NAME_TO_BZL_FILES_VALUE);
+    }
 
-  val canonicalRepoNameToPath = project.canonicalRepoNameToPath
-  val canonicalRepoPaths: Set<VirtualFile> =
-    canonicalRepoNameToPath.values
-      .mapNotNull {
-        VirtualFileManager.getInstance().findFileByNioPath(it)
-      }.toSet()
+    private static final SyncCache.SyncCacheComputable<Map<String, List<ResolvedLabel>>> CANONICAL_REPO_NAME_TO_BZL_FILES_VALUE =
+        project -> calculateApparentRepoNameToFiles(project);
 
-  val excludedRoots = project.excludedRoots() ?: return emptyMap()
+    private static Map<String, List<ResolvedLabel>> calculateApparentRepoNameToFiles(Project project) {
+        Map<String, List<ResolvedLabel>> newMap = new HashMap<>();
 
-  for ((canonicalName, repoPath) in canonicalRepoNameToPath) {
-    val root = VirtualFileManager.getInstance().findFileByNioPath(repoPath) ?: continue
-    val dirToPackagePath = mutableMapOf<VirtualFile, Path?>()
-    VfsUtilCore.visitChildrenRecursively(
-      root,
-      object : VirtualFileVisitor<Unit>() {
-        override fun visitFileEx(file: VirtualFile): Result {
-          if (file in excludedRoots) return SKIP_CHILDREN
-          if (file != root && file in canonicalRepoPaths) return SKIP_CHILDREN
-          if (file.isDirectory) {
-            findBuildFilePathForDirectory(file, root, dirToPackagePath)
-            return CONTINUE
-          }
-          if (file.isDirectory || file.extension != "bzl") return CONTINUE
-
-          val packagePath = findBuildFilePathForDirectory(file.parent, root, dirToPackagePath)?.parent ?: return CONTINUE
-          val packageName = packagePath.relativeToOrNull(repoPath)?.invariantSeparatorsPathString ?: return CONTINUE
-          val targetName = file.toNioPath().relativeToOrNull(packagePath)?.invariantSeparatorsPathString ?: return CONTINUE
-
-          val label =
-            ResolvedLabel(
-              repo = Canonical.createCanonicalOrMain(canonicalName),
-              packagePath = Package(packageName.split("/")),
-              target = SingleTarget(targetName),
-            )
-          newMap[canonicalName] = newMap.getOrDefault(canonicalName, emptyList()) + label
-          return CONTINUE
+        Map<String, Path> canonicalRepoNameToPath = BazelRepoMappingProvider.getCanonicalRepoNameToPath(project);
+        Set<VirtualFile> canonicalRepoPaths = new HashSet<>();
+        for (Path it : canonicalRepoNameToPath.values()) {
+            VirtualFile file = VirtualFileManager.getInstance().findFileByNioPath(it);
+            if (file != null) {
+                canonicalRepoPaths.add(file);
+            }
         }
-      },
-    )
-  }
-  return newMap
-}
 
-private fun findBuildFilePathForDirectory(
-  dir: VirtualFile,
-  repoRoot: VirtualFile,
-  cache: MutableMap<VirtualFile, Path?> = mutableMapOf(),
-): Path? =
-  cache.getOrPut(dir) {
-    val buildFile = findBuildFile(dir)
-    if (buildFile != null) {
-      buildFile.toNioPath()
+        Set<VirtualFile> excludedRoots = BazelProjectDirectoriesUtils.excludedRoots(project);
+        if (excludedRoots == null) {
+            return Map.of();
+        }
+
+        for (Map.Entry<String, Path> entry : canonicalRepoNameToPath.entrySet()) {
+            String canonicalName = entry.getKey();
+            Path repoPath = entry.getValue();
+            VirtualFile root = VirtualFileManager.getInstance().findFileByNioPath(repoPath);
+            if (root == null) {
+                continue;
+            }
+            Map<VirtualFile, @Nullable Path> dirToPackagePath = new HashMap<>();
+            VirtualFileUtil.visitChildrenRecursively(
+                root,
+                new VirtualFileVisitor<Void>() {
+                    @Override
+                    public Result visitFileEx(VirtualFile file) {
+                        if (excludedRoots.contains(file)) {
+                            return SKIP_CHILDREN;
+                        }
+                        if (!file.equals(root) && canonicalRepoPaths.contains(file)) {
+                            return SKIP_CHILDREN;
+                        }
+                        if (file.isDirectory()) {
+                            findBuildFilePathForDirectory(file, root, dirToPackagePath);
+                            return CONTINUE;
+                        }
+                        if (file.isDirectory() || !"bzl".equals(file.getExtension())) {
+                            return CONTINUE;
+                        }
+
+                        Path buildFilePath =
+                            findBuildFilePathForDirectory(Objects.requireNonNull(file.getParent()), root, dirToPackagePath);
+                        Path packagePath = buildFilePath == null ? null : buildFilePath.getParent();
+                        if (packagePath == null) {
+                            return CONTINUE;
+                        }
+                        String packageName = relativeToOrNull(packagePath, repoPath);
+                        if (packageName == null) {
+                            return CONTINUE;
+                        }
+                        String targetName = relativeToOrNull(file.toNioPath(), packagePath);
+                        if (targetName == null) {
+                            return CONTINUE;
+                        }
+
+                        ResolvedLabel label =
+                            new ResolvedLabel(
+                                Canonical.createCanonicalOrMain(canonicalName),
+                                new Package(List.of(packageName.split("/", -1))),
+                                new SingleTarget(targetName)
+                            );
+                        List<ResolvedLabel> labels = new ArrayList<>(newMap.getOrDefault(canonicalName, List.of()));
+                        labels.add(label);
+                        newMap.put(canonicalName, labels);
+                        return CONTINUE;
+                    }
+                }
+            );
+        }
+        return newMap;
     }
-    else {
-      val parent = dir.parent
-      if (parent == null || !VfsUtilCore.isAncestor(repoRoot, parent, false)) {
-        null
-      }
-      else {
-        findBuildFilePathForDirectory(parent, repoRoot, cache)
-      }
+
+    // consulo: Kotlin Path.relativeToOrNull(base)?.invariantSeparatorsPathString
+    private static @Nullable String relativeToOrNull(Path receiver, Path base) {
+        try {
+            return base.relativize(receiver).toString().replace('\\', '/');
+        }
+        catch (IllegalArgumentException e) {
+            return null;
+        }
     }
-  }
+
+    // consulo: Kotlin default argument cache = mutableMapOf() is always passed by the callers
+    private static @Nullable Path findBuildFilePathForDirectory(
+        VirtualFile dir,
+        VirtualFile repoRoot,
+        Map<VirtualFile, @Nullable Path> cache
+    ) {
+        // consulo: Kotlin MutableMap.getOrPut (a cached null value is recomputed, as in upstream)
+        Path cached = cache.get(dir);
+        if (cached != null) {
+            return cached;
+        }
+        Path result;
+        VirtualFile buildFile = LabelResolveUtils.findBuildFile(dir);
+        if (buildFile != null) {
+            result = buildFile.toNioPath();
+        }
+        else {
+            VirtualFile parent = dir.getParent();
+            if (parent == null || !VirtualFileUtil.isAncestor(repoRoot, parent, false)) {
+                result = null;
+            }
+            else {
+                result = findBuildFilePathForDirectory(parent, repoRoot, cache);
+            }
+        }
+        cache.put(dir, result);
+        return result;
+    }
+}

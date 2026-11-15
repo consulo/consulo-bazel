@@ -1,199 +1,431 @@
-package org.jetbrains.bazel.languages.starlark.inspection
+package org.jetbrains.bazel.languages.starlark.inspection;
 
-import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.LocalQuickFix
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.codeInspection.util.InspectionMessage
-import com.intellij.modcommand.ActionContext
-import com.intellij.modcommand.ModCommand
-import com.intellij.modcommand.Presentation
-import com.intellij.modcommand.PsiBasedModCommandAction
-import com.intellij.openapi.util.text.HtmlBuilder
-import com.intellij.openapi.util.text.HtmlChunk
-import com.intellij.psi.NavigatablePsiElement
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiNameIdentifierOwner
-import com.intellij.psi.SmartPointerManager
-import com.intellij.psi.SmartPsiElementPointer
-import com.intellij.util.applyIf
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.codeEditor.Editor;
+import consulo.codeEditor.EditorPopupHelper;
+import consulo.document.util.TextRange;
+import consulo.fileEditor.FileEditorManager;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.LocalQuickFix;
+import consulo.language.editor.inspection.LocalQuickFixAndIntentionActionOnPsiElement;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.icon.IconDescriptorUpdaters;
+import consulo.language.psi.NavigatablePsiElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiNameIdentifierOwner;
+import consulo.language.psi.SmartPointerManager;
+import consulo.language.psi.SmartPsiElementPointer;
+import consulo.localize.LocalizeValue;
+import consulo.navigation.OpenFileDescriptorFactory;
+import consulo.project.Project;
+import consulo.ui.ex.popup.BaseListPopupStep;
+import consulo.ui.ex.popup.JBPopupFactory;
+import consulo.ui.ex.popup.ListPopup;
+import consulo.ui.ex.popup.PopupStep;
+import consulo.ui.image.Image;
+import consulo.util.collection.ArrayUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue;
+import org.jspecify.annotations.Nullable;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
-@ApiStatus.Internal
-class StarlarkBindingConflictInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is StarlarkFileType
+@ExtensionImpl
+public class StarlarkBindingConflictInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof StarlarkLanguage.StarlarkFileType;
+    }
 
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = BindingVisitor(holder)
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        return new BindingVisitor(holder);
+    }
 
-  class BindingVisitor(private val holder: ProblemsHolder) : StarlarkElementVisitor() {
-    override fun visitFile(psiFile: PsiFile) {
-      val file = psiFile as? StarlarkFile ?: return
-      if (file.name in EXCLUDED_FILE_NAMES) return
+    public static class BindingVisitor extends StarlarkElementVisitor {
+        private final ProblemsHolder myHolder;
 
-      val declarationsByName = HashMap<String, MutableList<DeclarationInfo>>()
+        public BindingVisitor(ProblemsHolder holder) {
+            myHolder = holder;
+        }
 
-      for (child in file.children) {
-        when (child) {
-          is StarlarkFunctionDeclaration -> {
-            val name = child.name ?: continue
-            val element = child.nameIdentifier ?: child
-            collectDeclarationInfo(name, element, BindingScope.GLOBAL, declarationsByName)
-          }
-
-          is StarlarkAssignmentStatement -> {
-            if (!child.isTopLevel()) continue
-            val name = child.name ?: continue
-            collectDeclarationInfo(name, child, BindingScope.GLOBAL, declarationsByName)
-          }
-
-          is StarlarkLoadStatement -> {
-            for (symbol in child.getLoadedSymbolsPsi()) {
-              val name = if (symbol is StarlarkStringLoadValue) symbol.getLoadValueExpression()?.getStringContents() else symbol.name
-              if (name == null) continue
-              collectDeclarationInfo(name, symbol, BindingScope.FILE_LOCAL, declarationsByName)
+        @Override
+        public void visitFile(PsiFile psiFile) {
+            if (!(psiFile instanceof StarlarkFile file)) {
+                return;
             }
-          }
+            if (ArrayUtil.contains(file.getName(), EXCLUDED_FILE_NAMES)) {
+                return;
+            }
+
+            Map<String, List<DeclarationInfo>> declarationsByName = new HashMap<>();
+
+            for (PsiElement child : file.getChildren()) {
+                if (child instanceof StarlarkFunctionDeclaration functionDeclaration) {
+                    String name = functionDeclaration.getName();
+                    if (name == null) {
+                        continue;
+                    }
+                    PsiElement nameIdentifier = functionDeclaration.getNameIdentifier();
+                    PsiElement element = nameIdentifier != null ? nameIdentifier : functionDeclaration;
+                    collectDeclarationInfo(name, element, BindingScope.GLOBAL, declarationsByName);
+                }
+                else if (child instanceof StarlarkAssignmentStatement assignmentStatement) {
+                    if (!assignmentStatement.isTopLevel()) {
+                        continue;
+                    }
+                    String name = assignmentStatement.getName();
+                    if (name == null) {
+                        continue;
+                    }
+                    collectDeclarationInfo(name, assignmentStatement, BindingScope.GLOBAL, declarationsByName);
+                }
+                else if (child instanceof StarlarkLoadStatement loadStatement) {
+                    for (StarlarkElement symbol : loadStatement.getLoadedSymbolsPsi()) {
+                        String name;
+                        if (symbol instanceof StarlarkStringLoadValue stringLoadValue) {
+                            StarlarkStringLiteralExpression loadValueExpression = stringLoadValue.getLoadValueExpression();
+                            name = loadValueExpression == null ? null : loadValueExpression.getStringContents();
+                        }
+                        else {
+                            name = symbol.getName();
+                        }
+                        if (name == null) {
+                            continue;
+                        }
+                        collectDeclarationInfo(name, symbol, BindingScope.FILE_LOCAL, declarationsByName);
+                    }
+                }
+            }
+
+            for (Map.Entry<String, List<DeclarationInfo>> entry : declarationsByName.entrySet()) {
+                String name = entry.getKey();
+                List<DeclarationInfo> declarations = entry.getValue();
+                if (declarations.size() <= 1) {
+                    continue;
+                }
+
+                Set<NavigatablePsiElement> distinctNavigatableDeclarations = new LinkedHashSet<>();
+                for (DeclarationInfo declaration : declarations) {
+                    NavigatablePsiElement navigatable = declaration.navigatable();
+                    if (navigatable != null) {
+                        distinctNavigatableDeclarations.add(navigatable);
+                    }
+                }
+                List<NavigatablePsiElement> allNavigatableDeclarations = new ArrayList<>(distinctNavigatableDeclarations);
+                boolean crossKindConflict = declarations.stream().anyMatch(it -> it.scope() == BindingScope.GLOBAL) &&
+                    declarations.stream().anyMatch(it -> it.scope() == BindingScope.FILE_LOCAL);
+                boolean seenGlobal = false;
+                boolean seenFileLocal = false;
+
+                for (DeclarationInfo declaration : declarations) {
+                    PsiElement element = declaration.element();
+                    BindingScope scope = declaration.scope();
+                    NavigatablePsiElement navigatable = declaration.navigatable();
+                    boolean first = !seenGlobal && !seenFileLocal;
+                    boolean sameScopeConflict = scope == BindingScope.GLOBAL ? seenGlobal : seenFileLocal;
+
+                    LocalizeValue message;
+                    if (first && !crossKindConflict) {
+                        // consulo: upstream passed name, but the message has no placeholder
+                        message = StarlarkLocalize.inspectionDescriptionBindingConflictOriginal();
+                    }
+                    else if (sameScopeConflict) {
+                        message = StarlarkLocalize.inspectionDescriptionBindingConflictSameKind(name);
+                    }
+                    else {
+                        message = StarlarkLocalize.inspectionDescriptionBindingConflictCrossKind(name, scope.getQualifier());
+                    }
+
+                    // consulo: upstream wrapped the ModCommand action with LocalQuickFix.from(...)
+                    LocalQuickFix fix = navigatable == null
+                        ? null
+                        : new ShowConflictingDeclarationsAction(name, navigatable, allNavigatableDeclarations);
+
+                    registerProblem(element, message, fix);
+
+                    if (scope == BindingScope.GLOBAL) {
+                        seenGlobal = true;
+                    }
+                    else {
+                        seenFileLocal = true;
+                    }
+                }
+            }
         }
-      }
 
-      for ((name, declarations) in declarationsByName) {
-        if (declarations.size <= 1) continue
+        private void collectDeclarationInfo(
+            String name,
+            PsiElement elem,
+            BindingScope scope,
+            Map<String, List<DeclarationInfo>> declarationsByName
+        ) {
+            NavigatablePsiElement navigatable;
+            if (elem instanceof NavigatablePsiElement navigatableElem) {
+                navigatable = navigatableElem;
+            }
+            else if (elem.getParent() instanceof NavigatablePsiElement navigatableParent) {
+                navigatable = navigatableParent;
+            }
+            else if (elem.getNavigationElement() instanceof NavigatablePsiElement navigatableNavigationElement) {
+                navigatable = navigatableNavigationElement;
+            }
+            else {
+                navigatable = null;
+            }
 
-        val allNavigatableDeclarations = declarations.asSequence().mapNotNull { it.navigatable }.distinct().toList()
-        val crossKindConflict = declarations.any { it.scope == BindingScope.GLOBAL } && declarations.any { it.scope == BindingScope.FILE_LOCAL }
-        var seenGlobal = false
-        var seenFileLocal = false
-
-        for ((element, scope, navigatable) in declarations) {
-          val first = !seenGlobal && !seenFileLocal
-          val sameScopeConflict = if (scope == BindingScope.GLOBAL) seenGlobal else seenFileLocal
-
-          val message = when {
-            first && !crossKindConflict -> StarlarkBundle.message("inspection.description.binding.conflict.original", name)
-            sameScopeConflict -> StarlarkBundle.message("inspection.description.binding.conflict.same.kind", name)
-            else -> StarlarkBundle.message("inspection.description.binding.conflict.cross.kind", name, scope.qualifier)
-          }
-
-          val fix = navigatable
-            ?.let { ShowConflictingDeclarationsAction(name, it, allNavigatableDeclarations) }
-            ?.let(LocalQuickFix::from)
-
-          registerProblem(element, message, fix)
-
-          if (scope == BindingScope.GLOBAL) seenGlobal = true else seenFileLocal = true
+            declarationsByName.computeIfAbsent(name, it -> new ArrayList<>()).add(new DeclarationInfo(elem, scope, navigatable));
         }
-      }
+
+        private void registerProblem(PsiElement element, LocalizeValue message, @Nullable LocalQuickFix fix) {
+            if (fix == null) {
+                myHolder.newProblem(message).range(element).create();
+            }
+            else {
+                myHolder.newProblem(message).range(element).withFix(fix).create();
+            }
+        }
     }
 
-    private fun collectDeclarationInfo(
-      name: String,
-      elem: PsiElement,
-      scope: BindingScope,
-      declarationsByName: MutableMap<String, MutableList<DeclarationInfo>>
+    // consulo: the ModCommand API (PsiBasedModCommandAction, ModCommand.chooseAction) does not exist in Consulo; a classic
+    // quick fix (not in a write action) that shows the same choice as a list popup. The intention preview (generatePreview) is dropped.
+    public static class ShowConflictingDeclarationsAction extends LocalQuickFixAndIntentionActionOnPsiElement {
+        private final String myDeclarationName;
+        private final List<SmartPsiElementPointer<NavigatablePsiElement>> myConflictingDeclarationsPointers;
+
+        public ShowConflictingDeclarationsAction(
+            String declarationName,
+            NavigatablePsiElement originalDeclaration,
+            List<NavigatablePsiElement> conflictingDeclarations
+        ) {
+            super(originalDeclaration);
+            myDeclarationName = declarationName;
+            myConflictingDeclarationsPointers = conflictingDeclarations.stream().map(SmartPointerManager::createPointer).toList();
+        }
+
+        private List<NavigatablePsiElement> getConflictingDeclarations() {
+            List<NavigatablePsiElement> result = new ArrayList<>();
+            for (SmartPsiElementPointer<NavigatablePsiElement> pointer : myConflictingDeclarationsPointers) {
+                NavigatablePsiElement element = pointer.getElement();
+                if (element != null) {
+                    result.add(element);
+                }
+            }
+            return result;
+        }
+
+        // consulo: Consulo intention actions have no family name; kept from upstream
+        public LocalizeValue getFamilyName() {
+            return StarlarkLocalize.inspectionQuickfixShowConflictingDeclarationsFamily();
+        }
+
+        // consulo: upstream getPresentation(context, element) returned Presentation.of(text)
+        @Override
+        public LocalizeValue getText() {
+            return StarlarkLocalize.inspectionQuickfixShowConflictingDeclarationsText(myDeclarationName);
+        }
+
+        // consulo: upstream perform(context, element) returned ModCommand.chooseAction(title, navigateActions)
+        @Override
+        public void invoke(
+            Project project,
+            PsiFile file,
+            @Nullable Editor editor,
+            PsiElement startElement,
+            PsiElement endElement
+        ) {
+            if (!(startElement instanceof NavigatablePsiElement element)) {
+                return;
+            }
+            List<NavigateToConflictingDeclarationAction> navigateActions = new ArrayList<>();
+            for (NavigatablePsiElement conflictingDeclaration : getConflictingDeclarations()) {
+                if (!conflictingDeclaration.equals(element)) {
+                    navigateActions.add(new NavigateToConflictingDeclarationAction(conflictingDeclaration));
+                }
+            }
+            navigateActions.add(new NavigateToConflictingDeclarationAction(element, true));
+
+            BaseListPopupStep<NavigateToConflictingDeclarationAction> step = new BaseListPopupStep<>(
+                StarlarkLocalize.inspectionQuickfixShowConflictingDeclarationsPopupTitle().get(),
+                navigateActions
+            ) {
+                @Override
+                public String getTextFor(NavigateToConflictingDeclarationAction value) {
+                    return value.getText().get();
+                }
+
+                @Override
+                public @Nullable Image getIconFor(NavigateToConflictingDeclarationAction value) {
+                    return value.getIcon();
+                }
+
+                @Override
+                public @Nullable PopupStep onChosen(NavigateToConflictingDeclarationAction selectedValue, boolean finalChoice) {
+                    return doFinalStep(() -> selectedValue.perform(project));
+                }
+            };
+            ListPopup popup = JBPopupFactory.getInstance().createListPopup(project, step);
+            Editor popupEditor = editor != null ? editor : FileEditorManager.getInstance(project).getSelectedTextEditor();
+            if (popupEditor != null) {
+                EditorPopupHelper.getInstance().showPopupInBestPositionFor(popupEditor, popup);
+            }
+            else {
+                popup.showInFocusCenter();
+            }
+        }
+
+        @Override
+        public boolean startInWriteAction() {
+            return false;
+        }
+    }
+
+    // consulo: upstream is a PsiBasedModCommandAction used as an item of ModCommand.chooseAction; here it is a plain item of the
+    // list popup shown by ShowConflictingDeclarationsAction. The intention preview (generatePreview) is dropped.
+    public static class NavigateToConflictingDeclarationAction {
+        private final SmartPsiElementPointer<NavigatablePsiElement> myDeclarationPointer;
+        private final boolean myIsOriginalDeclaration;
+
+        public NavigateToConflictingDeclarationAction(NavigatablePsiElement declaration) {
+            this(declaration, false);
+        }
+
+        public NavigateToConflictingDeclarationAction(NavigatablePsiElement declaration, boolean isOriginalDeclaration) {
+            myDeclarationPointer = SmartPointerManager.createPointer(declaration);
+            myIsOriginalDeclaration = isOriginalDeclaration;
+        }
+
+        public LocalizeValue getFamilyName() {
+            return StarlarkLocalize.inspectionQuickfixShowConflictingDeclarationsNavigateFamily();
+        }
+
+        // consulo: upstream getPresentation(context, element): Presentation.of(title).withIcon(...); the highlighting of the
+        // element range (withHighlighting) has no list popup counterpart
+        public LocalizeValue getText() {
+            NavigatablePsiElement element = myDeclarationPointer.getElement();
+            if (element == null) {
+                return getFamilyName();
+            }
+            return StarlarkLocalize.inspectionQuickfixShowConflictingDeclarationsNavigateText(
+                Objects.requireNonNull(element.getContainingFile()).getName(), myIsOriginalDeclaration ? 1 : 0
+            );
+        }
+
+        public @Nullable Image getIcon() {
+            NavigatablePsiElement element = myDeclarationPointer.getElement();
+            if (element == null) {
+                return null;
+            }
+            return IconDescriptorUpdaters.getIcon(Objects.requireNonNull(element.getContainingFile()), 0);
+        }
+
+        // consulo: upstream perform(context, element) returned ModCommand.select(target); opens the file and selects the target
+        public void perform(Project project) {
+            NavigatablePsiElement element = myDeclarationPointer.getElement();
+            if (element == null || !element.isValid()) {
+                return;
+            }
+            PsiElement nameIdentifier = element instanceof PsiNameIdentifierOwner nameIdentifierOwner
+                ? nameIdentifierOwner.getNameIdentifier()
+                : null;
+            PsiElement target = nameIdentifier != null ? nameIdentifier : element;
+            VirtualFile virtualFile = Objects.requireNonNull(target.getContainingFile()).getVirtualFile();
+            if (virtualFile == null) {
+                return;
+            }
+            TextRange range = target.getTextRange();
+            Editor editor = FileEditorManager.getInstance(project).openTextEditor(
+                OpenFileDescriptorFactory.getInstance(project).newBuilder(virtualFile).offset(range.getStartOffset()).build(),
+                true
+            );
+            if (editor != null) {
+                editor.getSelectionModel().setSelection(range.getStartOffset(), range.getEndOffset());
+            }
+        }
+    }
+
+    private static final String[] EXCLUDED_FILE_NAMES = ArrayUtil.mergeArrays(
+        Constants.BUILD_FILE_NAMES,
+        Constants.WORKSPACE_FILE_NAME, "WORKSPACE.bazel", "WORKSPACE.bzlmod"
+    );
+
+    private enum BindingScope {
+        GLOBAL("global"),
+        FILE_LOCAL("file-local");
+
+        private final String myQualifier;
+
+        BindingScope(String qualifier) {
+            myQualifier = qualifier;
+        }
+
+        public String getQualifier() {
+            return myQualifier;
+        }
+    }
+
+    private record DeclarationInfo(
+        PsiElement element,
+        BindingScope scope,
+        @Nullable NavigatablePsiElement navigatable
     ) {
-      val navigatable = (elem as? NavigatablePsiElement)
-                        ?: (elem.parent as? NavigatablePsiElement)
-                        ?: (elem.navigationElement as? NavigatablePsiElement)
-
-      declarationsByName.getOrPut(name) { mutableListOf() }.add(DeclarationInfo(elem, scope, navigatable))
     }
 
-    private fun registerProblem(element: PsiElement, @InspectionMessage message: String, fix: LocalQuickFix?) {
-      if (fix == null) holder.registerProblem(element, message)
-      else holder.registerProblem(element, message, fix)
-    }
-  }
-
-  class ShowConflictingDeclarationsAction(
-    private val declarationName: String,
-    originalDeclaration: NavigatablePsiElement,
-    conflictingDeclarations: List<NavigatablePsiElement>,
-  ) : PsiBasedModCommandAction<NavigatablePsiElement>(originalDeclaration) {
-    private val conflictingDeclarationsPointers: List<SmartPsiElementPointer<NavigatablePsiElement>> =
-      conflictingDeclarations.map { SmartPointerManager.createPointer(it) }
-
-    private val conflictingDeclarations: List<NavigatablePsiElement>
-      get() = conflictingDeclarationsPointers.mapNotNull { it.element }
-
-    override fun getFamilyName(): String = StarlarkBundle.message("inspection.quickfix.show.conflicting.declarations.family")
-
-    override fun getPresentation(context: ActionContext, element: NavigatablePsiElement): Presentation =
-      Presentation.of(StarlarkBundle.message("inspection.quickfix.show.conflicting.declarations.text", declarationName))
-
-    override fun perform(context: ActionContext, element: NavigatablePsiElement): ModCommand {
-      val navigateActions = buildList {
-        for (conflictingDeclaration in conflictingDeclarations) {
-          if (conflictingDeclaration != element) add(NavigateToConflictingDeclarationAction(conflictingDeclaration))
-        }
-        add(NavigateToConflictingDeclarationAction(element, isOriginalDeclaration = true))
-      }
-      return ModCommand.chooseAction(StarlarkBundle.message("inspection.quickfix.show.conflicting.declarations.popup.title"), navigateActions)
+    // consulo: registration attributes of <localInspection> in intellij.bazel.core.xml
+    @Override
+    public @Nullable Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
     }
 
-    override fun generatePreview(context: ActionContext, element: NavigatablePsiElement): IntentionPreviewInfo {
-      val builder = HtmlBuilder().apply {
-        for (conflictingDeclaration in conflictingDeclarations) {
-          if (conflictingDeclaration != element) {
-            append(IntentionPreviewInfo.navigatePreviewHtmlChunk(conflictingDeclaration.containingFile, conflictingDeclaration.textOffset))
-            br()
-          }
-        }
-        append(IntentionPreviewInfo.navigatePreviewHtmlChunk(element.containingFile, element.textOffset))
-        append(HtmlChunk.text(StarlarkBundle.message("inspection.quickfix.show.conflicting.declarations.current.marker.text")).bold())
-      }
-      return IntentionPreviewInfo.Html(builder.toFragment())
-    }
-  }
-
-  class NavigateToConflictingDeclarationAction(
-    declaration: NavigatablePsiElement,
-    private val isOriginalDeclaration: Boolean = false,
-  ) : PsiBasedModCommandAction<NavigatablePsiElement>(declaration) {
-    override fun getFamilyName(): String = StarlarkBundle.message("inspection.quickfix.show.conflicting.declarations.navigate.family")
-
-    override fun getPresentation(context: ActionContext, element: NavigatablePsiElement): Presentation {
-      val title = StarlarkBundle.message(
-        "inspection.quickfix.show.conflicting.declarations.navigate.text",
-        element.containingFile.name, if (isOriginalDeclaration) 1 else 0,
-      )
-      return Presentation.of(title)
-        .withIcon(element.containingFile.getIcon(0))
-        .applyIf(element.containingFile == context.file) { withHighlighting(element.textRange) }
+    @Override
+    public String getShortName() {
+        return "StarlarkBindingConflict";
     }
 
-    override fun generatePreview(context: ActionContext, element: NavigatablePsiElement): IntentionPreviewInfo = IntentionPreviewInfo.snippet(element)
-
-    override fun perform(context: ActionContext, element: NavigatablePsiElement): ModCommand {
-      val target = (element as? PsiNameIdentifierOwner)?.nameIdentifier ?: element
-      return ModCommand.select(target)
-    }
-  }
-
-  companion object {
-    private val EXCLUDED_FILE_NAMES = Constants.BUILD_FILE_NAMES +
-                                      arrayOf(Constants.WORKSPACE_FILE_NAME, "WORKSPACE.bazel", "WORKSPACE.bzlmod")
-
-    private enum class BindingScope(val qualifier: String) {
-      GLOBAL("global"),
-      FILE_LOCAL("file-local"),
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameStarlarkBindingConflictCheck();
     }
 
-    private data class DeclarationInfo(
-      val element: PsiElement,
-      val scope: BindingScope,
-      val navigatable: NavigatablePsiElement?,
-    )
-  }
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.starlarkInspectionGroupName();
+    }
+
+    // consulo: upstream groupPath="Bazel"
+    @Override
+    public LocalizeValue[] getGroupPath() {
+        return new LocalizeValue[]{BazelPluginLocalize.bazelInspectionGroupName(), getGroupDisplayName()};
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }

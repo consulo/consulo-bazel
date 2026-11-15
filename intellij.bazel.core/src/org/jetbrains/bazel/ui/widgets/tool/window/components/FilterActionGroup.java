@@ -1,73 +1,97 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.components
+package org.jetbrains.bazel.ui.widgets.tool.window.components;
 
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.actionSystem.ToggleAction
-import com.intellij.openapi.actionSystem.Toggleable
-import com.intellij.openapi.project.DumbAware
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.application.dumb.DumbAware;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.localize.LocalizeValue;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.AnActionWithSyncUpdate;
+import consulo.ui.ex.action.DefaultActionGroup;
+import consulo.ui.ex.action.ToggleAction;
+import consulo.ui.ex.action.Toggleable;
+import org.jetbrains.bazel.commons.RuleType;
+import org.jetbrains.bsp.protocol.BuildTarget;
 
-internal enum class TargetFilter(
-  @JvmField val predicate: (BuildTarget) -> Boolean,
-) {
-  OFF({ true }),
-  CAN_RUN({ it.kind.ruleType == RuleType.BINARY }),
-  CAN_TEST({ it.kind.ruleType == RuleType.TEST }),
-}
+import java.util.function.Predicate;
 
-internal class FilterActionGroup(private val model: BazelTargetsPanelModel) :
-  DefaultActionGroup(
-    BazelPluginBundle.message("widget.filter.action.group"),
-    null,
-    AllIcons.General.Filter,
-  ),
-  Toggleable,
-  DumbAware {
-  init {
-    this.isPopup = true
-    addFilterChangeAction(
-      TargetFilter.OFF,
-      BazelPluginBundle.message("widget.filter.turn.off"),
-    )
-    addFilterChangeAction(
-      TargetFilter.CAN_RUN,
-      BazelPluginBundle.message("widget.filter.can.run"),
-    )
-    addFilterChangeAction(
-      TargetFilter.CAN_TEST,
-      BazelPluginBundle.message("widget.filter.can.test"),
-    )
-  }
+public class FilterActionGroup extends DefaultActionGroup implements
+    Toggleable,
+    DumbAware,
+    // consulo: update(e) comes from AnActionWithSyncUpdate (always runs in the background, upstream ActionUpdateThread.BGT)
+    AnActionWithSyncUpdate {
+    // consulo: upstream top-level enum of FilterActionGroup.kt
+    public enum TargetFilter {
+        OFF(it -> true),
+        CAN_RUN(it -> it.getKind().ruleType() == RuleType.BINARY),
+        CAN_TEST(it -> it.getKind().ruleType() == RuleType.TEST);
 
-  private fun addFilterChangeAction(filterType: TargetFilter, text: String) {
-    this.add(FilterChangeAction(model, filterType, text))
-  }
+        public final Predicate<BuildTarget> predicate;
 
-  override fun update(e: AnActionEvent) {
-    super.update(e)
-    Toggleable.setSelected(e.presentation, model.targetFilter != TargetFilter.OFF)
-  }
-
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
-}
-
-private class FilterChangeAction(
-  private val model: BazelTargetsPanelModel,
-  private val filterType: TargetFilter,
-  text: String,
-) : ToggleAction(text),
-  DumbAware {
-  override fun isSelected(e: AnActionEvent): Boolean = model.targetFilter == filterType
-
-  override fun setSelected(e: AnActionEvent, state: Boolean) {
-    if (state) {
-      model.targetFilter = filterType
+        TargetFilter(Predicate<BuildTarget> predicate) {
+            this.predicate = predicate;
+        }
     }
-  }
 
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+    private final BazelTargetsPanelModel myModel;
+
+    public FilterActionGroup(BazelTargetsPanelModel model) {
+        super(
+            BazelPluginLocalize.widgetFilterActionGroup(),
+            LocalizeValue.empty(),
+            PlatformIconGroup.generalFilter()
+        );
+        myModel = model;
+        setPopup(true);
+        addFilterChangeAction(
+            TargetFilter.OFF,
+            BazelPluginLocalize.widgetFilterTurnOff()
+        );
+        addFilterChangeAction(
+            TargetFilter.CAN_RUN,
+            BazelPluginLocalize.widgetFilterCanRun()
+        );
+        addFilterChangeAction(
+            TargetFilter.CAN_TEST,
+            BazelPluginLocalize.widgetFilterCanTest()
+        );
+    }
+
+    private void addFilterChangeAction(TargetFilter filterType, LocalizeValue text) {
+        add(new FilterChangeAction(myModel, filterType, text));
+    }
+
+    @Override
+    public void update(AnActionEvent e) {
+        // consulo: DefaultActionGroup has no update(e) to call (upstream super.update(e))
+        Toggleable.setSelected(e.getPresentation(), myModel.getTargetFilter() != TargetFilter.OFF);
+    }
+}
+
+final class FilterChangeAction extends ToggleAction implements DumbAware {
+    private final BazelTargetsPanelModel myModel;
+    private final FilterActionGroup.TargetFilter myFilterType;
+
+    FilterChangeAction(
+        BazelTargetsPanelModel model,
+        FilterActionGroup.TargetFilter filterType,
+        LocalizeValue text
+    ) {
+        super(text);
+        myModel = model;
+        myFilterType = filterType;
+    }
+
+    @Override
+    public boolean isSelected(AnActionEvent e) {
+        return myModel.getTargetFilter() == myFilterType;
+    }
+
+    @Override
+    public void setSelected(AnActionEvent e, boolean state) {
+        if (state) {
+            myModel.setTargetFilter(myFilterType);
+        }
+    }
+
+    // consulo: ToggleAction always updates in the background (upstream ActionUpdateThread.BGT)
 }

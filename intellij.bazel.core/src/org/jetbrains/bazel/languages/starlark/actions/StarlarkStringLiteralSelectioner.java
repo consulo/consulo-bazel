@@ -1,23 +1,42 @@
-package org.jetbrains.bazel.languages.starlark.actions
+package org.jetbrains.bazel.languages.starlark.actions;
 
-import com.intellij.codeInsight.editorActions.ExtendWordSelectionHandlerBase
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.startOffset
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.codeEditor.Editor;
+import consulo.document.util.TextRange;
+import consulo.language.editor.action.ExtendWordSelectionHandlerBase;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkStringLiteralSelectioner : ExtendWordSelectionHandlerBase() {
-  override fun canSelect(element: PsiElement): Boolean =
-    element is StarlarkStringLiteralExpression || element.parent is StarlarkStringLiteralExpression
+import java.util.List;
 
-  override fun select(
-    element: PsiElement,
-    editorText: CharSequence,
-    cursorOffset: Int,
-    editor: Editor,
-  ): List<TextRange>? {
-    val stringElement = element as? StarlarkStringLiteralExpression ?: element.parent as? StarlarkStringLiteralExpression ?: return null
-    return listOf(stringElement.getStringContentsOffset().shiftRight(stringElement.startOffset))
-  }
+@ExtensionImpl
+public class StarlarkStringLiteralSelectioner extends ExtendWordSelectionHandlerBase {
+    @Override
+    @RequiredReadAction
+    public boolean canSelect(PsiElement element) {
+        return element instanceof StarlarkStringLiteralExpression || element.getParent() instanceof StarlarkStringLiteralExpression;
+    }
+
+    @Override
+    @RequiredReadAction
+    public @Nullable List<TextRange> select(
+        PsiElement element,
+        CharSequence editorText,
+        int cursorOffset,
+        Editor editor
+    ) {
+        StarlarkStringLiteralExpression stringElement;
+        if (element instanceof StarlarkStringLiteralExpression literal) {
+            stringElement = literal;
+        }
+        else if (element.getParent() instanceof StarlarkStringLiteralExpression parentLiteral) {
+            stringElement = parentLiteral;
+        }
+        else {
+            return null;
+        }
+        return List.of(stringElement.getStringContentsOffset().shiftRight(stringElement.getTextRange().getStartOffset()));
+    }
 }

@@ -1,112 +1,142 @@
-package org.jetbrains.bazel.flow.exclude
+package org.jetbrains.bazel.flow.exclude;
 
-import com.intellij.openapi.application.backgroundWriteAction
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.diagnostic.telemetry.helpers.useWithScope
-import com.intellij.platform.workspace.storage.impl.url.toVirtualFileUrl
-import com.intellij.util.concurrency.ThreadingAssertions
-import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
-import com.intellij.util.concurrency.annotations.RequiresReadLockAbsence
-import com.intellij.util.concurrency.annotations.RequiresWriteLock
-import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexEx
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.VisibleForTesting
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.performance.bspTracer
-import org.jetbrains.bazel.workspace.bazelProjectDirectoriesEntity
-import org.jetbrains.bazel.workspace.excludeSymlinksFromFileWatcher
-import org.jetbrains.bazel.workspacemodel.entities.modifyBazelProjectDirectoriesEntity
-import java.nio.file.Path
-import kotlin.time.Duration.Companion.seconds
+import consulo.annotation.access.RequiredWriteAction;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.Application;
+import consulo.application.WriteAction;
+import consulo.application.dumb.DumbAware;
+import consulo.application.util.concurrent.AppExecutorUtil;
+import consulo.bazel.workspace.BazelProjectModelService;
+import consulo.disposer.Disposable;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.performance.BspTracer;
+import org.jetbrains.bazel.workspace.ExcludeSymlinksFromFileWatcher;
+import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-@Service(Service.Level.PROJECT)
-class BazelSymlinkExcludeService(
-  private val project: Project,
-  private val coroutineScope: CoroutineScope
-) : DumbAware {
-  private val symlinkUpdatesFlow: MutableSharedFlow<Unit> = MutableSharedFlow(replay = 1)
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
-  @Volatile
-  private var symlinksToExclude: Set<Path> = emptySet()
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class BazelSymlinkExcludeService implements DumbAware, Disposable {
+    private static final Logger LOG = Logger.getInstance(BazelSymlinkExcludeService.class);
 
-  init {
-    // batch bulk symlink updates
-    coroutineScope.launch(Dispatchers.Default) {
-      @OptIn(FlowPreview::class)
-      symlinkUpdatesFlow.debounce(1.seconds)
-        .collect { refreshWorkspaceModel() }
-    }
-  }
+    private final Project myProject;
 
-  fun getBazelSymlinksToExclude(): Set<Path> = symlinksToExclude
+    // consulo: upstream MutableSharedFlow + debounce(1.seconds); a pending refresh is rescheduled on every update
+    private final Object myRefreshLock = new Object();
+    private @Nullable ScheduledFuture<?> myPendingRefresh;
 
-  suspend fun scanForBazelSymlinksToExclude(bazelWorkspace: Path): Set<Path> {
-    val computedSymlinks = measure("BazelSymlinkExcludeService.scanForBazelSymlinksToExclude.ms") {
-      coroutineScope.async(Dispatchers.IO) {
-        logger.info("Scanning directory for bazel symlinks to exclude: $bazelWorkspace")
-        BazelSymlinksCalculator.calculateBazelSymlinksToExclude(bazelWorkspace, BazelFeatureFlags.symlinkScanMaxDepth)
-      }.await()
+    private volatile Set<Path> mySymlinksToExclude = Set.of();
+
+    @Inject
+    public BazelSymlinkExcludeService(Project project) {
+        myProject = project;
     }
 
-    if (computedSymlinks.isNotEmpty()) {
-      logger.info("Found bazel symlinks to exclude during workspace scan: $computedSymlinks")
-      backgroundWriteAction {
-        addBazelSymlinksToExclude(computedSymlinks)
-      }
+    public Set<Path> getBazelSymlinksToExclude() {
+        return mySymlinksToExclude;
     }
 
-    return computedSymlinks
-  }
+    public CompletableFuture<Set<Path>> scanForBazelSymlinksToExclude(Path bazelWorkspace) {
+        CompletableFuture<Set<Path>> computedSymlinksFuture = BspTracer.measure(
+            "BazelSymlinkExcludeService.scanForBazelSymlinksToExclude.ms",
+            () -> CompletableFuture.supplyAsync(() -> {
+                LOG.info("Scanning directory for bazel symlinks to exclude: " + bazelWorkspace);
+                return BazelSymlinksCalculator.calculateBazelSymlinksToExclude(bazelWorkspace, BazelFeatureFlags.getSymlinkScanMaxDepth());
+            }, AppExecutorUtil.getAppExecutorService())
+        );
 
-  @RequiresWriteLock
-  fun addBazelSymlinksToExclude(newSymlinks: Set<Path>) {
-    ThreadingAssertions.assertWriteAccess()
-    logger.info("Excluding newly detected Bazel symlinks: $newSymlinks")
-    excludeSymlinksFromFileWatcher(newSymlinks.toList())
-    symlinksToExclude = symlinksToExclude + newSymlinks
-    // Make sure that IntelliJ's workspace machinery will pull the most recent
-    // list of excluded directories from BazelDirectoryIndexExcludePolicy immediately.
-    // Otherwise, LVCS can start iterating over Bazel's symlinks, effectively freezing the IDE.
-    WorkspaceFileIndexEx.getInstance(project).indexData.resetCustomContributors()
-    symlinkUpdatesFlow.tryEmit(Unit)
-  }
+        return computedSymlinksFuture.thenCompose(computedSymlinks -> {
+            if (!computedSymlinks.isEmpty()) {
+                LOG.info("Found bazel symlinks to exclude during workspace scan: " + computedSymlinks);
+                // consulo: upstream backgroundWriteAction
+                return myProject.getUIAccess().giveAsync(() -> {
+                    WriteAction.run(() -> addBazelSymlinksToExclude(computedSymlinks));
+                }).thenApply(unused -> computedSymlinks);
+            }
 
-  @VisibleForTesting
-  @RequiresBackgroundThread(generateAssertion = false /* IJPL-115548 */)
-  @RequiresReadLockAbsence
-  suspend fun refreshWorkspaceModel() {
-    logger.info("Refreshing workspace model with excluded symlinks")
-    val workspaceModel = WorkspaceModel.getInstance(project)
-    val newSymlinksUrls = symlinksToExclude.map { it.toVirtualFileUrl(workspaceModel.getVirtualFileUrlManager()) }
-    workspaceModel.update("Add new excluded symlinks") { mutableEntityStorage ->
-      val bazelProjectDirectoriesEntity = mutableEntityStorage.bazelProjectDirectoriesEntity() ?: return@update
-      mutableEntityStorage.modifyBazelProjectDirectoriesEntity(bazelProjectDirectoriesEntity) {
-        this.excludedRoots = this.excludedRoots.plus(newSymlinksUrls).distinct().toMutableList()
-      }
+            return CompletableFuture.completedFuture(computedSymlinks);
+        });
     }
-  }
 
-  private suspend inline fun <T> measure(spanName: String, crossinline f: suspend () -> T): T =
-    bspTracer.spanBuilder(spanName).useWithScope { f() }
+    @RequiredWriteAction
+    public void addBazelSymlinksToExclude(Set<Path> newSymlinks) {
+        Application.get().assertWriteAccessAllowed();
+        LOG.info("Excluding newly detected Bazel symlinks: " + newSymlinks);
+        ExcludeSymlinksFromFileWatcher.excludeSymlinksFromFileWatcher(new ArrayList<>(newSymlinks));
+        Set<Path> symlinksToExclude = new LinkedHashSet<>(mySymlinksToExclude);
+        symlinksToExclude.addAll(newSymlinks);
+        mySymlinksToExclude = Set.copyOf(symlinksToExclude);
+        // Make sure that IntelliJ's workspace machinery will pull the most recent
+        // list of excluded directories from BazelDirectoryIndexExcludePolicy immediately.
+        // Otherwise, LVCS can start iterating over Bazel's symlinks, effectively freezing the IDE.
+        // TODO consulo: WorkspaceFileIndexEx.indexData.resetCustomContributors() has no public Consulo counterpart
+        scheduleRefreshWorkspaceModel();
+    }
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): BazelSymlinkExcludeService = project.service()
+    private void scheduleRefreshWorkspaceModel() {
+        synchronized (myRefreshLock) {
+            ScheduledFuture<?> pendingRefresh = myPendingRefresh;
+            if (pendingRefresh != null) {
+                pendingRefresh.cancel(false);
+            }
+            // batch bulk symlink updates
+            myPendingRefresh = AppExecutorUtil.getAppScheduledExecutorService().schedule(this::refreshWorkspaceModel, 1, TimeUnit.SECONDS);
+        }
+    }
 
-    private val logger = logger<BazelSymlinkExcludeService>()
-  }
+    public void refreshWorkspaceModel() {
+        LOG.info("Refreshing workspace model with excluded symlinks");
+        List<String> newSymlinksUrls = mySymlinksToExclude.stream().map(it -> VirtualFileUtil.pathToUrl(it.toString())).toList();
+        // consulo: upstream WorkspaceModel.update on BazelProjectDirectoriesEntity; the entity is project data of BazelProjectModelService
+        BazelProjectModelService modelService = BazelProjectModelService.getInstance(myProject);
+        BazelProjectDirectoriesEntity bazelProjectDirectoriesEntity = modelService.getProjectData(BazelProjectDirectoriesEntity.class);
+        if (bazelProjectDirectoriesEntity == null) {
+            return;
+        }
+        Set<String> excludedRoots = new LinkedHashSet<>(bazelProjectDirectoriesEntity.excludedRoots());
+        excludedRoots.addAll(newSymlinksUrls);
+        modelService.putProjectData(
+            BazelProjectDirectoriesEntity.class,
+            new BazelProjectDirectoriesEntity(
+                bazelProjectDirectoriesEntity.projectRoot(),
+                bazelProjectDirectoriesEntity.includedRoots(),
+                List.copyOf(excludedRoots),
+                bazelProjectDirectoriesEntity.indexPatterns(),
+                bazelProjectDirectoriesEntity.indexableRecursiveRoots(),
+                bazelProjectDirectoriesEntity.indexableNonRecursiveRoots()
+            )
+        );
+    }
+
+    @Override
+    public void dispose() {
+        synchronized (myRefreshLock) {
+            ScheduledFuture<?> pendingRefresh = myPendingRefresh;
+            if (pendingRefresh != null) {
+                pendingRefresh.cancel(false);
+            }
+        }
+    }
+
+    public static BazelSymlinkExcludeService getInstance(Project project) {
+        return project.getInstance(BazelSymlinkExcludeService.class);
+    }
 }

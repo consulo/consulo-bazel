@@ -1,71 +1,71 @@
-package org.jetbrains.bazel.languages.bazelquery.documentation
+package org.jetbrains.bazel.languages.bazelquery.documentation;
 
-import com.intellij.markdown.utils.doc.DocMarkdownToHtmlConverter
-import com.intellij.model.Pointer
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.text.HtmlChunk.body
-import com.intellij.openapi.util.text.HtmlChunk.fragment
-import com.intellij.openapi.util.text.HtmlChunk.head
-import com.intellij.openapi.util.text.HtmlChunk.html
-import com.intellij.openapi.util.text.HtmlChunk.raw
-import com.intellij.openapi.util.text.HtmlChunk.text
-import com.intellij.platform.backend.documentation.DocumentationResult
-import com.intellij.platform.backend.documentation.DocumentationTarget
-import com.intellij.platform.backend.presentation.TargetPresentation
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.functions.BazelQueryFunction
-import org.jetbrains.bazel.languages.bazelquery.functions.BazelQueryFunctionSymbol
+import consulo.application.util.HtmlChunk;
+import consulo.bazel.documentation.BazelMarkdown;
+import consulo.bazel.documentation.DocumentationResult;
+import consulo.bazel.documentation.DocumentationTarget;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelquery.functions.BazelQueryFunction;
+import org.jetbrains.bazel.languages.bazelquery.functions.BazelQueryFunctionSymbol;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("UnstableApiUsage")
-@ApiStatus.Internal
-class BazelQueryFunctionDocumentationTarget(symbol: BazelQueryFunctionSymbol, val project: Project) :
-  DocumentationTarget,
-  Pointer<BazelQueryFunctionDocumentationTarget> {
-  private val function = symbol.function
+import java.util.stream.Collectors;
 
-  override fun createPointer() = this
+public class BazelQueryFunctionDocumentationTarget implements DocumentationTarget {
+    private final Project myProject;
+    private final BazelQueryFunction myFunction;
 
-  override fun dereference(): BazelQueryFunctionDocumentationTarget? = this
-
-  override fun computePresentation(): TargetPresentation = TargetPresentation.builder(function.name).presentation()
-
-  override fun computeDocumentation(): DocumentationResult? =
-    DocumentationResult.asyncDocumentation {
-      val markdownText = functionToDocumentationMarkdownText(function)
-
-      val body =
-        raw(
-          DocMarkdownToHtmlConverter.convert(project, markdownText),
-        )
-      val fragment =
-        fragment(
-          text(function.name).bold().wrapWith(head()),
-          body.wrapWith(body()),
-        )
-
-      DocumentationResult.documentation(fragment.wrapWith(html()).toString())
+    public BazelQueryFunctionDocumentationTarget(BazelQueryFunctionSymbol symbol, Project project) {
+        myProject = project;
+        myFunction = symbol.getFunction();
     }
 
-  companion object {
-    fun functionToDocumentationMarkdownText(function: BazelQueryFunction): String {
-      val markdownText =
-        """
-          |${function.description}
-          |
-          |**Arguments:**
-          |${function.argumentsMarkdown()}
-          |
-          |**Example Usage:**
-          ```
-            ${if (function is BazelQueryFunction.SimpleFunction) function.exampleUsage else "N/A"}
-          ```
-        """.trimMargin()
-      return markdownText
+    public Project getProject() {
+        return myProject;
     }
 
-    private fun BazelQueryFunction.argumentsMarkdown(): String =
-      arguments.joinToString(separator = "\n") { arg ->
-        "- `${arg.name}` (${arg.type}${if (arg.optional) ", optional" else ""}): ${arg.description}"
-      }
-  }
+    // consulo: createPointer(), dereference() and computePresentation() are dropped,
+    // pointer/presentation are not used by the classic documentation provider
+
+    @Override
+    public @Nullable DocumentationResult computeDocumentation() {
+        return DocumentationResult.asyncDocumentation(() -> {
+            String markdownText = functionToDocumentationMarkdownText(myFunction);
+
+            // consulo: DocMarkdownToHtmlConverter.convert(project, markdown) -> BazelMarkdown.toHtml(markdown)
+            HtmlChunk body =
+                HtmlChunk.raw(
+                    BazelMarkdown.toHtml(markdownText)
+                );
+            HtmlChunk fragment =
+                HtmlChunk.fragment(
+                    HtmlChunk.text(myFunction.getName()).bold().wrapWith(HtmlChunk.head()),
+                    body.wrapWith(HtmlChunk.body())
+                );
+
+            return DocumentationResult.documentation(fragment.wrapWith(HtmlChunk.html()).toString());
+        });
+    }
+
+    public static String functionToDocumentationMarkdownText(BazelQueryFunction function) {
+        // consulo: the result of the upstream Kotlin raw string with trimMargin(); the lines without a margin keep their indent
+        String markdownText =
+            function.getDescription() + "\n" +
+                "\n" +
+                "**Arguments:**\n" +
+                argumentsMarkdown(function) + "\n" +
+                "\n" +
+                "**Example Usage:**\n" +
+                "          ```\n" +
+                "            " + (function instanceof BazelQueryFunction.SimpleFunction ? function.getExampleUsage() : "N/A") + "\n" +
+                "          ```";
+        return markdownText;
+    }
+
+    private static String argumentsMarkdown(BazelQueryFunction receiver) {
+        return receiver.getArguments()
+            .stream()
+            .map(arg -> "- `" + arg.name() + "` (" + arg.type() + (arg.optional() ? ", optional" : "") + "): " + arg.description())
+            .collect(Collectors.joining("\n"));
+    }
 }

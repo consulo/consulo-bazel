@@ -1,134 +1,189 @@
-package org.jetbrains.bazel.sync
+package org.jetbrains.bazel.sync;
 
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.components.serviceIfCreated
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.externalSystem.autoimport.ExternalSystemProjectTracker
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.projectAware.BazelWorkspace
-import java.nio.file.Path
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.Application;
+import consulo.application.ReadAction;
+import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.externalSystem.autoimport.ExternalSystemProjectTracker;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.concurrent.coroutine.MutableObservableValue;
+import consulo.util.concurrent.coroutine.ObservableValue;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.projectAware.BazelWorkspace;
 
-/**
- * The Bazel targets/packages that changed since the last sync.
- *
- * @property paths the changed package directories
- * @property wholeProject true when the plugin cannot tell which part of the project changed
- */
-@ApiStatus.Internal
-data class ProjectDirtyState(
-  val paths: Set<Path> = emptySet(),
-  val wholeProject: Boolean = false,
-) {
-  val isEmpty: Boolean get() = paths.isEmpty() && !wholeProject
-
-  companion object {
-    val EMPTY: ProjectDirtyState = ProjectDirtyState()
-  }
-}
+import java.nio.file.Path;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Holds the Bazel files that changed since the last sync.
- *
+ * <p>
  * The plugin tracks these changes itself. It does not use the platform settings-file CRC scan,
  * which recalculates the CRC of every tracked file on each change (BAZEL-3506).
- *
+ * <p>
  * A future partial sync reads this state to find the scope of the next sync.
- *
+ * <p>
  * [TODO] drop as a part of https://youtrack.jetbrains.com/issue/BAZEL-3570
  */
-@Service(Service.Level.PROJECT)
-@ApiStatus.Internal
-class ProjectDirtyStateService(private val project: Project, coroutineScope: CoroutineScope) {
-  private val mutableState = MutableStateFlow(ProjectDirtyState.EMPTY)
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class ProjectDirtyStateService {
+    /**
+     * The Bazel targets/packages that changed since the last sync.
+     *
+     * @param paths        the changed package directories
+     * @param wholeProject true when the plugin cannot tell which part of the project changed
+     */
+    // consulo: upstream top-level data class of ProjectDirtyStateService.kt
+    public record ProjectDirtyState(
+        Set<Path> paths,
+        boolean wholeProject
+    ) {
+        // consulo: overloads for the upstream default arguments (paths = emptySet(), wholeProject = false)
+        public ProjectDirtyState() {
+            this(Set.of(), false);
+        }
 
-  /** The current dirty state. A consumer can observe it. */
-  val state: StateFlow<ProjectDirtyState> = mutableState.asStateFlow()
+        public ProjectDirtyState(boolean wholeProject) {
+            this(Set.of(), wholeProject);
+        }
 
-  init {
-    coroutineScope.launch {
-      state
-        .map { !it.isEmpty }
-        .distinctUntilChanged()
-        .collect { dirty -> if (dirty) notifyPlatform() }
+        public boolean isEmpty() {
+            return paths.isEmpty() && !wholeProject;
+        }
+
+        public static final ProjectDirtyState EMPTY = new ProjectDirtyState();
     }
-  }
 
-  /** Adds [paths] to the dirty set. Returns true if the state changed. */
-  fun markDirty(paths: Collection<Path>): Boolean {
-    if (paths.isEmpty()) return false
-    val old = mutableState.value
-    if (old.wholeProject) return false
-    if (old.paths.containsAll(paths)) return false
+    private final Project myProject;
 
-    val new = old.paths + paths
-    val next =
-      if (new.size > MAX_TRACKED_PATHS) {
-        logger.info("Too many dirty Bazel files in ${project.name}. Marking the whole project.")
-        ProjectDirtyState(wholeProject = true)
-      } else {
-        old.copy(paths = new)
-      }
-    mutableState.value = next
-    return true
-  }
+    // consulo: kotlinx MutableStateFlow replaced by an observable value
+    private final MutableObservableValue<ProjectDirtyState> myMutableState = MutableObservableValue.of(ProjectDirtyState.EMPTY);
 
-  /** Marks the whole project. Use it when the plugin cannot tell which files changed. */
-  fun markWholeProjectDirty(reason: String): Boolean {
-    if (mutableState.value.wholeProject) return false
-    logger.info("Marking the whole Bazel project ${project.name} as dirty: $reason")
-    mutableState.value = ProjectDirtyState(wholeProject = true)
-    return true
-  }
+    /**
+     * The current dirty state. A consumer can observe it.
+     */
+    private final ObservableValue<ProjectDirtyState> myState = myMutableState;
 
-  fun current(): ProjectDirtyState = mutableState.value
-
-  fun isDirty(): Boolean = !mutableState.value.isEmpty
-
-  fun finishSync(scope: ProjectSyncScope) {
-    mutableState.update { current ->
-      // [todo] derive state with difference
-      ProjectDirtyState.EMPTY
+    @Inject
+    public ProjectDirtyStateService(Project project) {
+        myProject = project;
+        // consulo: upstream collects `state.map { !it.isEmpty }.distinctUntilChanged()` in the service coroutine scope;
+        // the mapped observable value only notifies about changes, the platform is notified on a pooled thread
+        myState
+            .map(it -> !it.isEmpty())
+            .addListener(dirty -> {
+                if (dirty) {
+                    CompletableFuture.runAsync(this::notifyPlatform, Application.get().getInstance(ApplicationConcurrency.class).executor());
+                }
+            });
     }
-  }
 
-  fun clearAll() {
-    mutableState.value = ProjectDirtyState.EMPTY
-  }
-
-  /**
-   * Project disposal runs inside a write action, so the read action keeps the disposal from starting during this call (BAZEL-3453).
-   * The call does not create [BazelWorkspace] or the tracker. Without a registered [BazelWorkspace], there is nothing to mark.
-   */
-  private suspend fun notifyPlatform() {
-    readAction {
-      if (project.isDisposed) return@readAction
-      val workspace = project.serviceIfCreated<BazelWorkspace>() ?: return@readAction
-      val tracker = project.serviceIfCreated<ExternalSystemProjectTracker>() ?: return@readAction
-      tracker.markDirtyInternal(workspace.projectId)
+    /**
+     * The current dirty state. A consumer can observe it.
+     */
+    public ObservableValue<ProjectDirtyState> getState() {
+        return myState;
     }
-  }
 
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): ProjectDirtyStateService = project.service()
-  }
+    /**
+     * Adds {@code paths} to the dirty set. Returns true if the state changed.
+     */
+    public boolean markDirty(Collection<Path> paths) {
+        if (paths.isEmpty()) {
+            return false;
+        }
+        ProjectDirtyState old = myMutableState.get();
+        if (old.wholeProject()) {
+            return false;
+        }
+        if (old.paths().containsAll(paths)) {
+            return false;
+        }
+
+        Set<Path> newPaths = new LinkedHashSet<>(old.paths());
+        newPaths.addAll(paths);
+        ProjectDirtyState next;
+        if (newPaths.size() > MAX_TRACKED_PATHS) {
+            LOG.info("Too many dirty Bazel files in " + myProject.getName() + ". Marking the whole project.");
+            next = new ProjectDirtyState(/* wholeProject = */ true);
+        }
+        else {
+            next = new ProjectDirtyState(newPaths, old.wholeProject());
+        }
+        myMutableState.set(next);
+        return true;
+    }
+
+    /**
+     * Marks the whole project. Use it when the plugin cannot tell which files changed.
+     */
+    public boolean markWholeProjectDirty(String reason) {
+        if (myMutableState.get().wholeProject()) {
+            return false;
+        }
+        LOG.info("Marking the whole Bazel project " + myProject.getName() + " as dirty: " + reason);
+        myMutableState.set(new ProjectDirtyState(/* wholeProject = */ true));
+        return true;
+    }
+
+    public ProjectDirtyState current() {
+        return myMutableState.get();
+    }
+
+    public boolean isDirty() {
+        return !myMutableState.get().isEmpty();
+    }
+
+    public void finishSync(ProjectSyncScope scope) {
+        myMutableState.update(current -> {
+            // [todo] derive state with difference
+            return ProjectDirtyState.EMPTY;
+        });
+    }
+
+    public void clearAll() {
+        myMutableState.set(ProjectDirtyState.EMPTY);
+    }
+
+    /**
+     * Project disposal runs inside a write action, so the read action keeps the disposal from starting during this call (BAZEL-3453).
+     * The call does not create {@link BazelWorkspace} or the tracker. Without a registered {@link BazelWorkspace}, there is nothing to mark.
+     */
+    private void notifyPlatform() {
+        ReadAction.run(() -> {
+            if (myProject.isDisposed()) {
+                return;
+            }
+            BazelWorkspace workspace = myProject.getInstanceIfCreated(BazelWorkspace.class);
+            if (workspace == null) {
+                return;
+            }
+            ExternalSystemProjectTracker tracker = myProject.getInstanceIfCreated(ExternalSystemProjectTracker.class);
+            if (tracker == null) {
+                return;
+            }
+            // consulo: upstream calls the internal markDirtyInternal(), Consulo exposes markDirty()
+            tracker.markDirty(workspace.getProjectId());
+        });
+    }
+
+    public static ProjectDirtyStateService getInstance(Project project) {
+        return project.getInstance(ProjectDirtyStateService.class);
+    }
+
+    /**
+     * The largest number of dirty files to track. Above it the service marks the whole project.
+     * A branch switch can change hundreds of thousands of files.
+     */
+    private static final int MAX_TRACKED_PATHS = 5_000;
+
+    private static final Logger LOG = Logger.getInstance(ProjectDirtyStateService.class);
 }
-
-/**
- * The largest number of dirty files to track. Above it the service marks the whole project.
- * A branch switch can change hundreds of thousands of files.
- */
-private const val MAX_TRACKED_PATHS = 5_000
-
-private val logger = Logger.getInstance(ProjectDirtyStateService::class.java)

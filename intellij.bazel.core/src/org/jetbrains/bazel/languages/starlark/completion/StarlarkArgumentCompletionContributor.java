@@ -1,109 +1,172 @@
-package org.jetbrains.bazel.languages.starlark.completion
+package org.jetbrains.bazel.languages.starlark.completion;
 
-import com.intellij.codeInsight.completion.CompletionContributor
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.codeInsight.completion.CompletionResultSet
-import com.intellij.codeInsight.completion.CompletionType
-import com.intellij.codeInsight.completion.InsertHandler
-import com.intellij.codeInsight.completion.InsertionContext
-import com.intellij.codeInsight.completion.PrioritizedLookupElement
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.util.findParentOfType
-import com.intellij.util.PlatformIcons
-import com.intellij.util.ProcessingContext
-import org.jetbrains.bazel.languages.bazelrc.completion.letIf
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunction
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctionParameter
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkNamedLookupElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentExpression
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList
+import consulo.annotation.component.ExtensionImpl;
+import consulo.codeEditor.Editor;
+import consulo.document.Document;
+import consulo.language.Language;
+import consulo.language.editor.completion.CompletionContributor;
+import consulo.language.editor.completion.CompletionParameters;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionResultSet;
+import consulo.language.editor.completion.CompletionType;
+import consulo.language.editor.completion.lookup.InsertHandler;
+import consulo.language.editor.completion.lookup.InsertionContext;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.editor.completion.lookup.PrioritizedLookupElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.language.util.ProcessingContext;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.BazelGlobalFunction;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.BazelGlobalFunctionParameter;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkNamedLookupElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList;
 
-internal class StarlarkArgumentCompletionContributor : CompletionContributor() {
-  init {
-    extend(
-      CompletionType.BASIC,
-      psiElement().withParents(StarlarkReferenceExpression::class.java, StarlarkArgumentExpression::class.java),
-      StarlarkArgumentCompletionProvider,
-    )
-  }
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import static consulo.language.pattern.PlatformPatterns.psiElement;
+
+@ExtensionImpl
+public class StarlarkArgumentCompletionContributor extends CompletionContributor {
+    @SuppressWarnings("unchecked")
+    public StarlarkArgumentCompletionContributor() {
+        extend(
+            CompletionType.BASIC,
+            psiElement().withParents(StarlarkReferenceExpression.class, StarlarkArgumentExpression.class),
+            StarlarkArgumentCompletionProvider.INSTANCE
+        );
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 }
 
-private object StarlarkArgumentCompletionProvider : CompletionProvider<CompletionParameters>() {
-  private fun fileTypeToGlobalFunctions(file: StarlarkFile): Map<String, BazelGlobalFunction> {
-    val project = file.project
-    return when (file.getBazelFileType()) {
-      BazelFileType.EXTENSION -> BazelGlobalFunctions.extensionGlobalFunctions(project)
-      BazelFileType.BUILD -> BazelGlobalFunctions.buildGlobalFunctions(project)
-      BazelFileType.MODULE -> BazelGlobalFunctions.moduleGlobalFunctions(project)
-      BazelFileType.WORKSPACE -> BazelGlobalFunctions.moduleGlobalFunctions(project)
-    } + BazelGlobalFunctions.starlarkGlobalFunctions(project)
-  }
+class StarlarkArgumentCompletionProvider implements CompletionProvider {
+    static final StarlarkArgumentCompletionProvider INSTANCE = new StarlarkArgumentCompletionProvider();
 
-  override fun addCompletions(
-    parameters: CompletionParameters,
-    context: ProcessingContext,
-    result: CompletionResultSet,
-  ) {
-    val file = parameters.originalFile as? StarlarkFile ?: return
-    val starlarkCallExpression = parameters.position.findParentOfType<StarlarkCallExpression>()
-    val functionName = starlarkCallExpression?.firstChild?.text ?: return
-    val globalFunction = fileTypeToGlobalFunctions(file)[functionName]
-
-    if (globalFunction != null) {
-      val argumentList = (starlarkCallExpression.lastChild as StarlarkArgumentList).getArgumentNames()
-      addCompletionForGlobalFunction(result, globalFunction, argumentList)
-    } else {
-      val argument = PsiTreeUtil.getParentOfType(parameters.position, StarlarkArgumentExpression::class.java) ?: return
-      val reference = argument.reference ?: return
-      reference.variants
-        .filterIsInstance<StarlarkNamedLookupElement>()
-        .forEach { result.addElement(it) }
+    private StarlarkArgumentCompletionProvider() {
     }
-  }
 
-  private fun addCompletionForGlobalFunction(
-    result: CompletionResultSet,
-    function: BazelGlobalFunction,
-    argumentList: Set<String>,
-  ) {
-    val filtered =
-      function.params.filter {
-        !argumentList.contains(it.name)
-      }
-
-    filtered.forEach {
-      result.addElement(PrioritizedLookupElement.withPriority(argumentLookupElement(it), 1.0))
+    private Map<String, BazelGlobalFunction> fileTypeToGlobalFunctions(StarlarkFile file) {
+        Project project = file.getProject();
+        Map<String, BazelGlobalFunction> result = new LinkedHashMap<>(
+            switch (file.getBazelFileType()) {
+                case EXTENSION -> BazelGlobalFunctions.extensionGlobalFunctions(project);
+                case BUILD -> BazelGlobalFunctions.buildGlobalFunctions(project);
+                case MODULE -> BazelGlobalFunctions.moduleGlobalFunctions(project);
+                case WORKSPACE -> BazelGlobalFunctions.moduleGlobalFunctions(project);
+            }
+        );
+        result.putAll(BazelGlobalFunctions.starlarkGlobalFunctions(project));
+        return result;
     }
-  }
 
-  private class ArgumentInsertHandler<T : LookupElement>(val default: String) : InsertHandler<T> {
-    override fun handleInsert(context: InsertionContext, item: T) {
-      val editor = context.editor
-      val document = editor.document
-      if (default == "\'\'" || default == "\"\"" || default == "[]" || default == "{}") {
-        document.insertString(context.tailOffset, " = $default,")
-        editor.caretModel.moveToOffset(context.tailOffset - 2)
-      } else {
-        document.insertString(context.tailOffset, " = ,")
-        editor.caretModel.moveToOffset(context.tailOffset - 1)
-      }
+    @Override
+    public void addCompletions(
+        CompletionParameters parameters,
+        ProcessingContext context,
+        CompletionResultSet result
+    ) {
+        PsiFile originalFile = parameters.getOriginalFile();
+        if (!(originalFile instanceof StarlarkFile file)) {
+            return;
+        }
+        StarlarkCallExpression starlarkCallExpression = PsiTreeUtil.getParentOfType(parameters.getPosition(), StarlarkCallExpression.class);
+        PsiElement firstChild = starlarkCallExpression == null ? null : starlarkCallExpression.getFirstChild();
+        if (starlarkCallExpression == null || firstChild == null) {
+            return;
+        }
+        String functionName = firstChild.getText();
+        BazelGlobalFunction globalFunction = fileTypeToGlobalFunctions(file).get(functionName);
+
+        if (globalFunction != null) {
+            Set<String> argumentList =
+                ((StarlarkArgumentList) Objects.requireNonNull(starlarkCallExpression.getLastChild())).getArgumentNames();
+            addCompletionForGlobalFunction(result, globalFunction, argumentList);
+        }
+        else {
+            StarlarkArgumentExpression argument = PsiTreeUtil.getParentOfType(parameters.getPosition(), StarlarkArgumentExpression.class);
+            if (argument == null) {
+                return;
+            }
+            PsiReference reference = argument.getReference();
+            if (reference == null) {
+                return;
+            }
+            for (Object variant : reference.getVariants()) {
+                if (variant instanceof StarlarkNamedLookupElement namedLookupElement) {
+                    result.addElement(namedLookupElement);
+                }
+            }
+        }
     }
-  }
 
-  private fun argumentLookupElement(arg: BazelGlobalFunctionParameter): LookupElement =
-    LookupElementBuilder
-      .create(arg.name)
-      .withIcon(PlatformIcons.PARAMETER_ICON)
-      .letIf(arg.named) {
-        it.withInsertHandler(ArgumentInsertHandler(arg.defaultValue ?: ""))
-      }
+    private void addCompletionForGlobalFunction(
+        CompletionResultSet result,
+        BazelGlobalFunction function,
+        Set<String> argumentList
+    ) {
+        List<BazelGlobalFunctionParameter> filtered =
+            function.params().stream().filter(it ->
+                !argumentList.contains(it.name())
+            ).toList();
+
+        filtered.forEach(it ->
+            result.addElement(PrioritizedLookupElement.withPriority(argumentLookupElement(it), 1.0))
+        );
+    }
+
+    private static class ArgumentInsertHandler<T extends LookupElement> implements InsertHandler<T> {
+        private final String myDefault;
+
+        ArgumentInsertHandler(String defaultValue) {
+            myDefault = defaultValue;
+        }
+
+        public String getDefault() {
+            return myDefault;
+        }
+
+        @Override
+        public void handleInsert(InsertionContext context, T item) {
+            Editor editor = context.getEditor();
+            Document document = editor.getDocument();
+            if (myDefault.equals("\'\'") || myDefault.equals("\"\"") || myDefault.equals("[]") || myDefault.equals("{}")) {
+                document.insertString(context.getTailOffset(), " = " + myDefault + ",");
+                editor.getCaretModel().moveToOffset(context.getTailOffset() - 2);
+            }
+            else {
+                document.insertString(context.getTailOffset(), " = ,");
+                editor.getCaretModel().moveToOffset(context.getTailOffset() - 1);
+            }
+        }
+    }
+
+    private LookupElement argumentLookupElement(BazelGlobalFunctionParameter arg) {
+        LookupElementBuilder it = LookupElementBuilder
+            .create(arg.name())
+            .withIcon(PlatformIconGroup.nodesParameter());
+        // consulo: upstream letIf(arg.named) { } from BazelrcCompletionContributor
+        if (arg.named()) {
+            String defaultValue = arg.defaultValue();
+            return it.withInsertHandler(new ArgumentInsertHandler<>(defaultValue != null ? defaultValue : ""));
+        }
+        return it;
+    }
 }

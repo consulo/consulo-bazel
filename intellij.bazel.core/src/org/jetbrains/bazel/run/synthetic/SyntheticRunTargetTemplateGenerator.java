@@ -1,30 +1,52 @@
-package org.jetbrains.bazel.run.synthetic
+package org.jetbrains.bazel.run.synthetic;
 
-import com.intellij.lang.Language
-import com.intellij.lang.LanguageExtension
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPointCacheKey;
+import consulo.language.Language;
+import consulo.language.extension.ByLanguageValue;
+import consulo.language.extension.LanguageExtension;
+import consulo.language.extension.LanguageOneToMany;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface SyntheticRunTargetTemplateGenerator {
-  fun isSupported(target: BuildTarget): Boolean
+import java.util.List;
 
-  fun getSyntheticTargetLabel(original: BuildTarget, element: PsiElement): Label
-  fun getSyntheticParams(target: BuildTarget, element: PsiElement): Params
-  fun createSyntheticTemplate(target: BuildTarget, params: Params): SyntheticRunTargetTemplate
+// consulo: upstream registers the generators through a LanguageExtension (LanguageExtensionPoint with a `language` attribute);
+// Consulo language extensions return their language from getLanguage()
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface SyntheticRunTargetTemplateGenerator extends LanguageExtension {
+    ExtensionPointCacheKey<SyntheticRunTargetTemplateGenerator, ByLanguageValue<List<SyntheticRunTargetTemplateGenerator>>> KEY =
+        ExtensionPointCacheKey.create("SyntheticRunTargetTemplateGenerator", LanguageOneToMany.build(false));
 
-  companion object {
-    val ep: LanguageExtension<SyntheticRunTargetTemplateGenerator> = LanguageExtension("org.jetbrains.bazel.syntheticRunTargetTemplateGenerator")
+    boolean isSupported(BuildTarget target);
+
+    Label getSyntheticTargetLabel(BuildTarget original, PsiElement element);
+
+    Params getSyntheticParams(BuildTarget target, PsiElement element);
+
+    SyntheticRunTargetTemplate createSyntheticTemplate(BuildTarget target, Params params);
+
+    // consulo: upstream `ep.allForLanguage(language)`
+    static List<SyntheticRunTargetTemplateGenerator> allForLanguage(Language language) {
+        return Application.get().getExtensionPoint(SyntheticRunTargetTemplateGenerator.class).getOrBuildCache(KEY).requiredGet(language);
+    }
 
     /**
      * Just one generator, because showing several gutters for the same target doesn't make sense
      */
-    fun getTemplateGenerator(target: BuildTarget, language: Language): SyntheticRunTargetTemplateGenerator? =
-      ep.allForLanguage(language)
-        .firstOrNull { it.isSupported(target) }
-  }
+    static @Nullable SyntheticRunTargetTemplateGenerator getTemplateGenerator(BuildTarget target, Language language) {
+        for (SyntheticRunTargetTemplateGenerator it : allForLanguage(language)) {
+            if (it.isSupported(target)) {
+                return it;
+            }
+        }
+        return null;
+    }
 
-  data class Params(val data: String?)
+    record Params(@Nullable String data) {
+    }
 }

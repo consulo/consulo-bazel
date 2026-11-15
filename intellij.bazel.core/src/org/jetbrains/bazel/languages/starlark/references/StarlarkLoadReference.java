@@ -1,35 +1,64 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReferenceBase
-import org.jetbrains.bazel.languages.starlark.completion.StarlarkCompletionProcessor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.rename.StarlarkElementGenerator
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.access.RequiredWriteAction;
+import consulo.document.util.TextRange;
+import consulo.language.ast.ASTNode;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReferenceBase;
+import org.jetbrains.bazel.languages.starlark.completion.StarlarkCompletionProcessor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.rename.StarlarkElementGenerator;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkLoadReference(element: StarlarkStringLiteralExpression, val loadedFileReference: BazelLabelReference) :
-  PsiReferenceBase<StarlarkStringLiteralExpression>(element, TextRange(0, element.textLength), false) {
-  override fun resolve(): PsiElement? {
-    val loadedFile = loadedFileReference.resolve() as? StarlarkFile ?: return null
-    val name = element.getStringContents()
-    val processor = StarlarkResolveNameProcessor(mutableListOf(), name)
-    SearchUtils.searchInFile(loadedFile, processor)
-    return processor.result.firstOrNull()
-  }
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Objects;
 
-  override fun getVariants(): Array<LookupElement> {
-    val element = myElement ?: return emptyArray()
-    val loadedFile = loadedFileReference.resolve() as? StarlarkFile ?: return emptyArray()
-    val processor = StarlarkCompletionProcessor(mutableMapOf(), element, element.getQuote())
-    SearchUtils.searchInFile(loadedFile, processor)
-    return processor.results.values.toTypedArray()
-  }
+public class StarlarkLoadReference extends PsiReferenceBase<StarlarkStringLiteralExpression> {
+    private final BazelLabelReference myLoadedFileReference;
 
-  override fun handleElementRename(newElementName: String): PsiElement {
-    val newNode = StarlarkElementGenerator(element.project).createStringLiteral(newElementName)
-    element.node.replaceChild(element.node.firstChildNode, newNode)
-    return element
-  }
+    @RequiredReadAction
+    public StarlarkLoadReference(StarlarkStringLiteralExpression element, BazelLabelReference loadedFileReference) {
+        super(element, new TextRange(0, element.getTextLength()), false);
+        myLoadedFileReference = loadedFileReference;
+    }
+
+    public BazelLabelReference getLoadedFileReference() {
+        return myLoadedFileReference;
+    }
+
+    @Override
+    @RequiredReadAction
+    public @Nullable PsiElement resolve() {
+        if (!(myLoadedFileReference.resolve() instanceof StarlarkFile loadedFile)) {
+            return null;
+        }
+        String name = myElement.getStringContents();
+        StarlarkResolveNameProcessor processor = new StarlarkResolveNameProcessor(new ArrayList<>(), name);
+        SearchUtils.searchInFile(loadedFile, processor);
+        return processor.getResult().isEmpty() ? null : processor.getResult().get(0);
+    }
+
+    @Override
+    @RequiredReadAction
+    public LookupElement[] getVariants() {
+        StarlarkStringLiteralExpression element = myElement;
+        if (!(myLoadedFileReference.resolve() instanceof StarlarkFile loadedFile)) {
+            return LookupElement.EMPTY_ARRAY;
+        }
+        StarlarkCompletionProcessor processor = new StarlarkCompletionProcessor(new HashMap<>(), element, element.getQuote());
+        SearchUtils.searchInFile(loadedFile, processor);
+        return processor.getResults().values().toArray(LookupElement.EMPTY_ARRAY);
+    }
+
+    @Override
+    @RequiredWriteAction
+    public PsiElement handleElementRename(String newElementName) {
+        ASTNode newNode = new StarlarkElementGenerator(myElement.getProject()).createStringLiteral(newElementName);
+        myElement.getNode().replaceChild(Objects.requireNonNull(myElement.getNode().getFirstChildNode()), newNode);
+        return myElement;
+    }
 }

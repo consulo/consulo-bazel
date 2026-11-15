@@ -1,11 +1,12 @@
-package org.jetbrains.bazel.run
+package org.jetbrains.bazel.run;
 
-import com.intellij.execution.Executor
-import com.intellij.execution.configuration.RunConfigurationExtensionsManager
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.runners.ExecutionEnvironment
-import org.jetbrains.annotations.ApiStatus
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.configuration.RunConfigurationExtensionsManager;
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.process.ExecutionException;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Supports the run configuration flow for BSP run configurations.
@@ -13,19 +14,19 @@ import org.jetbrains.annotations.ApiStatus
  *
  * <p>Provides language-specific configuration state, validation, presentation, and runner.
  */
-@ApiStatus.Internal
-interface BazelRunHandler {
-  val state: BazelRunConfigurationState<*>
+public interface BazelRunHandler {
+    BazelRunConfigurationState<?> getState();
 
-  /**
-   * The name of the run handler (shown in the UI).
-   */
-  val name: String
+    /**
+     * The name of the run handler (shown in the UI).
+     */
+    String getName();
 
-  val isTestHandler: Boolean
+    boolean isTestHandler();
 
-  fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState
+    RunProfileState getRunProfileState(Executor executor, ExecutionEnvironment environment) throws ExecutionException;
 
-  val extensionsManager: RunConfigurationExtensionsManager<in RunConfigurationBase<*>, *>?
-    get() = null
+    default @Nullable RunConfigurationExtensionsManager<? super RunConfigurationBase, ?> getExtensionsManager() {
+        return null;
+    }
 }

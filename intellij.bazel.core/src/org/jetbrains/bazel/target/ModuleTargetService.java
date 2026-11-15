@@ -1,62 +1,81 @@
-package org.jetbrains.bazel.target
+package org.jetbrains.bazel.target;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.module.Module
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.workspace.impl.WorkspaceModelInternal
-import com.intellij.platform.backend.workspace.workspaceModel
-import com.intellij.platform.workspace.jps.entities.ModuleEntity
-import com.intellij.platform.workspace.jps.entities.ModuleId
-import com.intellij.platform.workspace.storage.CachedValue
-import com.intellij.platform.workspace.storage.ImmutableEntityStorage
-import com.intellij.platform.workspace.storage.entities
-import com.intellij.workspaceModel.ide.legacyBridge.findModule
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.workspacemodel.entities.BazelModuleExtensionEntity
-import org.jetbrains.bazel.workspacemodel.entities.targetKey
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.util.CachedValueProvider;
+import consulo.application.util.CachedValuesManager;
+import consulo.module.Module;
+import consulo.module.ModuleManager;
+import consulo.module.content.ProjectRootManager;
+import consulo.project.Project;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.workspacemodel.entities.extensions;
 
-@ApiStatus.Internal
-@Service(Service.Level.PROJECT)
-class ModuleTargetService(private val project: Project) {
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-  private data class Indexes(
-    val modulesByLabel: Map<Label, List<ModuleId>>,
-    val modulesByKey: Map<WorkspaceTargetKey, List<ModuleId>>,
-  )
+// consulo: the IntelliJ workspace model is not used: modules are classic modules with the BazelModuleExtensionEntity data of
+// BazelProjectModelService, and the index is a CachedValue that depends on the project roots. The upstream `snapshot` parameters
+// (ImmutableEntityStorage, default currentSnapshot) are dropped, and ModuleEntity results are Modules
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class ModuleTargetService {
+    private final Project myProject;
 
-  private val indexesCachedValue = CachedValue { storage ->
-    val byLabel = hashMapOf<Label, MutableList<ModuleId>>()
-    val byKey = hashMapOf<WorkspaceTargetKey, MutableList<ModuleId>>()
-    for (extension in storage.entities<BazelModuleExtensionEntity>()) {
-      val key = extension.targetKey
-      val moduleId = extension.module.symbolicId
-      byLabel.getOrPut(key.label) { ArrayList() }.add(moduleId)
-      byKey.getOrPut(key) { ArrayList() }.add(moduleId)
+    @Inject
+    public ModuleTargetService(Project project) {
+        myProject = project;
     }
-    return@CachedValue Indexes(modulesByLabel = byLabel, modulesByKey = byKey)
-  }
 
-  private val indexes
-    get() = (project.workspaceModel as WorkspaceModelInternal).entityStorage.cachedValue(indexesCachedValue)
+    private record Indexes(
+        Map<Label, List<Module>> modulesByLabel,
+        Map<WorkspaceTargetKey, List<Module>> modulesByKey
+    ) {
+    }
 
-  fun findModulesByLabel(snapshot: ImmutableEntityStorage = project.workspaceModel.currentSnapshot, label: Label): List<ModuleEntity> {
-    val moduleIds = indexes.modulesByLabel[label] ?: return listOf()
-    return moduleIds.mapNotNull { moduleId -> snapshot.resolve(moduleId) }
-  }
+    private Indexes computeIndexes() {
+        Map<Label, List<Module>> byLabel = new HashMap<>();
+        Map<WorkspaceTargetKey, List<Module>> byKey = new HashMap<>();
+        for (Module module : ModuleManager.getInstance(myProject).getModules()) {
+            extensions.BazelModuleExtensionEntity extension = extensions.getBazelModuleExtension(module);
+            if (extension == null) {
+                continue;
+            }
+            WorkspaceTargetKey key = extension.getTargetKey();
+            byLabel.computeIfAbsent(key.label(), it -> new ArrayList<>()).add(module);
+            byKey.computeIfAbsent(key, it -> new ArrayList<>()).add(module);
+        }
+        return new Indexes(byLabel, byKey);
+    }
 
-  fun findLegacyModulesByLabel(snapshot: ImmutableEntityStorage = project.workspaceModel.currentSnapshot, label: Label): List<Module> =
-    findModulesByLabel(snapshot, label).mapNotNull { it.findModule(snapshot) }
+    private Indexes getIndexes() {
+        return CachedValuesManager.getManager(myProject).getCachedValue(
+            myProject,
+            () -> CachedValueProvider.Result.create(computeIndexes(), ProjectRootManager.getInstance(myProject))
+        );
+    }
 
-  fun findModulesByKey(
-    snapshot: ImmutableEntityStorage = project.workspaceModel.currentSnapshot,
-    key: WorkspaceTargetKey,
-  ): List<ModuleEntity> {
-    val moduleIds = indexes.modulesByKey[key] ?: return listOf()
-    return moduleIds.mapNotNull { moduleId -> snapshot.resolve(moduleId) }
-  }
+    public List<Module> findModulesByLabel(Label label) {
+        List<Module> modules = getIndexes().modulesByLabel().get(label);
+        return modules == null ? List.of() : List.copyOf(modules);
+    }
+
+    public List<Module> findLegacyModulesByLabel(Label label) {
+        return findModulesByLabel(label);
+    }
+
+    public List<Module> findModulesByKey(
+        WorkspaceTargetKey key
+    ) {
+        List<Module> modules = getIndexes().modulesByKey().get(key);
+        return modules == null ? List.of() : List.copyOf(modules);
+    }
 
 }

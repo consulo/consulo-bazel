@@ -1,35 +1,49 @@
-package org.jetbrains.bazel.run.task
+package org.jetbrains.bazel.run.task;
 
-import com.intellij.execution.process.AnsiEscapeDecoder
-import com.intellij.execution.process.ProcessOutputType
-import com.intellij.openapi.util.Key
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bazel.taskEvents.BazelTaskListener
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.process.ProcessOutputType;
+import consulo.process.util.AnsiEscapeDecoder;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bazel.taskEvents.BazelTaskListener;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class BazelRunTaskListener(protected val handler: BazelProcessHandler) : BazelTaskListener {
-  protected val ansiEscapeDecoder = AnsiEscapeDecoder()
+public class BazelRunTaskListener implements BazelTaskListener {
+    private final BazelProcessHandler myHandler;
+    private final AnsiEscapeDecoder myAnsiEscapeDecoder = new AnsiEscapeDecoder();
 
-  override fun onOutputStream(taskId: TaskId?, text: String) {
-    ansiEscapeDecoder.escapeText(text, ProcessOutputType.STDOUT) { s: String, key: Key<Any> ->
-      handler.notifyTextAvailable(s, key)
+    public BazelRunTaskListener(BazelProcessHandler handler) {
+        myHandler = handler;
     }
-  }
 
-  override fun onErrorStream(taskId: TaskId?, text: String) {
-    ansiEscapeDecoder.escapeText(text, ProcessOutputType.STDERR) { s: String, key: Key<Any> ->
-      handler.notifyTextAvailable(s, key)
+    protected BazelProcessHandler getHandler() {
+        return myHandler;
     }
-  }
 
-  // For compatibility with older BSP servers and JB test runner
-  // TODO: Log messages in the correct place
-  override fun onLogMessage(taskId: TaskId, message: String) {
-    val messageWithNewline = if (message.endsWith("\n")) message else "$message\n"
-    ansiEscapeDecoder.escapeText(messageWithNewline, ProcessOutputType.STDOUT) { s: String, key: Key<Any> ->
-      handler.notifyTextAvailable(s, key)
+    protected AnsiEscapeDecoder getAnsiEscapeDecoder() {
+        return myAnsiEscapeDecoder;
     }
-  }
+
+    @Override
+    public void onOutputStream(@Nullable TaskId taskId, String text) {
+        myAnsiEscapeDecoder.escapeText(text, ProcessOutputType.STDOUT, (s, key) -> {
+            myHandler.notifyTextAvailable(s, key);
+        });
+    }
+
+    @Override
+    public void onErrorStream(@Nullable TaskId taskId, String text) {
+        myAnsiEscapeDecoder.escapeText(text, ProcessOutputType.STDERR, (s, key) -> {
+            myHandler.notifyTextAvailable(s, key);
+        });
+    }
+
+    // For compatibility with older BSP servers and JB test runner
+    // TODO: Log messages in the correct place
+    @Override
+    public void onLogMessage(TaskId taskId, String message) {
+        String messageWithNewline = message.endsWith("\n") ? message : message + "\n";
+        myAnsiEscapeDecoder.escapeText(messageWithNewline, ProcessOutputType.STDOUT, (s, key) -> {
+            myHandler.notifyTextAvailable(s, key);
+        });
+    }
 }

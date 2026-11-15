@@ -1,0 +1,6 @@
+bazel.project.downloading.bazelisk:
+    text: "Downloading Bazelisk"
+bazel.project.downloading.bazelisk.binary:
+    text: "Downloading Bazelisk binary..."
+bazel.project.downloading.bazelisk.setting_permissions:
+    text: "Setting executable permissions..."

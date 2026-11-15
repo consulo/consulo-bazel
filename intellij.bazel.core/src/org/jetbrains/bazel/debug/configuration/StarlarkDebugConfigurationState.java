@@ -1,22 +1,46 @@
-package org.jetbrains.bazel.debug.configuration
+package org.jetbrains.bazel.debug.configuration;
 
-import com.intellij.execution.configurations.CommandLineState
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.CompletableDeferred
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bsp.protocol.AnalysisDebugResult
+import consulo.execution.configuration.CommandLineState;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.project.Project;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bsp.protocol.RunWithDebugParams.AnalysisDebugResult;
 
-internal class StarlarkDebugConfigurationState(
-  val project: Project,
-  val target: String,
-  environment: ExecutionEnvironment,
-) : CommandLineState(environment) {
-  // allows passing execution results (both successful and exceptional) to BspProcessHandler from outside
-  val futureProxy = CompletableDeferred<AnalysisDebugResult>()
+import java.util.concurrent.CompletableFuture;
 
-  override fun startProcess(): BazelProcessHandler =
-    BazelProcessHandler(project, futureProxy).apply {
-      startNotify()
+public class StarlarkDebugConfigurationState extends CommandLineState {
+    private final Project myProject;
+    private final String myTarget;
+
+    // allows passing execution results (both successful and exceptional) to BspProcessHandler from outside
+    private final CompletableFuture<AnalysisDebugResult> myFutureProxy = new CompletableFuture<>();
+
+    public StarlarkDebugConfigurationState(
+        Project project,
+        String target,
+        ExecutionEnvironment environment
+    ) {
+        super(environment);
+        myProject = project;
+        myTarget = target;
+    }
+
+    public Project getProject() {
+        return myProject;
+    }
+
+    public String getTarget() {
+        return myTarget;
+    }
+
+    public CompletableFuture<AnalysisDebugResult> getFutureProxy() {
+        return myFutureProxy;
+    }
+
+    @Override
+    protected BazelProcessHandler startProcess() {
+        BazelProcessHandler handler = new BazelProcessHandler(myProject, myFutureProxy);
+        handler.startNotify();
+        return handler;
     }
 }

@@ -1,35 +1,46 @@
-package org.jetbrains.bazel.sync.environment
+package org.jetbrains.bazel.sync.environment;
 
-import com.intellij.openapi.components.impl.stores.IProjectStore
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.project.ProjectStoreOwner
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.flow.open.BazelProjectStoreDescriptor
-import org.jetbrains.bazel.utils.findVirtualFile
+import consulo.annotation.component.ServiceImpl;
+import consulo.bazel.core.BazelProjectStoreService;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.flow.open.BazelProjectStoreDescriptor;
+import org.jetbrains.bazel.utils.PathUtil;
+import org.jspecify.annotations.Nullable;
 
-internal class IJBazelProjectInfoService(private val project: Project)
-  : BazelProjectInfoService {
+@ServiceImpl
+@Singleton
+public class IJBazelProjectInfoService implements BazelProjectInfoService {
+    private final Project myProject;
 
-  override val isBazelProject: Boolean
-    get() = project.stateStoreOrNull?.storeDescriptor is BazelProjectStoreDescriptor
-
-  override val projectRootDir: VirtualFile?
-    get() {
-      val bazelProjectStoreDescriptor = project.stateStoreOrNull?.storeDescriptor as? BazelProjectStoreDescriptor
-      return bazelProjectStoreDescriptor?.historicalProjectBasePath?.findVirtualFile()
-             //?: project.base
-             // Fallback for running a Bazel run configuration in a non-Bazel project
-             ?: project.guessProjectDir()
+    @Inject
+    public IJBazelProjectInfoService(Project project) {
+        myProject = project;
     }
+
+    @Override
+    public boolean isBazelProject() {
+        // consulo: the Bazel store descriptor is persisted by BazelProjectStoreService (upstream project.stateStoreOrNull?.storeDescriptor)
+        return BazelProjectStoreService.getStoreDescriptor(myProject) != null;
+    }
+
+    @Override
+    public @Nullable VirtualFile getProjectRootDir() {
+        BazelProjectStoreDescriptor bazelProjectStoreDescriptor = BazelProjectStoreService.getStoreDescriptor(myProject);
+        VirtualFile historicalProjectBaseDir = bazelProjectStoreDescriptor != null
+            ? PathUtil.findVirtualFile(bazelProjectStoreDescriptor.getHistoricalProjectBasePath())
+            : null;
+        if (historicalProjectBaseDir != null) {
+            return historicalProjectBaseDir;
+        }
+        //?: project.base
+        // Fallback for running a Bazel run configuration in a non-Bazel project
+        // consulo: Consulo has no Project.guessProjectDir(), the project base directory is used
+        return myProject.getBaseDir();
+    }
+
+    // consulo: the Bazel store descriptor is persisted by BazelProjectStoreService, the upstream Project.stateStoreOrNull
+    // extension property (IProjectStore / ProjectStoreOwner) is dropped
 }
-
-/**
- * Normal [com.intellij.project.stateStore] throws [IllegalStateException] for [com.intellij.openapi.project.impl.DefaultProject],
- * this function returns `null` instead.
- */
-@get:ApiStatus.Internal
-val Project.stateStoreOrNull: IProjectStore?
-  get() = (this as? ProjectStoreOwner)?.componentStore
-

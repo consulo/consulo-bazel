@@ -1,22 +1,40 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.execution.PsiLocation
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.annotation.access.RequiredReadAction;
+import consulo.execution.action.PsiLocation;
+import consulo.language.psi.PsiElement;
+import consulo.project.Project;
+import org.jetbrains.bsp.protocol.BuildTarget;
 
-@ApiStatus.Internal
-class BazelRunLocation(
-  val target: BuildTarget,
-  /**
-   * If provided, this can be, for example, a test method in PSI, from which a test filter can be derived.
-   */
-  val originalLocation: PsiLocation<*>,
-) : PsiLocation<PsiElement>(originalLocation.project, null, PsiBazelTarget(originalLocation.project, target)) {
-  /**
-   * No other information except the target itself is available, e.g., from Bazel target tool window.
-   */
-  constructor(project: Project, target: BuildTarget) :
-    this(target, PsiLocation(PsiBazelTarget(project, target)))
+public class BazelRunLocation extends PsiLocation<PsiElement> {
+    private final BuildTarget myTarget;
+    /**
+     * If provided, this can be, for example, a test method in PSI, from which a test filter can be derived.
+     */
+    private final PsiLocation<?> myOriginalLocation;
+
+    public BazelRunLocation(
+        BuildTarget target,
+        PsiLocation<?> originalLocation
+    ) {
+        super(originalLocation.getProject(), null, new PsiBazelTarget(originalLocation.getProject(), target));
+        myTarget = target;
+        myOriginalLocation = originalLocation;
+    }
+
+    /**
+     * No other information except the target itself is available, e.g., from Bazel target tool window.
+     */
+    @RequiredReadAction
+    public BazelRunLocation(Project project, BuildTarget target) {
+        this(target, new PsiLocation<>(new PsiBazelTarget(project, target)));
+    }
+
+    public BuildTarget getTarget() {
+        return myTarget;
+    }
+
+    public PsiLocation<?> getOriginalLocation() {
+        return myOriginalLocation;
+    }
 }

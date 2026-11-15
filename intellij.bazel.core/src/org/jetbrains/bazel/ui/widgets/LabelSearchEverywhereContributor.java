@@ -1,116 +1,206 @@
-package org.jetbrains.bazel.ui.widgets
+package org.jetbrains.bazel.ui.widgets;
 
-import com.intellij.ide.actions.searcheverywhere.FoundItemDescriptor
-import com.intellij.ide.actions.searcheverywhere.SearchEverywhereContributor
-import com.intellij.ide.actions.searcheverywhere.SearchEverywhereContributorFactory
-import com.intellij.ide.actions.searcheverywhere.SearchEverywherePreviewProvider
-import com.intellij.ide.actions.searcheverywhere.WeightedSearchEverywhereContributor
-import com.intellij.ide.util.EditorHelper
-import com.intellij.navigation.ItemPresentation
-import com.intellij.navigation.PsiElementNavigationItem
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.runReadAction
-import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.util.ProgressIndicatorUtils
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.psi.codeStyle.NameUtil
-import com.intellij.ui.SimpleListCellRenderer
-import com.intellij.util.Processor
-import com.intellij.util.containers.ContainerUtil
-import com.intellij.util.text.matching.MatchingMode
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import org.jetbrains.bazel.config.BazelPluginConstants
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import org.jetbrains.bazel.languages.starlark.references.resolveLabel
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
-import org.jetbrains.bazel.target.targetStorage
-import javax.swing.ListCellRenderer
+import consulo.application.ReadAction;
+import consulo.application.progress.ProgressIndicator;
+import consulo.application.progress.ProgressManager;
+import consulo.application.util.matcher.MinusculeMatcher;
+import consulo.application.util.matcher.NameUtil;
+import consulo.language.editor.util.EditorHelper;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementNavigationItem;
+import consulo.navigation.ItemPresentation;
+import consulo.project.Project;
+import consulo.searchEverywhere.FoundItemDescriptor;
+import consulo.searchEverywhere.SearchEverywhereContributor;
+import consulo.searchEverywhere.SearchEverywhereContributorFactory;
+import consulo.searchEverywhere.SearchEverywherePreviewProvider;
+import consulo.searchEverywhere.WeightedSearchEverywhereContributor;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.awt.SimpleListCellRenderer;
+import consulo.util.collection.ContainerUtil;
+import consulo.util.dataholder.Key;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.config.BazelPluginConstants;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jspecify.annotations.Nullable;
 
-internal class LabelSearchEverywhereContributor(private val project: Project) :
-  WeightedSearchEverywhereContributor<LabelSearchEverywhereContributor.LabelWithPreview>,
-  SearchEverywherePreviewProvider {
-  private val listCellRenderer: ListCellRenderer<LabelWithPreview> =
-    SimpleListCellRenderer.create { label, value, index ->
-      label.text = value.displayName
-      label.icon = BazelPluginIcons.bazel
+import javax.swing.ListCellRenderer;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Predicate;
+
+public class LabelSearchEverywhereContributor implements
+    WeightedSearchEverywhereContributor<LabelSearchEverywhereContributor.LabelWithPreview>,
+    SearchEverywherePreviewProvider {
+    private final Project myProject;
+
+    private final ListCellRenderer<LabelWithPreview> myListCellRenderer =
+        SimpleListCellRenderer.create((label, value, index) -> {
+            label.setText(value.getDisplayName());
+            label.setIcon(BazelPluginIcons.bazel());
+        });
+
+    public LabelSearchEverywhereContributor(Project project) {
+        myProject = project;
     }
 
-  override fun getSearchProviderId(): String = javaClass.simpleName
-
-  override fun getGroupName(): String = BazelPluginConstants.BAZEL_DISPLAY_NAME
-
-  override fun getSortWeight(): Int = 0
-
-  override fun showInFindResults(): Boolean = true
-
-  override fun fetchWeightedElements(
-    pattern: String,
-    progressIndicator: ProgressIndicator,
-    consumer: Processor<in FoundItemDescriptor<LabelWithPreview>>,
-  ) {
-    val matcher =
-      NameUtil
-        .buildMatcher("*$pattern")
-        .withSeparators("@/:")
-        .typoTolerant()
-        .withMatchingMode(MatchingMode.IGNORE_CASE)
-        .build()
-
-    val foundItems =
-      project.targetStorage
-        .allTargets()
-        .mapNotNull { label ->
-          val fullString = label.toString()
-          if (!matcher.matches(fullString)) return@mapNotNull null
-          val targetElement = runReadAction { resolveLabel(project, label) } ?: return@mapNotNull null
-          val displayName = label.toShortString(project)
-          FoundItemDescriptor(LabelWithPreview(displayName, targetElement), matcher.matchingDegree(fullString))
-        }.toList()
-
-    // Copied from AbstractGotoSEContributor
-    if (ModalityState.defaultModalityState() == ModalityState.nonModal()) {
-      @Suppress("UsagesOfObsoleteApi", "DEPRECATION")
-      ProgressIndicatorUtils.yieldToPendingWriteActions()
+    @Override
+    public String getSearchProviderId() {
+        return getClass().getSimpleName();
     }
-    @Suppress("UsagesOfObsoleteApi", "DEPRECATION")
-    ProgressIndicatorUtils.runInReadActionWithWriteActionPriority({
-      ContainerUtil.process(foundItems, consumer)
-    }, progressIndicator)
-  }
 
-  override fun processSelectedItem(
-    selected: LabelWithPreview,
-    modifiers: Int,
-    searchText: String,
-  ): Boolean {
-    BazelCoroutineService.getInstance(project).start {
-      withContext(Dispatchers.EDT) {
-        EditorHelper.openInEditor(selected.element, true, true)
-      }
+    @Override
+    public String getGroupName() {
+        return BazelPluginConstants.BAZEL_DISPLAY_NAME;
     }
-    return true
-  }
 
-  override fun getElementsRenderer(): ListCellRenderer<in LabelWithPreview> = listCellRenderer
+    @Override
+    public int getSortWeight() {
+        return 0;
+    }
 
-  class LabelWithPreview(val displayName: String, val element: PsiElement) : PsiElementNavigationItem {
-    override fun getTargetElement(): PsiElement = element
+    @Override
+    public boolean showInFindResults() {
+        return true;
+    }
 
-    override fun getName(): String? = null
+    @Override
+    public void fetchWeightedElements(
+        String pattern,
+        ProgressIndicator progressIndicator,
+        Predicate<? super FoundItemDescriptor<LabelWithPreview>> consumer
+    ) {
+        MinusculeMatcher matcher =
+            NameUtil
+                .buildMatcher("*" + pattern)
+                .withSeparators("@/:")
+                .typoTolerant()
+                // consulo: MatchingMode.IGNORE_CASE -> MatchingCaseSensitivity.NONE
+                .withCaseSensitivity(NameUtil.MatchingCaseSensitivity.NONE)
+                .build();
 
-    override fun getPresentation(): ItemPresentation? = null
-  }
+        List<FoundItemDescriptor<LabelWithPreview>> foundItems =
+            TargetStorage.getTargetStorage(myProject)
+                .allTargets()
+                .<@Nullable FoundItemDescriptor<LabelWithPreview>>map(label -> {
+                    String fullString = label.toString();
+                    if (!matcher.matches(fullString)) {
+                        return null;
+                    }
+                    PsiElement targetElement = ReadAction.<@Nullable PsiElement, RuntimeException>compute(
+                        () -> LabelResolveUtils.resolveLabel(myProject, label, null, false)
+                    );
+                    if (targetElement == null) {
+                        return null;
+                    }
+                    String displayName = BazelRepoMappingUtils.toShortString(label, myProject);
+                    return new FoundItemDescriptor<>(new LabelWithPreview(displayName, targetElement), matcher.matchingDegree(fullString));
+                })
+                .filter(Objects::nonNull)
+                .map(Objects::requireNonNull)
+                .toList();
 
-  class Factory : SearchEverywhereContributorFactory<LabelWithPreview> {
-    override fun createContributor(initEvent: AnActionEvent): SearchEverywhereContributor<LabelWithPreview> =
-      LabelSearchEverywhereContributor(requireNotNull(initEvent.project))
+        // Copied from AbstractGotoSEContributor
+        // TODO consulo: ProgressIndicatorUtils.yieldToPendingWriteActions() and ModalityState.defaultModalityState() are not public API
+        // if (ModalityState.defaultModalityState() == ModalityState.nonModal()) {
+        //     ProgressIndicatorUtils.yieldToPendingWriteActions();
+        // }
+        // consulo: ProgressIndicatorUtils.runInReadActionWithWriteActionPriority -> ProgressManager
+        ProgressManager.getInstance().runInReadActionWithWriteActionPriority(
+            () -> ContainerUtil.process(foundItems, consumer::test),
+            progressIndicator
+        );
+    }
 
-    override fun isAvailable(project: Project): Boolean = project.isBazelProject
-  }
+    @Override
+    public boolean processSelectedItem(
+        LabelWithPreview selected,
+        int modifiers,
+        String searchText
+    ) {
+        BazelCoroutineService.getInstance(myProject).start(() ->
+            // consulo: withContext(Dispatchers.EDT) { } -> the project UI access
+            CompletableFuture.runAsync(
+                () -> {
+                    // consulo: EditorHelper.openInEditor has no focusEditor parameter
+                    EditorHelper.openInEditor(selected.getElement(), true);
+                },
+                myProject.getUIAccess()
+            )
+        );
+        return true;
+    }
+
+    @Override
+    public ListCellRenderer<? super LabelWithPreview> getElementsRenderer() {
+        return myListCellRenderer;
+    }
+
+    // consulo: abstract in Consulo, upstream uses the IntelliJ default implementation (no data)
+    @Override
+    public @Nullable Object getDataForItem(LabelWithPreview element, Key dataId) {
+        return null;
+    }
+
+    public static class LabelWithPreview implements PsiElementNavigationItem {
+        private final String myDisplayName;
+        private final PsiElement myElement;
+
+        public LabelWithPreview(String displayName, PsiElement element) {
+            myDisplayName = displayName;
+            myElement = element;
+        }
+
+        public String getDisplayName() {
+            return myDisplayName;
+        }
+
+        public PsiElement getElement() {
+            return myElement;
+        }
+
+        @Override
+        public PsiElement getTargetElement() {
+            return myElement;
+        }
+
+        @Override
+        public @Nullable String getName() {
+            return null;
+        }
+
+        @Override
+        public @Nullable ItemPresentation getPresentation() {
+            return null;
+        }
+
+        // consulo: abstract in Consulo, IntelliJ's Navigatable.navigate() default does nothing
+        @Override
+        public void navigate(boolean requestFocus) {
+        }
+    }
+
+    /**
+     * consulo: registered by the top-level {@link LabelSearchEverywhereContributorFactory}
+     * ({@code @ExtensionImpl} on nested classes is not supported by the annotation processor).
+     */
+    public static class Factory implements SearchEverywhereContributorFactory<LabelWithPreview> {
+        @Override
+        public @Nullable SearchEverywhereContributor<LabelWithPreview> createContributor(AnActionEvent initEvent) {
+            Project project = Objects.requireNonNull(initEvent.getData(Project.KEY));
+            // consulo: Consulo's SearchEverywhereContributorFactory has no isAvailable(project), no contributor is created instead
+            if (!isAvailable(project)) {
+                return null;
+            }
+            return new LabelSearchEverywhereContributor(project);
+        }
+
+        public boolean isAvailable(Project project) {
+            return org.jetbrains.bazel.config.project.isBazelProject(project);
+        }
+    }
 }

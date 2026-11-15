@@ -1,72 +1,109 @@
-package org.jetbrains.bazel.languages.starlark.rename
+package org.jetbrains.bazel.languages.starlark.rename;
 
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReference
-import com.intellij.psi.search.LocalSearchScope
-import com.intellij.psi.search.SearchScope
-import com.intellij.psi.search.searches.ReferencesSearch
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.refactoring.rename.RenamePsiElementProcessor
-import com.intellij.util.containers.MultiMap
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.content.scope.SearchScope;
+import consulo.language.editor.refactoring.rename.RenamePsiElementProcessor;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.language.psi.scope.LocalSearchScope;
+import consulo.language.psi.search.ReferencesSearch;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.localize.LocalizeValue;
+import consulo.util.collection.MultiMap;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
 
-internal class StarlarkRenamePsiElementProcessor : RenamePsiElementProcessor() {
+import java.util.Collection;
+import java.util.Objects;
 
-  override fun canProcessElement(element: PsiElement): Boolean = element is StarlarkElement
-
-  /**
-   * Effectively, limits the search scope to starlark files.
-   * Without this we receive a search scope that is enlarged with [com.intellij.psi.search.UseScopeEnlarger],
-   * which leads to unexpected renames in e.g., Markdown files.
-   *
-   * Analogous limitation must be done in [org.jetbrains.bazel.languages.starlark.findusages.StarlarkFindUsagesHandler] for consistency.
-   */
-  override fun findReferences(
-    element: PsiElement,
-    searchScope: SearchScope,
-    searchInCommentsAndStrings: Boolean,
-  ): Collection<PsiReference> = ReferencesSearch.search(element, searchScope.intersectWith(element.useScope)).findAll()
-
-  override fun findExistingNameConflicts(
-    element: PsiElement,
-    newName: String,
-    conflicts: MultiMap<PsiElement, String>,
-  ) {
-    when (element) {
-      is StarlarkCallExpression -> findRuleTargetConflicts(element, newName, conflicts)
-      is StarlarkNamedElement -> findNamedElementConflicts(element, newName, conflicts)
+@ExtensionImpl
+public class StarlarkRenamePsiElementProcessor extends RenamePsiElementProcessor {
+    @Override
+    public boolean canProcessElement(PsiElement element) {
+        return element instanceof StarlarkElement;
     }
-  }
 
-  private fun findRuleTargetConflicts(callExpr: StarlarkCallExpression, newName: String, conflicts: MultiMap<PsiElement, String>) {
-    val buildFile = callExpr.containingFile as? StarlarkFile ?: return
-    val existingTarget = buildFile.findTargetRule(newName) ?: return
-    if (existingTarget != callExpr) {
-      conflicts.putValue(existingTarget, StarlarkBundle.message("rename.target.conflict.already.exists", newName, buildFile.name))
+    /**
+     * Effectively, limits the search scope to starlark files.
+     * Without this we receive a search scope that is enlarged with {@link consulo.language.psi.UseScopeEnlarger},
+     * which leads to unexpected renames in e.g., Markdown files.
+     * <p>
+     * Analogous limitation must be done in {@code org.jetbrains.bazel.languages.starlark.findusages.StarlarkFindUsagesHandler}
+     * for consistency.
+     */
+    // consulo: Consulo has no findReferences(element, searchScope, searchInCommentsAndStrings) overload;
+    // the scope it uses is the one of ReferencesSearch.search(element), i.e. GlobalSearchScope.allScope
+    @Override
+    public Collection<PsiReference> findReferences(
+        PsiElement element,
+        boolean searchInCommentsAndStrings
+    ) {
+        SearchScope searchScope = GlobalSearchScope.allScope(element.getProject());
+        return ReferencesSearch.search(element, searchScope.intersectWith(element.getUseScope())).findAll();
     }
-  }
 
-  private fun findNamedElementConflicts(element: StarlarkNamedElement, newName: String, conflicts: MultiMap<PsiElement, String>) {
-    val file = element.containingFile ?: return
-    val useScope = element.useScope
-    val scopeElements = (useScope as? LocalSearchScope)?.scope ?: arrayOf(file)
-    val scopeName = (scopeElements.singleOrNull() as? StarlarkNamedElement)?.name ?: file.name
-    scopeElements
-      .asSequence()
-      .flatMap { PsiTreeUtil.collectElementsOfType(it, StarlarkNamedElement::class.java) }
-      .filter { it != element && it.name == newName }
-      .filter { candidate ->
-        // Only flag a conflict if the candidate is declared in the same or enclosing scope,
-        // not in a nested subscope (comprehension, lambda) that doesn't actually conflict.
-        val candidateScope = candidate.useScope
-        candidateScope !is LocalSearchScope || candidateScope.containsRange(file, element.textRange)
-      }
-      .forEach { conflicting ->
-        conflicts.putValue(conflicting, StarlarkBundle.message("rename.name.conflict.already.exists", newName, scopeName))
-      }
-  }
+    @Override
+    @RequiredReadAction
+    public void findExistingNameConflicts(
+        PsiElement element,
+        String newName,
+        MultiMap<PsiElement, LocalizeValue> conflicts
+    ) {
+        if (element instanceof StarlarkCallExpression callExpression) {
+            findRuleTargetConflicts(callExpression, newName, conflicts);
+        }
+        else if (element instanceof StarlarkNamedElement namedElement) {
+            findNamedElementConflicts(namedElement, newName, conflicts);
+        }
+    }
+
+    @RequiredReadAction
+    private void findRuleTargetConflicts(StarlarkCallExpression callExpr, String newName, MultiMap<PsiElement, LocalizeValue> conflicts) {
+        if (!(callExpr.getContainingFile() instanceof StarlarkFile buildFile)) {
+            return;
+        }
+        StarlarkCallExpression existingTarget = buildFile.findTargetRule(newName);
+        if (existingTarget == null) {
+            return;
+        }
+        if (!existingTarget.equals(callExpr)) {
+            conflicts.putValue(existingTarget, StarlarkLocalize.renameTargetConflictAlreadyExists(newName, buildFile.getName()));
+        }
+    }
+
+    @RequiredReadAction
+    private void findNamedElementConflicts(StarlarkNamedElement element, String newName, MultiMap<PsiElement, LocalizeValue> conflicts) {
+        PsiFile file = element.getContainingFile();
+        if (file == null) {
+            return;
+        }
+        SearchScope useScope = element.getUseScope();
+        PsiElement[] scopeElements =
+            useScope instanceof LocalSearchScope localSearchScope ? localSearchScope.getScope() : new PsiElement[]{file};
+        String scopeName = scopeElements.length == 1 && scopeElements[0] instanceof StarlarkNamedElement scopeNamedElement
+            ? scopeNamedElement.getName()
+            : null;
+        String conflictScopeName = scopeName != null ? scopeName : file.getName();
+        for (PsiElement scopeElement : scopeElements) {
+            for (StarlarkNamedElement candidate : PsiTreeUtil.collectElementsOfType(scopeElement, StarlarkNamedElement.class)) {
+                if (candidate.equals(element) || !Objects.equals(candidate.getName(), newName)) {
+                    continue;
+                }
+                // Only flag a conflict if the candidate is declared in the same or enclosing scope,
+                // not in a nested subscope (comprehension, lambda) that doesn't actually conflict.
+                SearchScope candidateScope = candidate.getUseScope();
+                if (candidateScope instanceof LocalSearchScope localCandidateScope
+                    && !localCandidateScope.containsRange(file, element.getTextRange())) {
+                    continue;
+                }
+                conflicts.putValue(candidate, StarlarkLocalize.renameNameConflictAlreadyExists(newName, conflictScopeName));
+            }
+        }
+    }
 }

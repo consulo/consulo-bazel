@@ -1,19 +1,30 @@
-package org.jetbrains.bazel.languages.bazelquery.functions
+package org.jetbrains.bazel.languages.bazelquery.functions;
 
-import com.intellij.model.Pointer
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.documentation.DocumentationSymbol
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelquery.documentation.BazelQueryFunctionDocumentationTarget
+import consulo.bazel.documentation.DocumentationSymbol;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelquery.documentation.BazelQueryFunctionDocumentationTarget;
 
-@Suppress("UnstableApiUsage")
-@ApiStatus.Internal
-class BazelQueryFunctionSymbol(val function: BazelQueryFunction, val project: Project) :
-  DocumentationSymbol,
-  Pointer<BazelQueryFunctionSymbol> {
-  override fun createPointer() = this
+public class BazelQueryFunctionSymbol implements DocumentationSymbol {
+    private final BazelQueryFunction myFunction;
+    private final Project myProject;
 
-  override fun dereference() = this
+    public BazelQueryFunctionSymbol(BazelQueryFunction function, Project project) {
+        myFunction = function;
+        myProject = project;
+    }
 
-  override fun getDocumentationTarget() = BazelQueryFunctionDocumentationTarget(this, project)
+    public BazelQueryFunction getFunction() {
+        return myFunction;
+    }
+
+    public Project getProject() {
+        return myProject;
+    }
+
+    // consulo: createPointer()/dereference() are dropped, pointer/presentation are not used by the classic documentation provider
+
+    @Override
+    public BazelQueryFunctionDocumentationTarget getDocumentationTarget() {
+        return new BazelQueryFunctionDocumentationTarget(this, myProject);
+    }
 }

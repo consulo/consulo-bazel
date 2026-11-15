@@ -1,20 +1,32 @@
-package org.jetbrains.bazel.run.handler
+package org.jetbrains.bazel.run.handler;
 
-import com.intellij.execution.Executor
-import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.runners.ExecutionEnvironment
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState
-import org.jetbrains.bazel.run.state.GenericRunState
+import consulo.execution.configuration.RunProfileState;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState;
+import org.jetbrains.bazel.run.state.GenericRunState;
 
-internal class GenericBazelRunHandler : BazelRunHandler {
-  override val state: GenericRunState = GenericRunState()
+class GenericBazelRunHandler implements BazelRunHandler {
+    private final GenericRunState myState = new GenericRunState();
 
-  override val name: String
-    get() = "Generic BSP Run Handler"
+    @Override
+    public GenericRunState getState() {
+        return myState;
+    }
 
-  override val isTestHandler: Boolean = false
+    @Override
+    public String getName() {
+        return "Generic BSP Run Handler";
+    }
 
-  override fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState =
-    BazelRunCommandLineState(environment, state)
+    @Override
+    public boolean isTestHandler() {
+        return false;
+    }
+
+    @Override
+    public RunProfileState getRunProfileState(Executor executor, ExecutionEnvironment environment) {
+        return new BazelRunCommandLineState(environment, myState);
+    }
 }

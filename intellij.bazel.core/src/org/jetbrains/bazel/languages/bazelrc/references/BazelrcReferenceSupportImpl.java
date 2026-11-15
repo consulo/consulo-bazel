@@ -1,17 +1,42 @@
-package org.jetbrains.bazel.languages.bazelrc.references
+package org.jetbrains.bazel.languages.bazelrc.references;
 
-import com.intellij.model.psi.PsiSymbolReference
-import com.intellij.psi.PsiReference
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFlag
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcImport
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcReferenceSupport
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFlag;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcImport;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcReferenceSupport;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("UnstableApiUsage")
-internal class BazelrcReferenceSupportImpl : BazelrcReferenceSupport {
-  override fun getOwnReferences(element: BazelrcFlag): Collection<PsiSymbolReference> =
-    element.name?.let { listOf(BazelrcFlagNameReference(element)) } ?: emptyList()
+import java.util.Collection;
+import java.util.List;
+import java.util.NoSuchElementException;
 
-  override fun getReference(element: BazelrcImport): PsiReference? = element.references.last()
+// consulo: upstream PsiSymbolReference own references are classic references
+@ExtensionImpl
+class BazelrcReferenceSupportImpl implements BazelrcReferenceSupport {
+    public BazelrcReferenceSupportImpl() {
+    }
 
-  override fun getReferences(element: BazelrcImport): Array<out PsiReference?> = BazelrcImportFileReferenceSet(element).allReferences
+    @Override
+    @RequiredReadAction
+    public Collection<PsiReference> getOwnReferences(BazelrcFlag element) {
+        return element.getNameElement() != null ? List.of(new BazelrcFlagNameReference(element)) : List.of();
+    }
+
+    @Override
+    public @Nullable PsiReference getReference(BazelrcImport element) {
+        PsiReference[] references = element.getReferences();
+        // consulo: Kotlin Array.last() throws on an empty array
+        if (references.length == 0) {
+            throw new NoSuchElementException("Array is empty.");
+        }
+        return references[references.length - 1];
+    }
+
+    @Override
+    @RequiredReadAction
+    public PsiReference[] getReferences(BazelrcImport element) {
+        return new BazelrcImportFileReferenceSet(element).getAllReferences();
+    }
 }

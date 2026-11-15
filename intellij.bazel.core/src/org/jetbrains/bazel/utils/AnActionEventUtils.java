@@ -1,9 +1,15 @@
-package org.jetbrains.bazel.utils
+package org.jetbrains.bazel.utils;
 
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.vfs.VirtualFile
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jspecify.annotations.Nullable;
 
-internal val AnActionEvent.selectedDirectory: VirtualFile?
-  get() = getData(CommonDataKeys.VIRTUAL_FILE)
-    ?.takeIf { it.isDirectory }
+public final class AnActionEventUtils {
+    private AnActionEventUtils() {
+    }
+
+    public static @Nullable VirtualFile getSelectedDirectory(AnActionEvent receiver) {
+        VirtualFile file = receiver.getData(VirtualFile.KEY);
+        return file != null && file.isDirectory() ? file : null;
+    }
+}

@@ -1,36 +1,58 @@
-package org.jetbrains.bazel.settings
+package org.jetbrains.bazel.settings;
 
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.coroutines.BazelApplicationCoroutineScopeService
-import org.jetbrains.bazel.flow.open.closeAndReopenAsBazelProject
-import org.jetbrains.bazel.project.projectViewFile
+import consulo.annotation.component.ActionImpl;
+import consulo.annotation.component.ActionParentRef;
+import consulo.annotation.component.ActionRef;
+import consulo.annotation.component.ActionRefAnchor;
+import consulo.application.dumb.DumbAware;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.coroutines.BazelApplicationCoroutineScopeService;
+import org.jetbrains.bazel.flow.open.utils;
+import org.jetbrains.bazel.project.DefaultProjectViewService;
 
-internal class LoadProjectViewFileAction :
-  SuspendableAction(
-    {
-      BazelPluginBundle.message("action.load.project.view.file")
-    },
-  ),
-  DumbAware {
-  override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-    val projectViewFile = e.getData(CommonDataKeys.VIRTUAL_FILE)!!.toNioPath()
-    BazelApplicationCoroutineScopeService.getInstance().launch {
-      closeAndReopenAsBazelProject(project, projectViewFile)
+import java.nio.file.Path;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+
+@ActionImpl(
+    id = "LoadProjectViewFileAction",
+    parents = {
+        @ActionParentRef(value = @ActionRef(id = "EditorPopupMenu"), anchor = ActionRefAnchor.LAST),
+        @ActionParentRef(value = @ActionRef(id = "ProjectViewPopupMenu"), anchor = ActionRefAnchor.LAST)
     }
-  }
+)
+public class LoadProjectViewFileAction extends SuspendableAction implements DumbAware {
+    public LoadProjectViewFileAction() {
+        // consulo: the icon comes from the upstream <action icon="/icons/bazel.svg"> registration
+        super(
+            BazelPluginLocalize.actionLoadProjectViewFile(),
+            BazelPluginIcons.bazel()
+        );
+    }
 
-  override fun update(project: Project, e: AnActionEvent) {
-    val virtualFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+    @Override
+    protected CompletableFuture<?> actionPerformed(Project project, AnActionEvent e) {
+        Path projectViewFile = Objects.requireNonNull(e.getData(VirtualFile.KEY)).toNioPath();
+        BazelApplicationCoroutineScopeService.getInstance().launch(() ->
+            utils.closeAndReopenAsBazelProject(project, projectViewFile)
+        );
+        return CompletableFuture.completedFuture(null);
+    }
 
-    e.presentation.isEnabledAndVisible =
-      virtualFile != null &&
-      virtualFile.extension == Constants.PROJECT_VIEW_FILE_EXTENSION &&
-      virtualFile != project.projectViewFile
-  }
+    @Override
+    protected void update(Project project, AnActionEvent e) {
+        VirtualFile virtualFile = e.getData(VirtualFile.KEY);
+
+        e.getPresentation().setEnabledAndVisible(
+            virtualFile != null &&
+                Constants.PROJECT_VIEW_FILE_EXTENSION.equals(virtualFile.getExtension()) &&
+                !virtualFile.equals(DefaultProjectViewService.getProjectViewFile(project))
+        );
+    }
 }

@@ -1,84 +1,68 @@
-package org.jetbrains.bazel.flow.open
+package org.jetbrains.bazel.flow.open;
 
-import com.intellij.configurationStore.FileStorageAnnotation
-import com.intellij.configurationStore.ProjectStoreDescriptor
-import com.intellij.configurationStore.StateStorageManager
-import com.intellij.configurationStore.sortStoragesByDeprecated
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.components.State
-import com.intellij.openapi.components.StateSplitterEx
-import com.intellij.openapi.components.StateStorageOperation
-import com.intellij.openapi.components.Storage
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.NlsSafe
-import com.intellij.util.PathUtilRt
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import java.nio.file.Files
-import java.nio.file.Path
+import org.jetbrains.bazel.commons.constants.Constants;
 
-@ApiStatus.Internal
-class BazelProjectStoreDescriptor(
-  override val projectIdentityFile: Path,
-  override val dotIdea: Path,
-  override val historicalProjectBasePath: Path,
-  val projectViewFile: Path,
-) : ProjectStoreDescriptor {
-  // https://youtrack.jetbrains.com/issue/BAZEL-2527 - we may have a fake module, that still a persistent module
-  override fun getModuleStorageSpecs(
-    component: PersistentStateComponent<*>,
-    stateSpec: State,
-    operation: StateStorageOperation,
-    storageManager: StateStorageManager,
-    project: Project,
-  ): List<Storage> = listOf(FileStorageAnnotation.MODULE_FILE_STORAGE_ANNOTATION)
+import java.nio.file.Path;
 
-  override fun <T : Any> getStorageSpecs(
-    component: PersistentStateComponent<T>,
-    stateSpec: State,
-    operation: StateStorageOperation,
-    storageManager: StateStorageManager,
-  ): List<Storage> {
-    val storages = stateSpec.storages
-    if (storages.isEmpty()) {
-      return listOf(FileStorageAnnotation.PROJECT_FILE_STORAGE_ANNOTATION)
-    } else {
-      return sortStoragesByDeprecated(storages.asList())
+// consulo: IntelliJ's ProjectStoreDescriptor does not exist; the descriptor is a plain class persisted by
+// consulo.bazel.core.BazelProjectStoreService. The storage spec overrides (getModuleStorageSpecs, getStorageSpecs,
+// testStoreDirectoryExistsForProjectRoot, getJpsBridgeAwareStorageSpec) are IntelliJ project store specific and are dropped.
+public class BazelProjectStoreDescriptor {
+    private final Path myProjectIdentityFile;
+    private final Path myDotIdea;
+    private final Path myHistoricalProjectBasePath;
+    private final Path myProjectViewFile;
+
+    public BazelProjectStoreDescriptor(
+        Path projectIdentityFile,
+        Path dotIdea,
+        Path historicalProjectBasePath,
+        Path projectViewFile
+    ) {
+        myProjectIdentityFile = projectIdentityFile;
+        myDotIdea = dotIdea;
+        myHistoricalProjectBasePath = historicalProjectBasePath;
+        myProjectViewFile = projectViewFile;
     }
-  }
 
-  override fun testStoreDirectoryExistsForProjectRoot() = Files.isRegularFile(projectIdentityFile)
+    public Path getProjectIdentityFile() {
+        return myProjectIdentityFile;
+    }
 
-  override fun getJpsBridgeAwareStorageSpec(filePath: String, project: Project): Storage =
-    FileStorageAnnotation(
-      // path =
-      PathUtilRt.getFileName(filePath),
-      // deprecated =
-      false,
-      // splitterClass =
-      StateSplitterEx::class.java,
-    )
+    public Path getDotIdea() {
+        return myDotIdea;
+    }
 
-  override val projectName: @NlsSafe String
-    get() {
-      val fileName = projectIdentityFile.fileName.toString()
+    public Path getHistoricalProjectBasePath() {
+        return myHistoricalProjectBasePath;
+    }
 
-      val projectViewName =
+    public Path getProjectViewFile() {
+        return myProjectViewFile;
+    }
+
+    public String getProjectName() {
+        String fileName = myProjectIdentityFile.getFileName().toString();
+
+        String projectViewName;
         if (fileName.endsWith(Constants.DEFAULT_PROJECT_VIEW_FILE_NAME) &&
-          fileName != Constants.LEGACY_DEFAULT_PROJECT_VIEW_FILE_NAME
+            !fileName.equals(Constants.LEGACY_DEFAULT_PROJECT_VIEW_FILE_NAME)
         ) {
-          fileName
-            .removeSuffix(Constants.DEFAULT_PROJECT_VIEW_FILE_NAME)
-            .ifEmpty { null }
-        } else {
-          null
+            String name = fileName.substring(0, fileName.length() - Constants.DEFAULT_PROJECT_VIEW_FILE_NAME.length());
+            projectViewName = name.isEmpty() ? null : name;
+        }
+        else {
+            projectViewName = null;
         }
 
-      val projectName = super.projectName
-      return if (projectViewName != null && projectViewName != projectName) {
-        "$projectName ($projectViewName)"
-      } else {
-        projectName
-      }
+        // consulo: upstream super.projectName of ProjectStoreDescriptor is the file name of the historical project base path
+        Path baseFileName = myHistoricalProjectBasePath.getFileName();
+        String projectName = baseFileName == null ? myHistoricalProjectBasePath.toString() : baseFileName.toString();
+        if (projectViewName != null && !projectViewName.equals(projectName)) {
+            return projectName + " (" + projectViewName + ")";
+        }
+        else {
+            return projectName;
+        }
     }
 }

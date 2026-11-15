@@ -1,165 +1,235 @@
-package org.jetbrains.bazel.languages.starlark.completion
+package org.jetbrains.bazel.languages.starlark.completion;
 
-import com.intellij.codeInsight.AutoPopupController
-import com.intellij.codeInsight.completion.CompletionContributor
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.codeInsight.completion.CompletionResultSet
-import com.intellij.codeInsight.completion.CompletionType
-import com.intellij.codeInsight.completion.InsertHandler
-import com.intellij.codeInsight.completion.InsertionContext
-import com.intellij.codeInsight.completion.util.ParenthesesInsertHandler
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.openapi.project.Project
-import com.intellij.patterns.PatternCondition
-import com.intellij.patterns.PlatformPatterns.psiComment
-import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.patterns.PlatformPatterns.psiFile
-import com.intellij.util.PlatformIcons
-import com.intellij.util.ProcessingContext
-import org.jetbrains.bazel.languages.starlark.StarlarkLanguage
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunction
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
+import consulo.annotation.component.ExtensionImpl;
+import consulo.codeEditor.Editor;
+import consulo.document.Document;
+import consulo.language.Language;
+import consulo.language.editor.AutoPopupController;
+import consulo.language.editor.completion.CompletionContributor;
+import consulo.language.editor.completion.CompletionParameters;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionResultSet;
+import consulo.language.editor.completion.CompletionType;
+import consulo.language.editor.completion.lookup.InsertHandler;
+import consulo.language.editor.completion.lookup.InsertionContext;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.editor.completion.lookup.ParenthesesInsertHandler;
+import consulo.language.pattern.PatternCondition;
+import consulo.language.pattern.PsiElementPattern;
+import consulo.language.psi.PsiElement;
+import consulo.language.util.ProcessingContext;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.BazelGlobalFunction;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement;
 
-internal class BazelGlobalFunctionCompletionContributor : CompletionContributor() {
-  init {
-    extend(CompletionType.BASIC, globalFunctionCompletionElement(), StarlarkFunctionCompletionProvider)
-    extend(
-      CompletionType.BASIC,
-      fileSpecificFunctionCompletionElement(BazelFileType.EXTENSION),
-      BazelBzlFunctionCompletionProvider,
-    )
-    extend(
-      CompletionType.BASIC,
-      fileSpecificFunctionCompletionElement(BazelFileType.BUILD),
-      BazelBuildFunctionCompletionProvider,
-    )
-    extend(
-      CompletionType.BASIC,
-      fileSpecificFunctionCompletionElement(BazelFileType.MODULE),
-      BazelModuleFunctionCompletionProvider,
-    )
-    extend(
-      CompletionType.BASIC,
-      fileSpecificFunctionCompletionElement(BazelFileType.WORKSPACE),
-      BazelWorkspaceFunctionCompletionProvider,
-    )
-  }
+import java.util.Collection;
+import java.util.Set;
 
-  private fun fileSpecificFunctionCompletionElement(bazelFileType: BazelFileType) = globalFunctionCompletionElement()
-    .inFile(
-      psiFile(StarlarkFile::class.java)
-        .with(bazelFileTypeCondition(bazelFileType)),
-    )
+import static consulo.language.pattern.PlatformPatterns.psiComment;
+import static consulo.language.pattern.PlatformPatterns.psiElement;
+import static consulo.language.pattern.PlatformPatterns.psiFile;
 
-  private fun globalFunctionCompletionElement() =
-    psiElement()
-      .withLanguage(StarlarkLanguage)
-      .withParent(StarlarkReferenceExpression::class.java)
-      .andNot(psiComment())
-      .andNot(psiElement().afterLeaf(psiElement(StarlarkTokenTypes.DOT)))
+@ExtensionImpl
+public class BazelGlobalFunctionCompletionContributor extends CompletionContributor {
+    public BazelGlobalFunctionCompletionContributor() {
+        extend(CompletionType.BASIC, globalFunctionCompletionElement(), StarlarkFunctionCompletionProvider.INSTANCE);
+        extend(
+            CompletionType.BASIC,
+            fileSpecificFunctionCompletionElement(BazelFileType.EXTENSION),
+            BazelBzlFunctionCompletionProvider.INSTANCE
+        );
+        extend(
+            CompletionType.BASIC,
+            fileSpecificFunctionCompletionElement(BazelFileType.BUILD),
+            BazelBuildFunctionCompletionProvider.INSTANCE
+        );
+        extend(
+            CompletionType.BASIC,
+            fileSpecificFunctionCompletionElement(BazelFileType.MODULE),
+            BazelModuleFunctionCompletionProvider.INSTANCE
+        );
+        extend(
+            CompletionType.BASIC,
+            fileSpecificFunctionCompletionElement(BazelFileType.WORKSPACE),
+            BazelWorkspaceFunctionCompletionProvider.INSTANCE
+        );
+    }
 
-  private fun bazelFileTypeCondition(bazelFileType: BazelFileType) =
-    object : PatternCondition<StarlarkFile>("withBazelFileType") {
-      override fun accepts(file: StarlarkFile, context: ProcessingContext): Boolean = file.getBazelFileType() == bazelFileType
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    private PsiElementPattern.Capture<PsiElement> fileSpecificFunctionCompletionElement(BazelFileType bazelFileType) {
+        return globalFunctionCompletionElement()
+            .inFile(
+                psiFile(StarlarkFile.class)
+                    .with(bazelFileTypeCondition(bazelFileType))
+            );
+    }
+
+    private PsiElementPattern.Capture<PsiElement> globalFunctionCompletionElement() {
+        return psiElement()
+            .withLanguage(StarlarkLanguage.INSTANCE)
+            .withParent(StarlarkReferenceExpression.class)
+            .andNot(psiComment())
+            .andNot(psiElement().afterLeaf(psiElement(StarlarkTokenTypes.DOT)));
+    }
+
+    private PatternCondition<StarlarkFile> bazelFileTypeCondition(BazelFileType bazelFileType) {
+        return new PatternCondition<>("withBazelFileType") {
+            @Override
+            public boolean accepts(StarlarkFile file, ProcessingContext context) {
+                return file.getBazelFileType() == bazelFileType;
+            }
+        };
     }
 }
 
-private abstract class BazelFunctionCompletionProvider : CompletionProvider<CompletionParameters>() {
+abstract class BazelFunctionCompletionProvider implements CompletionProvider {
 
-  override fun addCompletions(
-    parameters: CompletionParameters,
-    context: ProcessingContext,
-    result: CompletionResultSet,
-  ) {
-    val project = parameters.editor.project ?: return
-    if (parameters.isInStatementPosition()) {
-      getFunctions(project).forEach { result.addElement(functionLookupElement(it)) }
-      return
-    }
-    getFunctions(project)
-      .filter { it.returnType != null }
-      .forEach { result.addElement(functionLookupElement(it)) }
-  }
-
-  private fun CompletionParameters.isInStatementPosition(): Boolean =
-    when (val grandParent = position.parent?.parent) {
-      is StarlarkExpressionStatement -> true
-      is StarlarkCallExpression -> grandParent.parent is StarlarkExpressionStatement
-      else -> false
+    @Override
+    public void addCompletions(
+        CompletionParameters parameters,
+        ProcessingContext context,
+        CompletionResultSet result
+    ) {
+        Project project = parameters.getEditor().getProject();
+        if (project == null) {
+            return;
+        }
+        if (isInStatementPosition(parameters)) {
+            getFunctions(project).forEach(it -> result.addElement(functionLookupElement(it)));
+            return;
+        }
+        getFunctions(project)
+            .stream()
+            .filter(it -> it.returnType() != null)
+            .forEach(it -> result.addElement(functionLookupElement(it)));
     }
 
-  protected abstract fun getFunctions(project: Project): Collection<BazelGlobalFunction>
-
-  private fun functionLookupElement(function: BazelGlobalFunction): LookupElement =
-    LookupElementBuilder
-      .create(function.name)
-      .withInsertHandler(insertHandlerFor(function))
-      .withIcon(PlatformIcons.FUNCTION_ICON)
-
-  private fun insertHandlerFor(
-    function: BazelGlobalFunction,
-  ): InsertHandler<LookupElement> = when (function.name) {
-    in LIST_LITERAL_COMPLETION_FUNCTIONS -> ListLiteralArgumentInsertHandler
-    else -> ParenthesesInsertHandler.WITH_PARAMETERS
-  }
-
-  private companion object {
-
-    private val LIST_LITERAL_COMPLETION_FUNCTIONS = setOf("glob", "exports_files", "licenses")
-  }
-}
-
-private object ListLiteralArgumentInsertHandler : InsertHandler<LookupElement> {
-
-  override fun handleInsert(context: InsertionContext, item: LookupElement) {
-    val editor = context.editor
-    val document = editor.document
-    // Completion may be re-invoked over an existing call, where the parentheses are already present.
-    // In that case place the caret inside them rather than inserting a second, broken `([""])`.
-    if (document.charsSequence.getOrNull(context.tailOffset) == '(') {
-      editor.caretModel.moveToOffset(context.tailOffset + 1)
-    } else {
-      document.insertString(context.tailOffset, "([\"\"])")
-      editor.caretModel.moveToOffset(context.tailOffset - 3)
+    private static boolean isInStatementPosition(CompletionParameters receiver) {
+        PsiElement parent = receiver.getPosition().getParent();
+        PsiElement grandParent = parent == null ? null : parent.getParent();
+        if (grandParent instanceof StarlarkExpressionStatement) {
+            return true;
+        }
+        else if (grandParent instanceof StarlarkCallExpression) {
+            return grandParent.getParent() instanceof StarlarkExpressionStatement;
+        }
+        else {
+            return false;
+        }
     }
-    AutoPopupController.getInstance(context.project).scheduleAutoPopup(editor)
-  }
+
+    protected abstract Collection<BazelGlobalFunction> getFunctions(Project project);
+
+    private LookupElement functionLookupElement(BazelGlobalFunction function) {
+        return LookupElementBuilder
+            .create(function.name())
+            .withInsertHandler(insertHandlerFor(function))
+            .withIcon(PlatformIconGroup.nodesFunction());
+    }
+
+    private InsertHandler<LookupElement> insertHandlerFor(
+        BazelGlobalFunction function
+    ) {
+        if (LIST_LITERAL_COMPLETION_FUNCTIONS.contains(function.name())) {
+            return ListLiteralArgumentInsertHandler.INSTANCE;
+        }
+        else {
+            return ParenthesesInsertHandler.WITH_PARAMETERS;
+        }
+    }
+
+    private static final Set<String> LIST_LITERAL_COMPLETION_FUNCTIONS = Set.of("glob", "exports_files", "licenses");
 }
 
-private object StarlarkFunctionCompletionProvider : BazelFunctionCompletionProvider() {
-  override fun getFunctions(project: Project): Collection<BazelGlobalFunction> = BazelGlobalFunctions
-    .starlarkGlobalFunctions(project)
-    .values
+class ListLiteralArgumentInsertHandler implements InsertHandler<LookupElement> {
+    static final ListLiteralArgumentInsertHandler INSTANCE = new ListLiteralArgumentInsertHandler();
+
+    private ListLiteralArgumentInsertHandler() {
+    }
+
+    @Override
+    public void handleInsert(InsertionContext context, LookupElement item) {
+        Editor editor = context.getEditor();
+        Document document = editor.getDocument();
+        // Completion may be re-invoked over an existing call, where the parentheses are already present.
+        // In that case place the caret inside them rather than inserting a second, broken `([""])`.
+        CharSequence chars = document.getCharsSequence();
+        int tailOffset = context.getTailOffset();
+        if (tailOffset >= 0 && tailOffset < chars.length() && chars.charAt(tailOffset) == '(') {
+            editor.getCaretModel().moveToOffset(context.getTailOffset() + 1);
+        }
+        else {
+            document.insertString(context.getTailOffset(), "([\"\"])");
+            editor.getCaretModel().moveToOffset(context.getTailOffset() - 3);
+        }
+        AutoPopupController.getInstance(context.getProject()).scheduleAutoPopup(editor);
+    }
 }
 
-private object BazelBzlFunctionCompletionProvider : BazelFunctionCompletionProvider() {
-  override fun getFunctions(project: Project): Collection<BazelGlobalFunction> = BazelGlobalFunctions
-    .extensionGlobalFunctions(project)
-    .values
+class StarlarkFunctionCompletionProvider extends BazelFunctionCompletionProvider {
+    static final StarlarkFunctionCompletionProvider INSTANCE = new StarlarkFunctionCompletionProvider();
+
+    @Override
+    protected Collection<BazelGlobalFunction> getFunctions(Project project) {
+        return BazelGlobalFunctions
+            .starlarkGlobalFunctions(project)
+            .values();
+    }
 }
 
-private object BazelBuildFunctionCompletionProvider : BazelFunctionCompletionProvider() {
-  override fun getFunctions(project: Project): Collection<BazelGlobalFunction> = BazelGlobalFunctions
-    .buildGlobalFunctions(project)
-    .values
+class BazelBzlFunctionCompletionProvider extends BazelFunctionCompletionProvider {
+    static final BazelBzlFunctionCompletionProvider INSTANCE = new BazelBzlFunctionCompletionProvider();
+
+    @Override
+    protected Collection<BazelGlobalFunction> getFunctions(Project project) {
+        return BazelGlobalFunctions
+            .extensionGlobalFunctions(project)
+            .values();
+    }
 }
 
-private object BazelModuleFunctionCompletionProvider : BazelFunctionCompletionProvider() {
-  override fun getFunctions(project: Project): Collection<BazelGlobalFunction> = BazelGlobalFunctions
-    .moduleGlobalFunctions(project)
-    .values
+class BazelBuildFunctionCompletionProvider extends BazelFunctionCompletionProvider {
+    static final BazelBuildFunctionCompletionProvider INSTANCE = new BazelBuildFunctionCompletionProvider();
+
+    @Override
+    protected Collection<BazelGlobalFunction> getFunctions(Project project) {
+        return BazelGlobalFunctions
+            .buildGlobalFunctions(project)
+            .values();
+    }
 }
 
-private object BazelWorkspaceFunctionCompletionProvider : BazelFunctionCompletionProvider() {
-  override fun getFunctions(project: Project): Collection<BazelGlobalFunction> = BazelGlobalFunctions
-    .moduleGlobalFunctions(project)
-    .values
+class BazelModuleFunctionCompletionProvider extends BazelFunctionCompletionProvider {
+    static final BazelModuleFunctionCompletionProvider INSTANCE = new BazelModuleFunctionCompletionProvider();
+
+    @Override
+    protected Collection<BazelGlobalFunction> getFunctions(Project project) {
+        return BazelGlobalFunctions
+            .moduleGlobalFunctions(project)
+            .values();
+    }
+}
+
+class BazelWorkspaceFunctionCompletionProvider extends BazelFunctionCompletionProvider {
+    static final BazelWorkspaceFunctionCompletionProvider INSTANCE = new BazelWorkspaceFunctionCompletionProvider();
+
+    @Override
+    protected Collection<BazelGlobalFunction> getFunctions(Project project) {
+        return BazelGlobalFunctions
+            .moduleGlobalFunctions(project)
+            .values();
+    }
 }

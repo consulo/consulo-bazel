@@ -1,25 +1,45 @@
-package org.jetbrains.bazel.run.handler
+package org.jetbrains.bazel.run.handler;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.label.AllRuleTargets
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.import.GooglePluginAwareRunHandlerProvider
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import org.jetbrains.bazel.commons.RuleType;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.import_.GooglePluginAwareRunHandlerProvider;
+import org.jetbrains.bsp.protocol.BuildTarget;
 
-internal class GenericRunHandlerProvider : GooglePluginAwareRunHandlerProvider {
-  override val id: String
-    get() = "GenericRunHandlerProvider"
+import java.util.List;
 
-  override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = GenericBazelRunHandler()
+@ExtensionImpl(order = "last")
+public class GenericRunHandlerProvider implements GooglePluginAwareRunHandlerProvider {
+    @Override
+    public String getId() {
+        return "GenericRunHandlerProvider";
+    }
 
-  override fun canRun(project: Project, targets: List<BuildTarget>): Boolean = targets.singleOrNull()?.kind?.ruleType == RuleType.BINARY
+    @Override
+    public BazelRunHandler createRunHandler(BazelRunConfiguration configuration) {
+        return new GenericBazelRunHandler();
+    }
 
-  override fun canRunNonImported(project: Project, targets: List<Label>): Boolean =
-    targets.size == 1 && targets.single().target !is AllRuleTargets
+    @Override
+    public boolean canRun(Project project, List<BuildTarget> targets) {
+        return targets.size() == 1 && targets.get(0).getKind().ruleType() == RuleType.BINARY;
+    }
 
-  override val googleHandlerId: String = "BlazeCommandGenericRunConfigurationHandlerProvider"
-  override val isTestHandler: Boolean = false
+    @Override
+    public boolean canRunNonImported(Project project, List<Label> targets) {
+        return targets.size() == 1 && !(targets.get(0).target() instanceof Label.AllRuleTargets);
+    }
+
+    @Override
+    public String getGoogleHandlerId() {
+        return "BlazeCommandGenericRunConfigurationHandlerProvider";
+    }
+
+    @Override
+    public boolean isTestHandler() {
+        return false;
+    }
 }

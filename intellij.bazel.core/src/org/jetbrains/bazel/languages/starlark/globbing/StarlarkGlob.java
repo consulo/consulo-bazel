@@ -12,546 +12,605 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package org.jetbrains.bazel.languages.starlark.globbing
+package org.jetbrains.bazel.languages.starlark.globbing;
 
-import com.google.common.cache.Cache
-import com.google.common.cache.CacheBuilder
-import com.google.common.cache.CacheLoader
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.progress.checkCanceled
-import com.intellij.openapi.progress.runBlockingCancellable
-import com.intellij.openapi.project.ProjectLocator
-import com.intellij.openapi.vfs.VfsUtil
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.isFile
-import com.intellij.platform.ide.progress.ModalTaskOwner
-import com.intellij.platform.ide.progress.TaskCancellation
-import com.intellij.platform.ide.progress.runWithModalProgressBlocking
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
-import com.intellij.util.containers.tail
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import java.util.concurrent.ConcurrentHashMap
-import java.util.function.Predicate
-import java.util.regex.Pattern
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import consulo.application.Application;
+import consulo.application.progress.ProgressManager;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.project.Project;
+import consulo.project.ProjectLocator;
+import consulo.util.lang.function.ThrowableSupplier;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Implementation of a subset of UNIX-style file globbing, expanding "*" and "?" as wildcards, but
  * not [a-z] ranges.
- *
- * `**` gets special treatment in include patterns. If it is used as a complete path
+ * <p>
+ * {@code **} gets special treatment in include patterns. If it is used as a complete path
  * segment it matches the filenames in subdirectories recursively.
- *
+ * <p>
  * Largely copied from old Bazel plugin's UnixGlob.java
  */
-@ApiStatus.Internal
-class StarlarkGlob private constructor(
-  private val base: VirtualFile,
-  private val patterns: List<List<String>>,
-  private val excludes: List<List<String>>,
-  private val excludeDirectories: Boolean,
-  private val pathFilter: Predicate<VirtualFile>,
-) {
+public class StarlarkGlob {
+    private final VirtualFile myBase;
+    private final List<List<String>> myPatterns;
+    private final List<List<String>> myExcludes;
+    private final boolean myExcludeDirectories;
+    private final Predicate<VirtualFile> myPathFilter;
 
-  private val cache: Cache<String, Pattern> = createCache()
-
-  /**
-   * Checks if given file matches the glob pattern.
-   */
-  fun match(file: VirtualFile): Boolean {
-    if (file.isDirectory && excludeDirectories) return false
-    val relativePath = VfsUtil.getRelativePath(file, base)
-                       ?: return false // relative path is null when file is not under base
-
-    var subDir = base
-    for (segment in relativePath.split("/").dropLast(1)) {
-      subDir = subDir.findChild(segment) ?: return false
-      if (!pathFilter.test(subDir))
-        return false
-    }
-
-    return match(relativePath)
-  }
-
-  /**
-   * Checks if the given relative path matches the glob pattern.
-   */
-  fun match(relativePath: String): Boolean {
-    val included = patterns.any { include -> patternMatches(include, relativePath, excludeDirectories, cache) }
-    if (included) {
-      val excluded = excludes.any { exclude -> patternMatches(exclude, relativePath, excludeDirectories, cache) }
-      return !excluded
-    }
-    return false
-  }
-
-  /**
-   * Executes the glob.
-   */
-  @RequiresBlockingContext
-  fun execute(): List<VirtualFile> {
-    if (!base.exists() || patterns.isEmpty()) {
-      return emptyList()
-    }
-
-    // If called on EDT, use modal progress to avoid freezing the UI completely.
-    if (ApplicationManager.getApplication().isDispatchThread) {
-      val project = ProjectLocator.getInstance().guessProjectForFile(base)
-      val owner = project?.let { ModalTaskOwner.project(it) } ?: ModalTaskOwner.guess()
-      return runWithModalProgressBlocking(
-        owner,
-        StarlarkBundle.message("progress.globbing"),
-        TaskCancellation.cancellable(),
-      ) {
-        executeSuspend()
-      }
-    }
-
-    return runBlockingCancellable {
-      executeSuspend()
-    }
-  }
-
-  suspend fun executeSuspend(): List<VirtualFile> {
-    if (!base.exists() || patterns.isEmpty()) {
-      return emptyList()
-    }
-    checkCanceled()
-
-    val included = GlobVisitor(excludeDirectories, pathFilter)
-      .globAsync(base, patterns)
-    if (included.isEmpty()) {
-      return emptyList()
-    }
-
-    val excluded = GlobVisitor(excludeDirectories, pathFilter)
-      .globAsync(base, excludes)
-
-    return (included - excluded).sortedBy { it.path }
-  }
-
-  /**
-   * GlobVisitor executes a glob using parallelism, which is useful when the glob() requires many
-   * readdir() calls on high latency filesystems.
-   */
-  private inner class GlobVisitor(
-    private val excludeDirectories: Boolean,
-    private val dirPred: Predicate<VirtualFile>,
-  ) {
-    private val results: MutableSet<VirtualFile> = ConcurrentHashMap.newKeySet()
-
-    /**
-     * Performs wildcard globbing: returns the sorted list of filenames that match any of `patterns` relative to `base`. Directories are traversed if and only if they match
-     * `dirPred`. The predicate is also called for the root of the traversal.
-     *
-     *
-     * Patterns may include "*" and "?", but not "[a-z]".
-     *
-     *
-     * `**` gets special treatment in include patterns. If it is used as a complete
-     * path segment it matches the filenames in subdirectories recursively.
-     *
-     * @throws IllegalArgumentException if any glob or exclude pattern contains errors, or if any
-     * exclude pattern segment contains `**` or if any include pattern segment
-     * contains `**` but not equal to it.
-     */
-    suspend fun globAsync(
-      base: VirtualFile,
-      patterns: Collection<List<String>>,
-    ): Set<VirtualFile> {
-      val baseIsDirectory = base.isDirectory
-
-      // We do a dumb loop, even though it will likely duplicate work
-      // (e.g., readdir calls). In order to optimize, we would need
-      // to keep track of which patterns shared sub-patterns and which did not
-      // (for example consider the glob [*/*.java, sub/*.java, */*.txt]).
-      return coroutineScope {
-        patterns.forEach { splitPattern ->
-          launch {
-            reallyGlob(
-              base,
-              baseIsDirectory,
-              splitPattern,
-              0,
-            )
-          }
-        }
-        results
-      }
-    }
-
-    /**
-     * Expressed in Haskell:
-     *
-     * <pre>
-     * reallyGlob base []     = { base }
-     * reallyGlob base [x:xs] = union { reallyGlob(f, xs) | f results "base/x" }
-    </pre> *
-     */
-    suspend fun CoroutineScope.reallyGlob(
-      base: VirtualFile,
-      baseIsDirectory: Boolean,
-      patternParts: List<String>,
-      idx: Int,
+    private StarlarkGlob(
+        VirtualFile base,
+        List<List<String>> patterns,
+        List<List<String>> excludes,
+        boolean excludeDirectories,
+        Predicate<VirtualFile> pathFilter
     ) {
-      checkCanceled()
-      if (baseIsDirectory && !dirPred.test(base) ) {
-        return
-      }
+        myBase = base;
+        myPatterns = patterns;
+        myExcludes = excludes;
+        myExcludeDirectories = excludeDirectories;
+        myPathFilter = pathFilter;
+    }
 
-      if (idx == patternParts.size) { // Base case.
-        if (!(excludeDirectories && baseIsDirectory)) {
-          results.add(base)
+    private final Cache<String, Pattern> myCache = createCache();
+
+    /**
+     * Checks if given file matches the glob pattern.
+     */
+    public boolean match(VirtualFile file) {
+        if (file.isDirectory() && myExcludeDirectories) {
+            return false;
         }
-        return
-      }
-
-      if (!baseIsDirectory) {
-        // Nothing to find here.
-        return
-      }
-
-      val pattern = patternParts[idx]
-
-      // ** is special: it can match nothing at all.
-      // For example, x/** matches x, **/y matches y, and x/**/y matches x/y.
-      if ("**" == pattern) {
-        launch {
-          reallyGlob(
-            base,
-            baseIsDirectory,
-            patternParts,
-            idx + 1,
-          )
+        String relativePath = VirtualFileUtil.getRelativePath(file, myBase);
+        if (relativePath == null) {
+            return false; // relative path is null when file is not under base
         }
-      }
 
-      if (!pattern.contains("*") && !pattern.contains("?")) {
-        checkCanceled()
-        val child = base.findChild(pattern) ?: return
-        val childIsDir = child.isDirectory
-        val childIsFile = child.isFile
-        if (!childIsDir && !childIsFile) {
-          // The file is a dangling symlink, fifo, does not exist, etc.
-          return
-        }
-        launch {
-          reallyGlob(
-            child,
-            childIsDir,
-            patternParts,
-            idx + 1,
-          )
-        }
-        return
-      }
-
-      val children = getChildren(base) ?: return
-
-      for (child in children) {
-        checkCanceled()
-
-        val childName = child.name
-        val childIsDir = child.isDirectory
-
-        if ("**" == pattern && childIsDir) {
-          // Recurse without shifting the pattern.
-          launch {
-            reallyGlob(
-              child,
-              childIsDir,
-              patternParts,
-              idx,
-            )
-          }
-        }
-        if (partMatches(pattern, childName, cache)) {
-          // Recurse and consume one segment of the pattern.
-          if (childIsDir) {
-            launch {
-              reallyGlob(
-                child,
-                childIsDir,
-                patternParts,
-                idx + 1,
-              )
+        VirtualFile subDir = myBase;
+        List<String> segments = Arrays.asList(relativePath.split("/", -1));
+        for (String segment : segments.subList(0, Math.max(segments.size() - 1, 0))) {
+            subDir = subDir.findChild(segment);
+            if (subDir == null) {
+                return false;
             }
-          }
-          else {
-            // Instead of using an async call, just repeat the base case above.
-            if (idx + 1 == patternParts.size) {
-              results.add(child)
+            if (!myPathFilter.test(subDir)) {
+                return false;
             }
-          }
         }
-      }
-    }
 
-    fun getChildren(file: VirtualFile?): Array<VirtualFile>? = file?.children
-  }
-
-  /** Builder class for UnixGlob.  */
-  class Builder(private val base: VirtualFile) {
-    private val patterns: MutableList<String> = ArrayList()
-    private val excludes: MutableList<String> = ArrayList()
-    private var excludeDirectories = true
-    private var pathFilter: Predicate<VirtualFile> = Predicate { true }
-
-    /**
-     * Adds a pattern to include to the glob builder.
-     *
-     *
-     * For a description of the syntax of the patterns, see [StarlarkGlob].
-     */
-    @Suppress("unused")
-    fun addPattern(pattern: String): Builder {
-      this.patterns.add(pattern)
-      return this
+        return match(relativePath);
     }
 
     /**
-     * Adds a pattern to include to the glob builder.
-     *
-     *
-     * For a description of the syntax of the patterns, see [StarlarkGlob].
+     * Checks if the given relative path matches the glob pattern.
      */
-    fun addPatterns(patterns: Collection<String>): Builder {
-      this.patterns.addAll(patterns)
-      return this
+    public boolean match(String relativePath) {
+        boolean included = myPatterns.stream().anyMatch(include -> patternMatches(include, relativePath, myExcludeDirectories, myCache));
+        if (included) {
+            boolean excluded =
+                myExcludes.stream().anyMatch(exclude -> patternMatches(exclude, relativePath, myExcludeDirectories, myCache));
+            return !excluded;
+        }
+        return false;
     }
 
     /**
-     * Adds patterns to exclude from the results to the glob builder.
-     *
-     *
-     * For a description of the syntax of the patterns, see [StarlarkGlob].
+     * Executes the glob.
      */
-    fun addExcludes(excludes: Collection<String>): Builder {
-      this.excludes.addAll(excludes)
-      return this
+    public List<VirtualFile> execute() {
+        if (!myBase.exists() || myPatterns.isEmpty()) {
+            return List.of();
+        }
+
+        // If called on EDT, use modal progress to avoid freezing the UI completely.
+        if (Application.get().isDispatchThread()) {
+            Project project = ProjectLocator.getInstance().guessProjectForFile(myBase);
+            // consulo: runWithModalProgressBlocking(ModalTaskOwner) -> runProcessWithProgressSynchronously (null project = guessed owner)
+            ThrowableSupplier<List<VirtualFile>, RuntimeException> process = this::executeSuspend;
+            return ProgressManager.getInstance().runProcessWithProgressSynchronously(
+                process,
+                StarlarkLocalize.progressGlobbing(),
+                true,
+                project
+            );
+        }
+
+        // consulo: runBlockingCancellable -> direct call, cancellation goes through the current progress indicator
+        return executeSuspend();
     }
 
-    /** If set to true, directories are not returned in the glob result.  */
-    fun setExcludeDirectories(excludeDirectories: Boolean): Builder {
-      this.excludeDirectories = excludeDirectories
-      return this
+    // consulo: upstream suspend function; it runs synchronously, callers provide the progress
+    public List<VirtualFile> executeSuspend() {
+        if (!myBase.exists() || myPatterns.isEmpty()) {
+            return List.of();
+        }
+        ProgressManager.checkCanceled();
+
+        Set<VirtualFile> included = new GlobVisitor(myExcludeDirectories, myPathFilter)
+            .globAsync(myBase, myPatterns);
+        if (included.isEmpty()) {
+            return List.of();
+        }
+
+        Set<VirtualFile> excluded = new GlobVisitor(myExcludeDirectories, myPathFilter)
+            .globAsync(myBase, myExcludes);
+
+        Set<VirtualFile> result = new LinkedHashSet<>(included);
+        result.removeAll(excluded);
+        List<VirtualFile> sorted = new ArrayList<>(result);
+        sorted.sort(Comparator.comparing(VirtualFile::getPath));
+        return sorted;
     }
 
     /**
-     * If set, the given predicate is called for every directory encountered. If it returns false,
-     * the corresponding item is not returned in the output and directories are not traversed
-     * either.
-     *
-     * The predicate must be pure and fast, and it must not access PSI, indexes or other APIs
-     * that require a read action. It should only use VFS-level information available from
-     * {@link com.intellij.openapi.vfs.VirtualFile}.
+     * GlobVisitor executes a glob using parallelism, which is useful when the glob() requires many
+     * readdir() calls on high latency filesystems.
      */
-    fun setDirectoryFilter(pathFilter: Predicate<VirtualFile>): Builder {
-      this.pathFilter = pathFilter
-      return this
+    private class GlobVisitor {
+        private final boolean myExcludeDirectories;
+        private final Predicate<VirtualFile> myDirPred;
+
+        private final Set<VirtualFile> myResults = ConcurrentHashMap.newKeySet();
+
+        private GlobVisitor(boolean excludeDirectories, Predicate<VirtualFile> dirPred) {
+            myExcludeDirectories = excludeDirectories;
+            myDirPred = dirPred;
+        }
+
+        /**
+         * Performs wildcard globbing: returns the sorted list of filenames that match any of {@code patterns} relative to {@code base}.
+         * Directories are traversed if and only if they match
+         * {@code dirPred}. The predicate is also called for the root of the traversal.
+         * <p>
+         * Patterns may include "*" and "?", but not "[a-z]".
+         * <p>
+         * {@code **} gets special treatment in include patterns. If it is used as a complete
+         * path segment it matches the filenames in subdirectories recursively.
+         *
+         * @throws IllegalArgumentException if any glob or exclude pattern contains errors, or if any
+         *                                  exclude pattern segment contains {@code **} or if any include pattern segment
+         *                                  contains {@code **} but not equal to it.
+         */
+        // consulo: upstream suspend function; coroutine launch() calls are replaced by direct recursive calls
+        // (results are collected into a set and sorted afterwards, so the visiting order does not matter)
+        Set<VirtualFile> globAsync(
+            VirtualFile base,
+            Collection<List<String>> patterns
+        ) {
+            boolean baseIsDirectory = base.isDirectory();
+
+            // We do a dumb loop, even though it will likely duplicate work
+            // (e.g., readdir calls). In order to optimize, we would need
+            // to keep track of which patterns shared sub-patterns and which did not
+            // (for example consider the glob [*/*.java, sub/*.java, */*.txt]).
+            for (List<String> splitPattern : patterns) {
+                reallyGlob(
+                    base,
+                    baseIsDirectory,
+                    splitPattern,
+                    0
+                );
+            }
+            return myResults;
+        }
+
+        /**
+         * Expressed in Haskell:
+         *
+         * <pre>
+         * reallyGlob base []     = { base }
+         * reallyGlob base [x:xs] = union { reallyGlob(f, xs) | f results "base/x" }
+         * </pre>
+         */
+        void reallyGlob(
+            VirtualFile base,
+            boolean baseIsDirectory,
+            List<String> patternParts,
+            int idx
+        ) {
+            ProgressManager.checkCanceled();
+            if (baseIsDirectory && !myDirPred.test(base)) {
+                return;
+            }
+
+            if (idx == patternParts.size()) { // Base case.
+                if (!(myExcludeDirectories && baseIsDirectory)) {
+                    myResults.add(base);
+                }
+                return;
+            }
+
+            if (!baseIsDirectory) {
+                // Nothing to find here.
+                return;
+            }
+
+            String pattern = patternParts.get(idx);
+
+            // ** is special: it can match nothing at all.
+            // For example, x/** matches x, **/y matches y, and x/**/y matches x/y.
+            if ("**".equals(pattern)) {
+                reallyGlob(
+                    base,
+                    baseIsDirectory,
+                    patternParts,
+                    idx + 1
+                );
+            }
+
+            if (!pattern.contains("*") && !pattern.contains("?")) {
+                ProgressManager.checkCanceled();
+                VirtualFile child = base.findChild(pattern);
+                if (child == null) {
+                    return;
+                }
+                boolean childIsDir = child.isDirectory();
+                // consulo: Kotlin VirtualFile.isFile
+                boolean childIsFile = child.isValid() && !child.isDirectory();
+                if (!childIsDir && !childIsFile) {
+                    // The file is a dangling symlink, fifo, does not exist, etc.
+                    return;
+                }
+                reallyGlob(
+                    child,
+                    childIsDir,
+                    patternParts,
+                    idx + 1
+                );
+                return;
+            }
+
+            VirtualFile[] children = getChildren(base);
+            if (children == null) {
+                return;
+            }
+
+            for (VirtualFile child : children) {
+                ProgressManager.checkCanceled();
+
+                String childName = child.getName();
+                boolean childIsDir = child.isDirectory();
+
+                if ("**".equals(pattern) && childIsDir) {
+                    // Recurse without shifting the pattern.
+                    reallyGlob(
+                        child,
+                        childIsDir,
+                        patternParts,
+                        idx
+                    );
+                }
+                if (partMatches(pattern, childName, myCache)) {
+                    // Recurse and consume one segment of the pattern.
+                    if (childIsDir) {
+                        reallyGlob(
+                            child,
+                            childIsDir,
+                            patternParts,
+                            idx + 1
+                        );
+                    }
+                    else {
+                        // Instead of using an async call, just repeat the base case above.
+                        if (idx + 1 == patternParts.size()) {
+                            myResults.add(child);
+                        }
+                    }
+                }
+            }
+        }
+
+        VirtualFile @Nullable [] getChildren(@Nullable VirtualFile file) {
+            return file == null ? null : file.getChildren();
+        }
     }
 
     /**
-     * Construct glob of this builder
+     * Builder class for UnixGlob.
      */
-    fun build(): StarlarkGlob {
-      return StarlarkGlob(base, checkAndSplitPatterns(patterns), checkAndSplitPatterns(excludes), excludeDirectories, pathFilter)
-    }
-  }
+    public static class Builder {
+        private final VirtualFile myBase;
+        private final List<String> myPatterns = new ArrayList<>();
+        private final List<String> myExcludes = new ArrayList<>();
+        private boolean myExcludeDirectories = true;
+        private Predicate<VirtualFile> myPathFilter = file -> true;
 
-  companion object {
+        public Builder(VirtualFile base) {
+            myBase = base;
+        }
+
+        /**
+         * Adds a pattern to include to the glob builder.
+         * <p>
+         * For a description of the syntax of the patterns, see {@link StarlarkGlob}.
+         */
+        @SuppressWarnings("unused")
+        public Builder addPattern(String pattern) {
+            myPatterns.add(pattern);
+            return this;
+        }
+
+        /**
+         * Adds a pattern to include to the glob builder.
+         * <p>
+         * For a description of the syntax of the patterns, see {@link StarlarkGlob}.
+         */
+        public Builder addPatterns(Collection<String> patterns) {
+            myPatterns.addAll(patterns);
+            return this;
+        }
+
+        /**
+         * Adds patterns to exclude from the results to the glob builder.
+         * <p>
+         * For a description of the syntax of the patterns, see {@link StarlarkGlob}.
+         */
+        public Builder addExcludes(Collection<String> excludes) {
+            myExcludes.addAll(excludes);
+            return this;
+        }
+
+        /**
+         * If set to true, directories are not returned in the glob result.
+         */
+        public Builder setExcludeDirectories(boolean excludeDirectories) {
+            myExcludeDirectories = excludeDirectories;
+            return this;
+        }
+
+        /**
+         * If set, the given predicate is called for every directory encountered. If it returns false,
+         * the corresponding item is not returned in the output and directories are not traversed
+         * either.
+         * <p>
+         * The predicate must be pure and fast, and it must not access PSI, indexes or other APIs
+         * that require a read action. It should only use VFS-level information available from
+         * {@link VirtualFile}.
+         */
+        public Builder setDirectoryFilter(Predicate<VirtualFile> pathFilter) {
+            myPathFilter = pathFilter;
+            return this;
+        }
+
+        /**
+         * Construct glob of this builder
+         */
+        public StarlarkGlob build() {
+            return new StarlarkGlob(myBase, checkAndSplitPatterns(myPatterns), checkAndSplitPatterns(myExcludes), myExcludeDirectories,
+                myPathFilter);
+        }
+    }
+
     /**
      * Checks that each pattern is valid, splits it into segments and checks that each segment
      * contains only valid wildcards.
      *
      * @return list of segment arrays
      */
-    private fun checkAndSplitPatterns(patterns: Collection<String>): List<List<String>> {
-      return patterns.map { checkAndSplitPattern(it) }
+    private static List<List<String>> checkAndSplitPatterns(Collection<String> patterns) {
+        List<List<String>> result = new ArrayList<>(patterns.size());
+        for (String pattern : patterns) {
+            result.add(checkAndSplitPattern(pattern));
+        }
+        return result;
     }
 
-    private fun checkAndSplitPattern(pattern: String): List<String> {
-      val error = GlobPatternValidator.validate(pattern)
-      if (error != null)
-        throw IllegalArgumentException(error)
-
-      return pattern.split('/')
-    }
-
-    /** Calls [matches(pattern, str, null)][.matches]  */
-    fun partMatches(pattern: String, str: String): Boolean =
-        partMatches(pattern, str, null)
-
-    fun patternMatches(
-      patternParts: List<String>,
-      path: String,
-      excludeDirectories: Boolean,
-      patternCache: Cache<String, Pattern>?
-    ): Boolean {
-      val pathPart = path.substringBefore("/")
-      val pathTail = path.substringAfter("/", "")
-      val isDirectory = pathTail.isNotEmpty()
-
-      if (patternParts.isEmpty()) { // Base case.
-        if (!(excludeDirectories && isDirectory)) {
-          return true
+    private static List<String> checkAndSplitPattern(String pattern) {
+        String error = GlobPatternValidator.validate(pattern);
+        if (error != null) {
+            throw new IllegalArgumentException(error);
         }
-        return false
-      }
 
-      //if (!isDirectory) {
-      //  // Nothing to find here.
-      //  return false
-      //}
-
-      val pattern = patternParts.first()
-
-      // ** is special: it can match nothing at all.
-      // For example, x/** matches x, **/y matches y, and x/**/y matches x/y.
-      if ("**" == pattern) {
-        if (patternMatches(patternParts.tail(), path, excludeDirectories, patternCache))
-          return true
-      }
-
-      if (!pattern.contains("*") && !pattern.contains("?")) {
-        if (pathPart != pattern)
-          return false
-
-        patternMatches(patternParts.tail(), pathTail, excludeDirectories, patternCache)
-      }
-
-      if ("**" == pattern && isDirectory) {
-        // Recurse without shifting the pattern.
-        if (patternMatches(patternParts, pathTail, excludeDirectories, patternCache))
-          return true
-      }
-
-      if (partMatches(pattern, pathPart, patternCache)) {
-        // Recurse and consume one segment of the pattern.
-        if (isDirectory) {
-          if (patternMatches(patternParts.tail(), pathTail, excludeDirectories, patternCache))
-            return true
-        }
-        else {
-          if (patternParts.size == 1)
-            return true
-        }
-      }
-
-      return false
+        return List.of(pattern.split("/", -1));
     }
 
     /**
-     * Returns whether `str` matches the glob pattern `pattern`. This method may use the
-     * `patternCache` to speed up the matching process.
-     *
-     * @param pattern a glob pattern
-     * @param str the string to match
-     * @param patternCache a cache from patterns to compiled Pattern objects, or `null` to skip
-     * caching
+     * Calls {@link #partMatches(String, String, Cache) matches(pattern, str, null)}
      */
-    private fun partMatches(
-      pattern: String,
-      str: String,
-      patternCache: Cache<String, Pattern>?,
-    ): Boolean {
-      if (pattern.isEmpty() || str.isEmpty()) {
-        return false
-      }
+    public static boolean partMatches(String pattern, String str) {
+        return partMatches(pattern, str, null);
+    }
 
-      // Common case: **
-      if (pattern == "**") {
-        return true
-      }
+    public static boolean patternMatches(
+        List<String> patternParts,
+        String path,
+        boolean excludeDirectories,
+        @Nullable Cache<String, Pattern> patternCache
+    ) {
+        int slashIndex = path.indexOf('/');
+        String pathPart = slashIndex < 0 ? path : path.substring(0, slashIndex);
+        String pathTail = slashIndex < 0 ? "" : path.substring(slashIndex + 1);
+        boolean isDirectory = !pathTail.isEmpty();
 
-      // Common case: *
-      if (pattern == "*") {
-        return true
-      }
+        if (patternParts.isEmpty()) { // Base case.
+            if (!(excludeDirectories && isDirectory)) {
+                return true;
+            }
+            return false;
+        }
 
-      // If a filename starts with '.', this char must be matched explicitly.
-      if (str[0] == '.' && pattern[0] != '.') {
-        return false
-      }
+        //if (!isDirectory) {
+        //  // Nothing to find here.
+        //  return false
+        //}
 
-      // Common case: *.xyz
-      if (pattern[0] == '*' && pattern.lastIndexOf('*') == 0) {
-        return str.endsWith(pattern.substring(1))
-      }
-      // Common case: xyz*!!
-      val lastIndex = pattern.length - 1
-      // The first clause of this if statement is unnecessary, but is an
-      // optimization--charAt runs faster than indexOf.!!!!
-      if (pattern[lastIndex] == '*' && pattern.indexOf('*') == lastIndex) {
-        return str.startsWith(pattern.substring(0, lastIndex))
-      }
+        String pattern = patternParts.get(0);
 
-      var regex = patternCache?.getIfPresent(pattern)
-      if (regex == null) {
-        regex = makePatternFromWildcard(pattern)
-        patternCache?.put(pattern, regex)
-      }
-      return regex.matcher(str).matches()
+        // ** is special: it can match nothing at all.
+        // For example, x/** matches x, **/y matches y, and x/**/y matches x/y.
+        if ("**".equals(pattern)) {
+            if (patternMatches(tail(patternParts), path, excludeDirectories, patternCache)) {
+                return true;
+            }
+        }
+
+        if (!pattern.contains("*") && !pattern.contains("?")) {
+            if (!pathPart.equals(pattern)) {
+                return false;
+            }
+
+            patternMatches(tail(patternParts), pathTail, excludeDirectories, patternCache);
+        }
+
+        if ("**".equals(pattern) && isDirectory) {
+            // Recurse without shifting the pattern.
+            if (patternMatches(patternParts, pathTail, excludeDirectories, patternCache)) {
+                return true;
+            }
+        }
+
+        if (partMatches(pattern, pathPart, patternCache)) {
+            // Recurse and consume one segment of the pattern.
+            if (isDirectory) {
+                if (patternMatches(tail(patternParts), pathTail, excludeDirectories, patternCache)) {
+                    return true;
+                }
+            }
+            else {
+                if (patternParts.size() == 1) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // consulo: com.intellij.util.containers.tail
+    private static List<String> tail(List<String> list) {
+        return list.subList(1, list.size());
+    }
+
+    /**
+     * Returns whether {@code str} matches the glob pattern {@code pattern}. This method may use the
+     * {@code patternCache} to speed up the matching process.
+     *
+     * @param pattern      a glob pattern
+     * @param str          the string to match
+     * @param patternCache a cache from patterns to compiled Pattern objects, or {@code null} to skip
+     *                     caching
+     */
+    private static boolean partMatches(
+        String pattern,
+        String str,
+        @Nullable Cache<String, Pattern> patternCache
+    ) {
+        if (pattern.isEmpty() || str.isEmpty()) {
+            return false;
+        }
+
+        // Common case: **
+        if (pattern.equals("**")) {
+            return true;
+        }
+
+        // Common case: *
+        if (pattern.equals("*")) {
+            return true;
+        }
+
+        // If a filename starts with '.', this char must be matched explicitly.
+        if (str.charAt(0) == '.' && pattern.charAt(0) != '.') {
+            return false;
+        }
+
+        // Common case: *.xyz
+        if (pattern.charAt(0) == '*' && pattern.lastIndexOf('*') == 0) {
+            return str.endsWith(pattern.substring(1));
+        }
+        // Common case: xyz*!!
+        int lastIndex = pattern.length() - 1;
+        // The first clause of this if statement is unnecessary, but is an
+        // optimization--charAt runs faster than indexOf.!!!!
+        if (pattern.charAt(lastIndex) == '*' && pattern.indexOf('*') == lastIndex) {
+            return str.startsWith(pattern.substring(0, lastIndex));
+        }
+
+        Pattern regex = patternCache == null ? null : patternCache.getIfPresent(pattern);
+        if (regex == null) {
+            regex = makePatternFromWildcard(pattern);
+            if (patternCache != null) {
+                patternCache.put(pattern, regex);
+            }
+        }
+        return regex.matcher(str).matches();
     }
 
     /**
      * Returns a regular expression implementing a matcher for "pattern", in which "*" and "?" are
      * wildcards.
-     *
-     *
+     * <p>
      * e.g. "foo*bar?.java" -> "foo.*bar.\\.java"
      */
-    private fun makePatternFromWildcard(pattern: String): Pattern {
-      val regexp = StringBuilder()
-      var i = 0
-      val len = pattern.length
-      while (i < len) {
-        when (val c = pattern[i]) {
-          '*' -> {
-            var toIncrement = 0
-            if (len > i + 1 && pattern[i + 1] == '*') {
-              // The pattern '**' is interpreted to match 0 or more directory separators, not 1 or
-              // more. We skip the next * and then find a trailing/leading '/' and get rid of it.
-              toIncrement = 1
-              if (len > i + 2 && pattern[i + 2] == '/') {
-                // We have '**/' -- skip the '/'.
-                toIncrement = 2
-              }
-              else if (len == i + 2 && i > 0 && pattern[i - 1] == '/') {
-                // We have '/**' -- remove the '/'.
-                regexp.delete(regexp.length - 1, regexp.length)
-              }
+    private static Pattern makePatternFromWildcard(String pattern) {
+        StringBuilder regexp = new StringBuilder();
+        int i = 0;
+        int len = pattern.length();
+        while (i < len) {
+            char c = pattern.charAt(i);
+            switch (c) {
+                case '*' -> {
+                    int toIncrement = 0;
+                    if (len > i + 1 && pattern.charAt(i + 1) == '*') {
+                        // The pattern '**' is interpreted to match 0 or more directory separators, not 1 or
+                        // more. We skip the next * and then find a trailing/leading '/' and get rid of it.
+                        toIncrement = 1;
+                        if (len > i + 2 && pattern.charAt(i + 2) == '/') {
+                            // We have '**/' -- skip the '/'.
+                            toIncrement = 2;
+                        }
+                        else if (len == i + 2 && i > 0 && pattern.charAt(i - 1) == '/') {
+                            // We have '/**' -- remove the '/'.
+                            regexp.delete(regexp.length() - 1, regexp.length());
+                        }
+                    }
+                    regexp.append(".*");
+                    i += toIncrement;
+                }
+
+                case '?' -> regexp.append('.');
+                case '^', '$', '|', '+', '{', '}', '[', ']', '\\', '.' -> {
+                    regexp.append('\\');
+                    regexp.append(c);
+                }
+
+                default -> regexp.append(c);
             }
-            regexp.append(".*")
-            i += toIncrement
-          }
-
-          '?' -> regexp.append('.')
-          '^', '$', '|', '+', '{', '}', '[', ']', '\\', '.' -> {
-            regexp.append('\\')
-            regexp.append(c)
-          }
-
-          else -> regexp.append(c)
+            i++;
         }
-        i++
-      }
-      return Pattern.compile(regexp.toString())
+        return Pattern.compile(regexp.toString());
     }
 
-    fun forPath(path: VirtualFile): Builder = Builder(path)
+    public static Builder forPath(VirtualFile path) {
+        return new Builder(path);
+    }
 
-    fun createCache(): Cache<String, Pattern> =
-      CacheBuilder
-        .newBuilder()
-        .build(
-          object : CacheLoader<String, Pattern>() {
-            override fun load(wildcard: String): Pattern = makePatternFromWildcard(wildcard)
-          },
-        )
-
-  }
+    public static Cache<String, Pattern> createCache() {
+        return CacheBuilder
+            .newBuilder()
+            .build(
+                new CacheLoader<String, Pattern>() {
+                    @Override
+                    public Pattern load(String wildcard) {
+                        return makePatternFromWildcard(wildcard);
+                    }
+                }
+            );
+    }
 }

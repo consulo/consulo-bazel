@@ -1,76 +1,111 @@
-package org.jetbrains.bazel.languages.starlark.bazel
+package org.jetbrains.bazel.languages.starlark.bazel;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.externalSystem.autolink.mapExtensionSafe
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
+import consulo.application.Application;
+import consulo.project.Project;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-enum class Environment {
-  BZL,
-  BUILD,
-  MODULE,
-  REPO,
-  VENDOR,
-}
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
-@ApiStatus.Internal
-data class BazelGlobalFunctionParameter(
-  val name: String,
-  val doc: String?,
-  val defaultValue: String?,
-  val named: Boolean,
-  val positional: Boolean,
-  val required: Boolean,
-)
+public class BazelGlobalFunctions {
+    // consulo: upstream public top-level enum of BazelGlobalFunctions.kt is nested here
+    public enum Environment {
+        BZL,
+        BUILD,
+        MODULE,
+        REPO,
+        VENDOR,
+    }
 
-internal fun BazelGlobalFunctionParameter.isKwArgs() = name.startsWith("**")
+    // consulo: upstream public top-level data class of BazelGlobalFunctions.kt is nested here
+    public record BazelGlobalFunctionParameter(
+        String name,
+        @Nullable String doc,
+        @Nullable String defaultValue,
+        boolean named,
+        boolean positional,
+        boolean required
+    ) {
+    }
 
-internal fun BazelGlobalFunctionParameter.isVarArgs() = name.startsWith("*")
+    public static boolean isKwArgs(BazelGlobalFunctionParameter receiver) {
+        return receiver.name().startsWith("**");
+    }
 
-@ApiStatus.Internal
-data class BazelGlobalFunction(
-  val name: String,
-  val doc: String?,
-  val environment: List<Environment>,
-  val params: List<BazelGlobalFunctionParameter>,
-  val returnType: String? = null,
-)
+    public static boolean isVarArgs(BazelGlobalFunctionParameter receiver) {
+        return receiver.name().startsWith("*");
+    }
 
-@ApiStatus.Internal
-interface StarlarkGlobalFunctionProvider {
+    // consulo: upstream public top-level data class of BazelGlobalFunctions.kt is nested here
+    public record BazelGlobalFunction(
+        String name,
+        @Nullable String doc,
+        List<Environment> environment,
+        List<BazelGlobalFunctionParameter> params,
+        @Nullable String returnType
+    ) {
+        // consulo: overload for the upstream default argument (returnType = null)
+        public BazelGlobalFunction(
+            String name,
+            @Nullable String doc,
+            List<Environment> environment,
+            List<BazelGlobalFunctionParameter> params
+        ) {
+            this(name, doc, environment, params, null);
+        }
+    }
 
-  fun functions(project: Project): List<BazelGlobalFunction>
+    // consulo: the upstream interface StarlarkGlobalFunctionProvider of BazelGlobalFunctions.kt is an extension point,
+    // it has its own file (public extension API used by language integrations)
 
-  companion object {
-    val extensionPoint = ExtensionPointName<StarlarkGlobalFunctionProvider>("org.jetbrains.bazel.starlarkGlobalFunctionProvider")
-  }
-}
-
-@ApiStatus.Internal
-class BazelGlobalFunctions {
-  companion object {
     // These properties read from the extension point dynamically to support test isolation.
     // Extension points can be masked/replaced during tests, so caching the initial value
     // would cause subsequent tests to see stale data.
-    fun globalFunctions(project: Project): Map<String, BazelGlobalFunction> =
-      StarlarkGlobalFunctionProvider.extensionPoint
-        .mapExtensionSafe { it.functions(project) }
-        .flatten()
-        .associateBy { it.name }
+    public static Map<String, BazelGlobalFunction> globalFunctions(Project project) {
+        // consulo: upstream mapExtensionSafe, collectMapped() runs every extension safely
+        List<List<BazelGlobalFunction>> functions = Application.get()
+            .getExtensionPoint(StarlarkGlobalFunctionProvider.class)
+            .collectMapped(it -> it.functions(project));
+        Map<String, BazelGlobalFunction> result = new LinkedHashMap<>();
+        for (List<BazelGlobalFunction> list : functions) {
+            for (BazelGlobalFunction function : list) {
+                result.put(function.name(), function);
+            }
+        }
+        return result;
+    }
 
-    internal fun buildGlobalFunctions(project: Project): Map<String, BazelGlobalFunction> =
-      globalFunctions(project).filter { it.value.environment.contains(Environment.BUILD) }
+    public static Map<String, BazelGlobalFunction> buildGlobalFunctions(Project project) {
+        return globalFunctions(project).entrySet()
+            .stream()
+            .filter(it -> it.getValue().environment().contains(Environment.BUILD))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+    }
 
-    fun moduleGlobalFunctions(project: Project): Map<String, BazelGlobalFunction> =
-      globalFunctions(project).filter { it.value.environment.contains(Environment.MODULE) }
+    public static Map<String, BazelGlobalFunction> moduleGlobalFunctions(Project project) {
+        return globalFunctions(project).entrySet()
+            .stream()
+            .filter(it -> it.getValue().environment().contains(Environment.MODULE))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+    }
 
-    internal fun extensionGlobalFunctions(project: Project): Map<String, BazelGlobalFunction> =
-      globalFunctions(project).filter { it.value.environment.contains(Environment.BZL) }
+    public static Map<String, BazelGlobalFunction> extensionGlobalFunctions(Project project) {
+        return globalFunctions(project).entrySet()
+            .stream()
+            .filter(it -> it.getValue().environment().contains(Environment.BZL))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+    }
 
-    internal fun starlarkGlobalFunctions(project: Project): Map<String, BazelGlobalFunction> =
-      globalFunctions(project).filter { it.value.environment.containsAll(Environment.entries) }
+    public static Map<String, BazelGlobalFunction> starlarkGlobalFunctions(Project project) {
+        return globalFunctions(project).entrySet()
+            .stream()
+            .filter(it -> it.getValue().environment().containsAll(List.of(Environment.values())))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+    }
 
-    fun getFunctionByName(name: String, project: Project): BazelGlobalFunction? = globalFunctions(project)[name]
-  }
+    public static @Nullable BazelGlobalFunction getFunctionByName(String name, Project project) {
+        return globalFunctions(project).get(name);
+    }
 }

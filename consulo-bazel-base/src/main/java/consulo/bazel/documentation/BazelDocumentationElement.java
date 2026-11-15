@@ -33,6 +33,10 @@ public class BazelDocumentationElement extends FakePsiElement {
         myTarget = target;
     }
 
+    public static BazelDocumentationElement of(PsiElement context, DocumentationSymbol symbol) {
+        return new BazelDocumentationElement(context, symbol.getDocumentationTarget());
+    }
+
     public DocumentationTarget getTarget() {
         return myTarget;
     }

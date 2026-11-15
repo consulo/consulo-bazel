@@ -1,58 +1,95 @@
-package org.jetbrains.bazel.languages.bazelversion.service
+package org.jetbrains.bazel.languages.bazelversion.service;
 
-import com.intellij.openapi.components.BaseState
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.State
-import com.intellij.openapi.components.Storage
-import com.intellij.openapi.components.StoragePathMacros
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionLiteral
-import org.jetbrains.bazel.languages.bazelversion.psi.toBazelVersionLiteral
-import org.jetbrains.bazel.languages.bazelversion.psi.toBazelVersionStringLiteral
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.component.persist.PersistentStateComponent;
+import consulo.component.persist.State;
+import consulo.component.persist.Storage;
+import consulo.component.persist.StoragePathMacros;
+import consulo.project.Project;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionLiteral;
+import org.jspecify.annotations.Nullable;
 
-@Service(Service.Level.PROJECT)
-@State(name = "BazelVersionCache", storages = [Storage(StoragePathMacros.CACHE_FILE)])
-@ApiStatus.Internal
-class BazelVersionCheckerService(private val project: Project) : PersistentStateComponent<BazelVersionCheckerService.State> {
-  class State : BaseState() {
-    var resolverId by string(null)
-    var currentBazelVersion by string(null)
-    var latestBazelVersion by string(null)
-  }
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
-  private var resolverId: String? = null
-
-  var latestBazelVersion: BazelVersionLiteral? = null
-    private set
-
-  var currentBazelVersion: BazelVersionLiteral? = null
-    private set
-
-  override fun getState(): BazelVersionCheckerService.State =
-    State().also {
-      it.resolverId = resolverId
-      it.currentBazelVersion = currentBazelVersion?.toBazelVersionStringLiteral()
-      it.latestBazelVersion = latestBazelVersion?.toBazelVersionStringLiteral()
+// consulo: StoragePathMacros.CACHE_FILE does not exist in Consulo, the cache is stored in the workspace file
+@State(name = "BazelVersionCache", storages = @Storage(StoragePathMacros.WORKSPACE_FILE))
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class BazelVersionCheckerService implements PersistentStateComponent<BazelVersionCheckerService.State> {
+    // consulo: upstream BaseState with string() delegates -> plain bean
+    public static class State {
+        public @Nullable String resolverId = null;
+        public @Nullable String currentBazelVersion = null;
+        public @Nullable String latestBazelVersion = null;
     }
 
-  override fun loadState(state: BazelVersionCheckerService.State) {
-    resolverId = state.resolverId
-    currentBazelVersion = state.currentBazelVersion?.toBazelVersionLiteral()
-    latestBazelVersion = state.latestBazelVersion?.toBazelVersionLiteral()
-  }
+    private final Project myProject;
 
-  suspend fun refreshLatestBazelVersion(project: Project, currentVersion: BazelVersionLiteral?) {
-    if (resolverId.isNullOrBlank()) {
-      resolverId = BazelVersionResolver.ep.extensionList
-        .firstOrNull()
-        ?.id ?: return
+    private @Nullable String myResolverId = null;
+
+    private @Nullable BazelVersionLiteral myLatestBazelVersion = null;
+
+    private @Nullable BazelVersionLiteral myCurrentBazelVersion = null;
+
+    @Inject
+    public BazelVersionCheckerService(Project project) {
+        myProject = project;
     }
-    val resolver =
-      BazelVersionResolver.ep.extensionList
-        .firstOrNull { it.id == state.resolverId } ?: return
-    currentBazelVersion = currentVersion
-    latestBazelVersion = resolver.resolveLatestBazelVersion(project, currentVersion) ?: return
-  }
+
+    public @Nullable BazelVersionLiteral getLatestBazelVersion() {
+        return myLatestBazelVersion;
+    }
+
+    public @Nullable BazelVersionLiteral getCurrentBazelVersion() {
+        return myCurrentBazelVersion;
+    }
+
+    @Override
+    public BazelVersionCheckerService.State getState() {
+        State it = new State();
+        it.resolverId = myResolverId;
+        it.currentBazelVersion =
+            myCurrentBazelVersion != null ? BazelVersionLiteral.toBazelVersionStringLiteral(myCurrentBazelVersion) : null;
+        it.latestBazelVersion =
+            myLatestBazelVersion != null ? BazelVersionLiteral.toBazelVersionStringLiteral(myLatestBazelVersion) : null;
+        return it;
+    }
+
+    @Override
+    public void loadState(BazelVersionCheckerService.State state) {
+        myResolverId = state.resolverId;
+        myCurrentBazelVersion =
+            state.currentBazelVersion != null ? BazelVersionLiteral.toBazelVersionLiteral(state.currentBazelVersion) : null;
+        myLatestBazelVersion =
+            state.latestBazelVersion != null ? BazelVersionLiteral.toBazelVersionLiteral(state.latestBazelVersion) : null;
+    }
+
+    public CompletableFuture<Void> refreshLatestBazelVersion(Project project, @Nullable BazelVersionLiteral currentVersion) {
+        if (myResolverId == null || myResolverId.isBlank()) {
+            BazelVersionResolver first = BazelVersionResolver.getEp().findFirstSafe(it -> true);
+            if (first == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            myResolverId = first.getId();
+        }
+        BazelVersionResolver resolver =
+            BazelVersionResolver.getEp().findFirstSafe(it -> Objects.equals(it.getId(), getState().resolverId));
+        if (resolver == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        myCurrentBazelVersion = currentVersion;
+        return resolver.resolveLatestBazelVersion(project, currentVersion)
+            .thenAccept(latestBazelVersion -> {
+                if (latestBazelVersion == null) {
+                    return;
+                }
+                myLatestBazelVersion = latestBazelVersion;
+            });
+    }
 }

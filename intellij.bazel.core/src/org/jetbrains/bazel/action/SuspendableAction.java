@@ -1,72 +1,90 @@
-package org.jetbrains.bazel.action
+package org.jetbrains.bazel.action;
 
-import com.intellij.ide.trustedProjects.TrustedProjects
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import javax.swing.Icon
+import consulo.application.dumb.DumbAware;
+import consulo.codeEditor.Editor;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.action.AnAction;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.AnActionWithSyncUpdate;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jspecify.annotations.Nullable;
 
-private val log = logger<SuspendableAction>()
+import java.util.concurrent.CompletableFuture;
 
-@ApiStatus.Internal
-abstract class SuspendableAction(text: () -> String, icon: Icon? = null) :
-  AnAction(text, icon),
-  DumbAware {
-  constructor(text: String, icon: Icon? = null) : this({ text }, icon)
+public abstract class SuspendableAction extends AnAction implements DumbAware, AnActionWithSyncUpdate {
+    private static final Logger LOG = Logger.getInstance(SuspendableAction.class);
 
-  final override fun actionPerformed(e: AnActionEvent) {
-    val project = e.project
-
-    if (project != null) {
-      BazelCoroutineService.getInstance(project).start {
-        saveAllFiles()
-        actionPerformed(project, e)
-      }
-    } else {
-      log.warn("`actionPerformed` for action '${e.presentation.text}' cannot be performed. Project is missing.")
+    // consulo: upstream takes a `() -> String` text supplier, LocalizeValue is computed lazily too
+    public SuspendableAction(LocalizeValue text, @Nullable Image icon) {
+        super(text, LocalizeValue.empty(), icon);
     }
-  }
 
-  protected abstract suspend fun actionPerformed(project: Project, e: AnActionEvent)
-
-  final override fun update(e: AnActionEvent) {
-    val project = e.project
-
-    if (project != null) {
-      doUpdate(project, e)
-    } else {
-      log.warn("`update` for action '${e.presentation.text}' cannot be performed. Project is missing.")
+    public SuspendableAction(LocalizeValue text) {
+        this(text, null);
     }
-  }
 
-  private fun doUpdate(project: Project, e: AnActionEvent) {
-    if (TrustedProjects.isProjectTrusted(project)) {
-      val enabled = project.isBazelProject
-      e.presentation.isVisible = enabled
-      if (enabled) {
-        update(project, e)
-      }
-    } else {
-      e.presentation.isEnabled = false
+    public SuspendableAction(String text, @Nullable Image icon) {
+        this(LocalizeValue.of(text), icon);
     }
-  }
 
-  protected open fun update(project: Project, e: AnActionEvent) {
-    // do nothing by default
-  }
+    public SuspendableAction(String text) {
+        this(text, null);
+    }
 
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+    @RequiredUIAccess
+    @Override
+    public final void actionPerformed(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+
+        if (project != null) {
+            BazelCoroutineService.getInstance(project).start(() ->
+                SaveAllFiles.saveAllFiles().thenCompose(ignored -> actionPerformed(project, e))
+            );
+        }
+        else {
+            LOG.warn("`actionPerformed` for action '" + e.getPresentation().getText() + "' cannot be performed. Project is missing.");
+        }
+    }
+
+    protected abstract CompletableFuture<?> actionPerformed(Project project, AnActionEvent e);
+
+    @Override
+    public final void update(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+
+        if (project != null) {
+            doUpdate(project, e);
+        }
+        else {
+            LOG.warn("`update` for action '" + e.getPresentation().getText() + "' cannot be performed. Project is missing.");
+        }
+    }
+
+    private void doUpdate(Project project, AnActionEvent e) {
+        // consulo: Consulo has no trusted projects, the trusted branch is always taken
+        boolean enabled = org.jetbrains.bazel.config.project.isBazelProject(project);
+        e.getPresentation().setVisible(enabled);
+        if (enabled) {
+            update(project, e);
+        }
+    }
+
+    protected void update(Project project, AnActionEvent e) {
+        // do nothing by default
+    }
+
+    // consulo: AnActionWithSyncUpdate always updates in background (upstream ActionUpdateThread.BGT)
+
+    public static @Nullable PsiFile getPsiFile(AnActionEvent receiver) {
+        return receiver.getData(PsiFile.KEY);
+    }
+
+    public static @Nullable Editor getEditor(AnActionEvent receiver) {
+        return receiver.getData(Editor.KEY);
+    }
 }
-
-internal fun AnActionEvent.getPsiFile(): PsiFile? = CommonDataKeys.PSI_FILE.getData(dataContext)
-
-internal fun AnActionEvent.getEditor(): Editor? = CommonDataKeys.EDITOR.getData(dataContext)

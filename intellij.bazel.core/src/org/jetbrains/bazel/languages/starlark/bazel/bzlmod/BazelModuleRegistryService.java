@@ -1,78 +1,141 @@
-package org.jetbrains.bazel.languages.starlark.bazel.bzlmod
+package org.jetbrains.bazel.languages.starlark.bazel.bzlmod;
 
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.getProjectDataPath
-import com.intellij.util.io.createParentDirectories
-import org.h2.mvstore.MVStore
-import java.nio.file.Path
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.Application;
+import consulo.disposer.Disposable;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.project.util.ProjectUtil;
+import consulo.util.lang.StringUtil;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.h2.mvstore.MVMap;
+import org.h2.mvstore.MVStore;
+import org.jspecify.annotations.Nullable;
 
-@Service(Service.Level.PROJECT)
-internal class BazelModuleRegistryService(private val project: Project) : Disposable {
-  private val store: MVStore = openStore(project.getProjectDataPath("bzlmod/module-registry.mv"))
-  private val map = store.openMap<String, String>("registry")
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
-  private var resolverId: String?
-    get() = map[RESOLVER_ID_KEY]
-    set(value) {
-      if (value.isNullOrBlank()) { map.remove(RESOLVER_ID_KEY) }
-      else { map[RESOLVER_ID_KEY] = value }
-      store.commit()
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class BazelModuleRegistryService implements Disposable {
+    private final Project myProject;
+    private final MVStore myStore;
+    private final MVMap<String, String> myMap;
+
+    @Inject
+    public BazelModuleRegistryService(Project project) {
+        myProject = project;
+        myStore = openStore(getProjectDataPath(project, "bzlmod/module-registry.mv"));
+        myMap = myStore.openMap("registry");
     }
-  private var activeResolver: BazelModuleResolver? = null
 
-  private fun findResolver(): BazelModuleResolver? {
-    if (activeResolver != null && activeResolver?.id == resolverId) {
-      return activeResolver
+    private @Nullable String getResolverId() {
+        return myMap.get(RESOLVER_ID_KEY);
     }
-    if (resolverId.isNullOrBlank()) {
-      resolverId =
-        BazelModuleResolver.EP_NAME.extensionList
-          .firstOrNull()
-          ?.id
+
+    private void setResolverId(@Nullable String value) {
+        if (StringUtil.isEmptyOrSpaces(value)) {
+            myMap.remove(RESOLVER_ID_KEY);
+        }
+        else {
+            myMap.put(RESOLVER_ID_KEY, value);
+        }
+        myStore.commit();
     }
-    activeResolver = BazelModuleResolver.EP_NAME.extensionList.find { it.id == resolverId }
-    return activeResolver
-  }
 
-  suspend fun getModuleNames(): List<String> = findResolver()?.getModuleNames(project) ?: emptyList()
+    private @Nullable BazelModuleResolver myActiveResolver = null;
 
-  suspend fun getModuleVersions(moduleName: String): List<String> = findResolver()?.getModuleVersions(project, moduleName) ?: emptyList()
-
-  suspend fun refreshModuleNames() {
-    findResolver()?.refreshModuleNames(project)
-  }
-
-  override fun dispose() {
-    runCatching {
-      store.close()
-    }.onFailure {
-      Logger
-        .getInstance(BazelModuleRegistryService::class.java)
-        .warn("Failed to close MVStore for Bazel module registry service", it)
+    private @Nullable BazelModuleResolver findResolver() {
+        BazelModuleResolver activeResolver = myActiveResolver;
+        if (activeResolver != null && Objects.equals(activeResolver.getId(), getResolverId())) {
+            return activeResolver;
+        }
+        // consulo: upstream BazelModuleResolver.EP_NAME.extensionList
+        List<BazelModuleResolver> resolvers = Application.get().getExtensionList(BazelModuleResolver.class);
+        if (StringUtil.isEmptyOrSpaces(getResolverId())) {
+            setResolverId(resolvers.isEmpty() ? null : resolvers.get(0).getId());
+        }
+        String resolverId = getResolverId();
+        myActiveResolver = resolvers.stream().filter(it -> Objects.equals(it.getId(), resolverId)).findFirst().orElse(null);
+        return myActiveResolver;
     }
-  }
 
-  companion object {
-    private const val RESOLVER_ID_KEY = "resolverId"
+    public CompletableFuture<List<String>> getModuleNames() {
+        BazelModuleResolver resolver = findResolver();
+        if (resolver == null) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        return resolver.getModuleNames(myProject).thenApply(it -> it != null ? it : List.of());
+    }
 
-    @JvmStatic
-    fun getInstance(project: Project): BazelModuleRegistryService = project.service()
+    public CompletableFuture<List<String>> getModuleVersions(String moduleName) {
+        BazelModuleResolver resolver = findResolver();
+        if (resolver == null) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        return resolver.getModuleVersions(myProject, moduleName).thenApply(it -> it != null ? it : List.of());
+    }
+
+    public CompletableFuture<?> refreshModuleNames() {
+        BazelModuleResolver resolver = findResolver();
+        if (resolver == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return resolver.refreshModuleNames(myProject);
+    }
+
+    @Override
+    public void dispose() {
+        try {
+            myStore.close();
+        }
+        catch (Throwable e) {
+            Logger
+                .getInstance(BazelModuleRegistryService.class)
+                .warn("Failed to close MVStore for Bazel module registry service", e);
+        }
+    }
+
+    private static final String RESOLVER_ID_KEY = "resolverId";
+
+    public static BazelModuleRegistryService getInstance(Project project) {
+        return project.getInstance(BazelModuleRegistryService.class);
+    }
 
     /**
      * Opens an MVStore instance for the given file path.
      * Creates the parent directories if needed.
      */
-    private fun openStore(path: Path): MVStore {
-      path.createParentDirectories()
-      return MVStore.Builder()
-        .fileName(path.toAbsolutePath().toString())
-        .autoCommitDisabled()
-        .open()
-        .also { it.setVersionsToKeep(0) }
+    private static MVStore openStore(Path path) {
+        // consulo: Kotlin Path.createParentDirectories()
+        Path parent = path.getParent();
+        if (parent != null) {
+            try {
+                Files.createDirectories(parent);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        MVStore store = new MVStore.Builder()
+            .fileName(path.toAbsolutePath().toString())
+            .autoCommitDisabled()
+            .open();
+        store.setVersionsToKeep(0);
+        return store;
     }
-  }
+
+    // consulo: IntelliJ Project.getProjectDataPath(name)
+    private static Path getProjectDataPath(Project project, String name) {
+        return ProjectUtil.getProjectCachePath(project, "projects").resolve(name);
+    }
 }

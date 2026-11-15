@@ -1,24 +1,69 @@
-package org.jetbrains.bazel.debug.platform
+package org.jetbrains.bazel.debug.platform;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.xdebugger.breakpoints.XLineBreakpointType
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.debug.breakpoint.XBreakpointType;
+import consulo.execution.debug.breakpoint.XLineBreakpointType;
+import consulo.execution.debug.breakpoint.XLineBreakpointTypeResolver;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.fileType.FileType;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage.StarlarkFileType;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkBreakpointType :
-  XLineBreakpointType<StarlarkBreakpointProperties>(
-    "starlark-line",
-    BazelPluginBundle.message("starlark.debug.breakpoint.type.title"),
-  ) {
-  override fun createBreakpointProperties(file: VirtualFile, line: Int): StarlarkBreakpointProperties = StarlarkBreakpointProperties()
+import java.util.Objects;
 
-  override fun canPutAt(
-    file: VirtualFile,
-    line: Int,
-    project: Project,
-  ): Boolean = file.supportsStarlarkDebugBreakpoint()
+@ExtensionImpl
+public class StarlarkBreakpointType extends XLineBreakpointType<StarlarkBreakpointProperties> {
+    public StarlarkBreakpointType() {
+        super(
+            "starlark-line",
+            BazelPluginLocalize.starlarkDebugBreakpointTypeTitle().get()
+        );
+    }
 
-  private fun VirtualFile.supportsStarlarkDebugBreakpoint(): Boolean =
-    this.extension == StarlarkFileType.defaultExtension || this.name == "BUILD" || this.name == "BUILD.bazel"
+    @Override
+    public StarlarkBreakpointProperties createBreakpointProperties(VirtualFile file, int line) {
+        return new StarlarkBreakpointProperties();
+    }
+
+    // consulo: XLineBreakpointType has no canPutAt(), it is asked by StarlarkBreakpointTypeResolver (below)
+    public boolean canPutAt(
+        VirtualFile file,
+        int line,
+        Project project
+    ) {
+        return supportsStarlarkDebugBreakpoint(file);
+    }
+
+    private static boolean supportsStarlarkDebugBreakpoint(VirtualFile receiver) {
+        return Objects.equals(receiver.getExtension(), StarlarkFileType.INSTANCE.getDefaultExtension()) ||
+            receiver.getName().equals("BUILD") ||
+            receiver.getName().equals("BUILD.bazel");
+    }
+}
+
+/**
+ * consulo: Consulo resolves line breakpoint types per file type through {@link XLineBreakpointTypeResolver} instead of
+ * {@code XLineBreakpointType.canPutAt}; delegates to {@link StarlarkBreakpointType#canPutAt}.
+ */
+@ExtensionImpl
+class StarlarkBreakpointTypeResolver implements XLineBreakpointTypeResolver {
+    public StarlarkBreakpointTypeResolver() {
+    }
+
+    @RequiredReadAction
+    @Override
+    public @Nullable XLineBreakpointType<?> resolveBreakpointType(Project project, VirtualFile virtualFile, int line) {
+        StarlarkBreakpointType type =
+            Application.get().getExtensionPoint(XBreakpointType.class).findExtensionOrFail(StarlarkBreakpointType.class);
+        return type.canPutAt(virtualFile, line, project) ? type : null;
+    }
+
+    @Override
+    public FileType getFileType() {
+        return StarlarkFileType.INSTANCE;
+    }
 }

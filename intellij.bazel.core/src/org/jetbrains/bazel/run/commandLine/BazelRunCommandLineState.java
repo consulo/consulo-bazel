@@ -1,45 +1,56 @@
-package org.jetbrains.bazel.run.commandLine
+package org.jetbrains.bazel.run.commandLine;
 
-import com.intellij.execution.ExecutionException
-import com.intellij.execution.runners.ExecutionEnvironment
-import kotlinx.coroutines.CompletableDeferred
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.BazelCommandLineStateBase
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.AbstractGenericRunState
-import org.jetbrains.bazel.run.task.BazelRunTaskListener
-import org.jetbrains.bazel.taskEvents.BazelTaskListener
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bsp.protocol.RunParams
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.process.ExecutionException;
+import org.jetbrains.bazel.run.BazelCommandLineStateBase;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.AbstractGenericRunState;
+import org.jetbrains.bazel.run.task.BazelRunTaskListener;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.taskEvents.BazelTaskListener;
+import org.jetbrains.bsp.protocol.RunParams;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelRunCommandLineState(environment: ExecutionEnvironment, private val runState: AbstractGenericRunState<*>) :
-  BazelCommandLineStateBase(environment) {
-  private val configuration = BazelRunConfiguration.get(environment)
+import java.util.concurrent.CompletableFuture;
 
-  override fun createAndAddTaskListener(handler: BazelProcessHandler): BazelTaskListener = BazelRunTaskListener(handler)
+public class BazelRunCommandLineState extends BazelCommandLineStateBase {
+    private final AbstractGenericRunState<?> myRunState;
+    private final BazelRunConfiguration myConfiguration;
 
-  override suspend fun startBsp(
-    server: BazelServerFacade,
-    pidDeferred: CompletableDeferred<Long?>,
-    handler: BazelProcessHandler,
-  ) {
-    if (configuration.targets.singleOrNull() == null) {
-      throw ExecutionException(BazelPluginBundle.message("bsp.run.error.cannotRun"))
+    public BazelRunCommandLineState(ExecutionEnvironment environment, AbstractGenericRunState<?> runState) {
+        super(environment);
+        myRunState = runState;
+        myConfiguration = BazelRunConfiguration.get(environment);
     }
 
-    val runParams =
-      RunParams(
-        target = configuration.targets.single(),
-        taskId = taskGroupId.task("run"),
-        checkVisibility = configuration.doVisibilityCheck,
-        arguments = parseAsProgramArguments(runState.programArguments),
-        environmentVariables = runState.env.envs,
-        additionalBazelParams = parseAsProgramArguments(runState.additionalBazelParams),
-        pidDeferred = pidDeferred,
-      )
-    server.buildTargetRun(runParams)
-  }
+    @Override
+    protected BazelTaskListener createAndAddTaskListener(BazelProcessHandler handler) {
+        return new BazelRunTaskListener(handler);
+    }
+
+    @Override
+    protected CompletableFuture<?> startBsp(
+        BazelServerFacade server,
+        CompletableFuture<@Nullable Long> pidDeferred,
+        BazelProcessHandler handler
+    ) {
+        if (myConfiguration.getTargets().size() != 1) {
+            return CompletableFuture.failedFuture(new ExecutionException(BazelPluginLocalize.bspRunErrorCannotrun()));
+        }
+
+        RunParams runParams =
+            new RunParams(
+                /* taskId = */ getTaskGroupId().task("run"),
+                /* target = */ myConfiguration.getTargets().get(0),
+                /* checkVisibility = */ myConfiguration.getDoVisibilityCheck(),
+                /* arguments = */ Utils.parseAsProgramArguments(myRunState.getProgramArguments()),
+                /* environmentVariables = */ myRunState.getEnv().getEnvs(),
+                /* additionalBazelParams = */ Utils.parseAsProgramArguments(myRunState.getAdditionalBazelParams()),
+                /* pidDeferred = */ pidDeferred,
+                /* captureStdout = */ false
+            );
+        return server.buildTargetRun(runParams);
+    }
 }

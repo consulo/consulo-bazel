@@ -1,243 +1,428 @@
-package org.jetbrains.bazel.ui.projectTree
+package org.jetbrains.bazel.ui.projectTree;
 
-import com.intellij.icons.AllIcons
-import com.intellij.ide.projectView.PresentationData
-import com.intellij.ide.projectView.TreeStructureProvider
-import com.intellij.ide.projectView.ViewSettings
-import com.intellij.ide.projectView.impl.nodes.ExternalLibrariesNode
-import com.intellij.ide.projectView.impl.nodes.ProjectViewModuleGroupNode
-import com.intellij.ide.projectView.impl.nodes.ProjectViewModuleNode
-import com.intellij.ide.projectView.impl.nodes.ProjectViewProjectNode
-import com.intellij.ide.projectView.impl.nodes.PsiDirectoryNode
-import com.intellij.ide.projectView.impl.nodes.PsiFileNode
-import com.intellij.ide.projectView.impl.nodes.PsiFileSystemItemFilter
-import com.intellij.ide.util.treeView.AbstractTreeNode
-import com.intellij.openapi.fileTypes.FileTypeRegistry
-import com.intellij.openapi.module.ModuleManager
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.psi.PsiDirectory
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiFileSystemItem
-import com.intellij.psi.PsiManager
-import com.intellij.util.containers.addIfNotNull
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.EXCLUDED
-import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.ROOT
-import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.UNIMPORTED
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.progress.ProgressManager;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.ide.impl.idea.ide.projectView.impl.nodes.ExternalLibrariesNode;
+import consulo.ide.impl.idea.ide.projectView.impl.nodes.ProjectViewModuleGroupNode;
+import consulo.ide.impl.idea.ide.projectView.impl.nodes.ProjectViewModuleNode;
+import consulo.ide.impl.idea.ide.projectView.impl.nodes.ProjectViewProjectNode;
+import consulo.language.psi.PsiDirectory;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiFileSystemItem;
+import consulo.language.psi.PsiManager;
+import consulo.module.ModuleManager;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.project.ui.view.tree.AbstractTreeNode;
+import consulo.project.ui.view.tree.PsiDirectoryNode;
+import consulo.project.ui.view.tree.PsiFileNode;
+import consulo.project.ui.view.tree.PsiFileSystemItemFilter;
+import consulo.project.ui.view.tree.TreeStructureProvider;
+import consulo.project.ui.view.tree.ViewSettings;
+import consulo.ui.ex.tree.PresentationData;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.fileType.FileTypeRegistry;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelTreeStructureProvider : TreeStructureProvider {
-  // We want to get rid of all the module (group) nodes from the project view tree;
-  // in rare cases with complicated project (modules) structure IJ
-  // doesn't know how to render the project tree,
-  // what causes flat directory structure.
-  // Instead we use the root directory node as the root of the project view tree and ignore modules altogether.
-  // This results in displaying the folder structure of the project as it is on the file system.
-  override fun modify(
-    parent: AbstractTreeNode<*>,
-    children: Collection<AbstractTreeNode<*>>,
-    settings: ViewSettings,
-  ): Collection<AbstractTreeNode<*>> {
-    val project = parent.project ?: return children
-    if (!project.isBazelProject) return children
-    return when (parent) {
-      is ProjectViewProjectNode -> calculateChildrenForProjectNode(project, children, settings)
-      else -> children.removeModuleAndModuleGroupNodes().map {
-        if (it is PsiDirectoryNode) BazelDirectoryNode(project, it.value, settings, it.filter)
-        else it
-      }
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Predicate;
+
+@ExtensionImpl
+public class BazelTreeStructureProvider implements TreeStructureProvider {
+    public BazelTreeStructureProvider() {
     }
-  }
 
-  private fun calculateChildrenForProjectNode(
-    project: Project,
-    children: Collection<AbstractTreeNode<*>>,
-    settings: ViewSettings,
-  ): Collection<AbstractTreeNode<*>> {
-    val rootDirectory =
-      PsiManager.getInstance(project).findDirectory(project.rootDir) ?: return children // should never happen
-    val bazelTreeStructureController = BazelTreeStructureController.getInstance(project)
-    return buildList {
-      addIfNotNull(children.filterIsInstance<ExternalLibrariesNode>().firstOrNull())
-
-      if (bazelTreeStructureController.shouldShowNode(ROOT)) {
-        add(BazelDirectoryNode(project, rootDirectory, settings) { item ->
-          bazelTreeStructureController.shouldShowUnderTreeNode(item.virtualFile, ROOT)
-        })
-      }
-
-      if (bazelTreeStructureController.shouldShowNode(EXCLUDED)) {
-        add(ExcludedDirectoriesNode(project, rootDirectory, settings) { item ->
-          bazelTreeStructureController.shouldShowUnderTreeNode(item.virtualFile, EXCLUDED)
-        })
-      }
-
-      if (bazelTreeStructureController.shouldShowNode(UNIMPORTED)) {
-        add(UnimportedDirectoriesNode(project, rootDirectory, settings) { item ->
-          bazelTreeStructureController.shouldShowUnderTreeNode(item.virtualFile, UNIMPORTED)
-        })
-      }
+    // We want to get rid of all the module (group) nodes from the project view tree;
+    // in rare cases with complicated project (modules) structure IJ
+    // doesn't know how to render the project tree,
+    // what causes flat directory structure.
+    // Instead we use the root directory node as the root of the project view tree and ignore modules altogether.
+    // This results in displaying the folder structure of the project as it is on the file system.
+    @Override
+    @RequiredReadAction
+    public Collection<AbstractTreeNode> modify(
+        AbstractTreeNode parent,
+        Collection<AbstractTreeNode> children,
+        ViewSettings settings
+    ) {
+        Project project = parent.getProject();
+        if (project == null) {
+            return children;
+        }
+        if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            return children;
+        }
+        if (parent instanceof ProjectViewProjectNode) {
+            return calculateChildrenForProjectNode(project, children, settings);
+        }
+        else {
+            List<AbstractTreeNode> result = new ArrayList<>();
+            for (AbstractTreeNode it : removeModuleAndModuleGroupNodes(children)) {
+                if (it instanceof PsiDirectoryNode psiDirectoryNode) {
+                    result.add(new BazelDirectoryNode(project, psiDirectoryNode.getValue(), settings, psiDirectoryNode.getFilter()));
+                }
+                else {
+                    result.add(it);
+                }
+            }
+            return result;
+        }
     }
-  }
 
-  private fun Collection<AbstractTreeNode<*>>.removeModuleAndModuleGroupNodes(): Collection<AbstractTreeNode<*>> =
-    this
-      .filterNot { it is ProjectViewModuleGroupNode }
-      .filterNot { it is ProjectViewModuleNode }
+    @RequiredReadAction
+    private Collection<AbstractTreeNode> calculateChildrenForProjectNode(
+        Project project,
+        Collection<AbstractTreeNode> children,
+        ViewSettings settings
+    ) {
+        PsiDirectory rootDirectory = PsiManager.getInstance(project).findDirectory(org.jetbrains.bazel.config.project.getRootDir(project));
+        if (rootDirectory == null) {
+            return children; // should never happen
+        }
+        BazelTreeStructureController bazelTreeStructureController = BazelTreeStructureController.getInstance(project);
+        List<AbstractTreeNode> result = new ArrayList<>();
+        for (AbstractTreeNode child : children) {
+            if (child instanceof ExternalLibrariesNode) {
+                result.add(child);
+                break;
+            }
+        }
+
+        if (bazelTreeStructureController.shouldShowNode(BazelTreeNodeType.ROOT)) {
+            result.add(new BazelDirectoryNode(project, rootDirectory, settings, item ->
+                bazelTreeStructureController.shouldShowUnderTreeNode(
+                    Objects.requireNonNull(item.getVirtualFile()),
+                    BazelTreeNodeType.ROOT
+                )
+            ));
+        }
+
+        if (bazelTreeStructureController.shouldShowNode(BazelTreeNodeType.EXCLUDED)) {
+            result.add(new ExcludedDirectoriesNode(project, rootDirectory, settings, item ->
+                bazelTreeStructureController.shouldShowUnderTreeNode(
+                    Objects.requireNonNull(item.getVirtualFile()),
+                    BazelTreeNodeType.EXCLUDED
+                )
+            ));
+        }
+
+        if (bazelTreeStructureController.shouldShowNode(BazelTreeNodeType.UNIMPORTED)) {
+            result.add(new UnimportedDirectoriesNode(project, rootDirectory, settings, item ->
+                bazelTreeStructureController.shouldShowUnderTreeNode(
+                    Objects.requireNonNull(item.getVirtualFile()),
+                    BazelTreeNodeType.UNIMPORTED
+                )
+            ));
+        }
+        return result;
+    }
+
+    private Collection<AbstractTreeNode> removeModuleAndModuleGroupNodes(Collection<AbstractTreeNode> receiver) {
+        List<AbstractTreeNode> result = new ArrayList<>();
+        for (AbstractTreeNode it : receiver) {
+            if (it instanceof ProjectViewModuleGroupNode) {
+                continue;
+            }
+            if (it instanceof ProjectViewModuleNode) {
+                continue;
+            }
+            result.add(it);
+        }
+        return result;
+    }
 }
 
 /**
  * Custom PsiDirectoryNode for Bazel projects to show the project view with full contents during initial sync.
  */
-private class BazelDirectoryNode(
-  project: Project,
-  directory: PsiDirectory,
-  viewSettings: ViewSettings?,
-  private val filter: PsiFileSystemItemFilter? = null,
-) : PsiDirectoryNode(project, directory, viewSettings, filter) {
+class BazelDirectoryNode extends PsiDirectoryNode {
+    private final @Nullable PsiFileSystemItemFilter myFilter;
 
-  override fun shouldShowModuleName(): Boolean = false
-
-  override fun updateImpl(data: PresentationData) {
-    super.updateImpl(data)
-    if (!settings.isFlattenPackages && settings.isHideEmptyMiddlePackages) {
-      val parentDirectory = parent?.value as? PsiDirectory ?: return
-      val name = VfsUtilCore.getRelativePath(value.virtualFile, parentDirectory.virtualFile, '/') ?: return
-      data.clearText()
-      data.presentableText = name
-    }
-  }
-
-  private fun PsiDirectory.calculateCustomChildrenNodes(project: Project, settings: ViewSettings?): Collection<AbstractTreeNode<*>>? =
-    if (project.shouldNotCalculateCustomNodes()) {
-      null
-    } else {
-      children.mapNotNull { psiChild ->
-        if (psiChild is PsiFileSystemItem && filter?.shouldShow(psiChild) == false) return@mapNotNull null
-
-        when (psiChild) {
-          is PsiDirectory -> BazelDirectoryNode(project, psiChild, settings)
-          is PsiFile -> PsiFileNode(project, psiChild, settings)
-          else -> null
-        }
-      }
+    BazelDirectoryNode(
+        Project project,
+        PsiDirectory directory,
+        ViewSettings viewSettings,
+        @Nullable PsiFileSystemItemFilter filter
+    ) {
+        super(project, directory, viewSettings, filter);
+        myFilter = filter;
     }
 
-  /**
-   * The project view tree relies on the existence of the "fake module".
-   * See https://youtrack.jetbrains.com/issue/IJPL-15946/Platform-solution-for-the-initial-state-of-the-project-model-on-the-first-open
-   * However, we remove the fake module in `CounterPlatformProjectConfigurator`.
-   * So while the project is syncing, we show our custom tree, so that the user can at least see the project files and directories.
-   */
-  private fun Project.shouldNotCalculateCustomNodes() = ModuleManager.getInstance(this).modules.isNotEmpty()
+    // consulo: upstream default argument filter = null
+    BazelDirectoryNode(
+        Project project,
+        PsiDirectory directory,
+        ViewSettings viewSettings
+    ) {
+        this(project, directory, viewSettings, null);
+    }
 
-  override fun getChildrenImpl(): Collection<AbstractTreeNode<*>?>? {
-    val virtualFile = virtualFile ?: return null
-    val directory = PsiManager.getInstance(project).findDirectory(virtualFile) ?: return null
-    directory.calculateCustomChildrenNodes(project, settings)?.let { return it }
+    // TODO consulo: PsiDirectoryNode.shouldShowModuleName() is missing
+    //override fun shouldShowModuleName(): Boolean = false
 
-    val helper = BazelProjectViewDirectoryHelper(project)
-    val children = helper.getDirectoryChildren(directory, settings, true, filter)
-    if (!settings.isFlattenPackages) {
-      if (!settings.isHideEmptyMiddlePackages) {
-        return children
-      }
-      if (!helper.skipDirectory(directory)) {
-        return children.map { child ->
-          if (child !is PsiDirectoryNode) return@map child
-          var childDirectory = child.value
-          while (!helper.isSourceRoot(childDirectory) && helper.isEmptyMiddleDirectory(childDirectory, true, filter)) {
-            ProgressManager.checkCanceled()
-            childDirectory = childDirectory.subdirectories.single {
-              !FileTypeRegistry.getInstance().isFileIgnored(it.virtualFile) && filter?.shouldShow(it) != false
+    @Override
+    @RequiredReadAction
+    protected void updateImpl(PresentationData data) {
+        super.updateImpl(data);
+        ViewSettings settings = getSettings();
+        if (!settings.isFlattenPackages() && settings.isHideEmptyMiddlePackages()) {
+            if (!(getParentValue() instanceof PsiDirectory parentDirectory)) {
+                return;
             }
-          }
-          BazelDirectoryNode(project, childDirectory, settings, filter)
+            String name = VirtualFileUtil.getRelativePath(getValue().getVirtualFile(), parentDirectory.getVirtualFile(), '/');
+            if (name == null) {
+                return;
+            }
+            data.clearText();
+            data.setPresentableText(name);
         }
-      }
-      // outside of source roots, directories don't correspond to packages, so collapse middle directories by the structure only
-      return children.map { child ->
-        if (child !is PsiDirectoryNode) return@map child
-        var childDirectory = child.value
-        while (!helper.isSourceRoot(childDirectory)) {
-          ProgressManager.checkCanceled()
-          childDirectory = helper.findCollapsibleSubdirectory(childDirectory, filter) ?: break
+    }
+
+    @RequiredReadAction
+    private @Nullable Collection<AbstractTreeNode> calculateCustomChildrenNodes(
+        PsiDirectory receiver,
+        Project project,
+        ViewSettings settings
+    ) {
+        if (shouldNotCalculateCustomNodes(project)) {
+            return null;
         }
-        BazelDirectoryNode(project, childDirectory, settings, filter)
-      }
+        else {
+            List<AbstractTreeNode> result = new ArrayList<>();
+            for (PsiElement psiChild : receiver.getChildren()) {
+                if (psiChild instanceof PsiFileSystemItem psiFileSystemItem
+                    && myFilter != null
+                    && !myFilter.shouldShow(psiFileSystemItem)) {
+                    continue;
+                }
+
+                if (psiChild instanceof PsiDirectory psiDirectory) {
+                    result.add(new BazelDirectoryNode(project, psiDirectory, settings));
+                }
+                else if (psiChild instanceof PsiFile psiFile) {
+                    result.add(new PsiFileNode(project, psiFile, settings));
+                }
+            }
+            return result;
+        }
     }
 
-    if (helper.skipDirectory(directory)) {
-      return children
-    }
-    val parentDirectory = directory.parentDirectory
-    if (parentDirectory != null && !helper.skipDirectory(parentDirectory)) {
-      return children
+    /**
+     * The project view tree relies on the existence of the "fake module".
+     * See https://youtrack.jetbrains.com/issue/IJPL-15946/Platform-solution-for-the-initial-state-of-the-project-model-on-the-first-open
+     * However, we remove the fake module in `CounterPlatformProjectConfigurator`.
+     * So while the project is syncing, we show our custom tree, so that the user can at least see the project files and directories.
+     */
+    private boolean shouldNotCalculateCustomNodes(Project receiver) {
+        return ModuleManager.getInstance(receiver).getModules().length != 0;
     }
 
-    val result = children.filterTo(mutableListOf()) { it !is PsiDirectoryNode || helper.skipDirectory(it.value) }
-    val directories = ArrayDeque<PsiDirectory>()
-    directories.addAll(directory.subdirectories)
-    while (directories.isNotEmpty()) {
-      ProgressManager.checkCanceled()
-      val subdirectory = directories.removeFirst()
-      if (helper.skipDirectory(subdirectory) || filter?.shouldShow(subdirectory) == false) {
-        continue
-      } else if (!settings.isHideEmptyMiddlePackages || !helper.isEmptyMiddleDirectory(subdirectory, false, filter)) {
-        result.add(BazelDirectoryNode(project, subdirectory, settings, filter))
-      }
-      directories.addAll(subdirectory.subdirectories)
-    }
-    return result
-  }
+    @Override
+    @RequiredReadAction
+    public Collection<AbstractTreeNode> getChildrenImpl() {
+        // consulo: upstream returns null, Consulo PsiDirectoryNode.getChildrenImpl() is not nullable (null means no children)
+        VirtualFile virtualFile = getVirtualFile();
+        if (virtualFile == null) {
+            return Collections.emptyList();
+        }
+        Project project = Objects.requireNonNull(getProject());
+        PsiDirectory directory = PsiManager.getInstance(project).findDirectory(virtualFile);
+        if (directory == null) {
+            return Collections.emptyList();
+        }
+        ViewSettings settings = getSettings();
+        Collection<AbstractTreeNode> customChildrenNodes = calculateCustomChildrenNodes(directory, project, settings);
+        if (customChildrenNodes != null) {
+            return customChildrenNodes;
+        }
 
-  override fun getTypeSortWeight(sortByType: Boolean): Int = BazelTreeStructureOrder.ROOT.weight
+        BazelProjectViewDirectoryHelper helper = new BazelProjectViewDirectoryHelper(project);
+        Collection<AbstractTreeNode> children = helper.getDirectoryChildren(directory, settings, true, myFilter);
+        if (!settings.isFlattenPackages()) {
+            if (!settings.isHideEmptyMiddlePackages()) {
+                return children;
+            }
+            if (!helper.skipDirectory(directory)) {
+                List<AbstractTreeNode> result = new ArrayList<>();
+                for (AbstractTreeNode child : children) {
+                    if (!(child instanceof PsiDirectoryNode childNode)) {
+                        result.add(child);
+                        continue;
+                    }
+                    PsiDirectory childDirectory = childNode.getValue();
+                    while (!helper.isSourceRoot(childDirectory) && helper.isEmptyMiddleDirectory(childDirectory, true, myFilter)) {
+                        ProgressManager.checkCanceled();
+                        childDirectory = single(
+                            childDirectory.getSubdirectories(),
+                            it -> !FileTypeRegistry.getInstance().isFileIgnored(it.getVirtualFile())
+                                && (myFilter == null || myFilter.shouldShow(it))
+                        );
+                    }
+                    result.add(new BazelDirectoryNode(project, childDirectory, settings, myFilter));
+                }
+                return result;
+            }
+            // outside of source roots, directories don't correspond to packages, so collapse middle directories by the structure only
+            List<AbstractTreeNode> result = new ArrayList<>();
+            for (AbstractTreeNode child : children) {
+                if (!(child instanceof PsiDirectoryNode childNode)) {
+                    result.add(child);
+                    continue;
+                }
+                PsiDirectory childDirectory = childNode.getValue();
+                while (!helper.isSourceRoot(childDirectory)) {
+                    ProgressManager.checkCanceled();
+                    PsiDirectory collapsibleSubdirectory = helper.findCollapsibleSubdirectory(childDirectory, myFilter);
+                    if (collapsibleSubdirectory == null) {
+                        break;
+                    }
+                    childDirectory = collapsibleSubdirectory;
+                }
+                result.add(new BazelDirectoryNode(project, childDirectory, settings, myFilter));
+            }
+            return result;
+        }
+
+        if (helper.skipDirectory(directory)) {
+            return children;
+        }
+        PsiDirectory parentDirectory = directory.getParentDirectory();
+        if (parentDirectory != null && !helper.skipDirectory(parentDirectory)) {
+            return children;
+        }
+
+        List<AbstractTreeNode> result = new ArrayList<>();
+        for (AbstractTreeNode it : children) {
+            if (!(it instanceof PsiDirectoryNode psiDirectoryNode) || helper.skipDirectory(psiDirectoryNode.getValue())) {
+                result.add(it);
+            }
+        }
+        Deque<PsiDirectory> directories = new ArrayDeque<>();
+        directories.addAll(Arrays.asList(directory.getSubdirectories()));
+        while (!directories.isEmpty()) {
+            ProgressManager.checkCanceled();
+            PsiDirectory subdirectory = directories.removeFirst();
+            if (helper.skipDirectory(subdirectory) || (myFilter != null && !myFilter.shouldShow(subdirectory))) {
+                continue;
+            }
+            else if (!settings.isHideEmptyMiddlePackages() || !helper.isEmptyMiddleDirectory(subdirectory, false, myFilter)) {
+                result.add(new BazelDirectoryNode(project, subdirectory, settings, myFilter));
+            }
+            directories.addAll(Arrays.asList(subdirectory.getSubdirectories()));
+        }
+        return result;
+    }
+
+    // consulo: Kotlin Array.single(predicate)
+    private static PsiDirectory single(PsiDirectory[] directories, Predicate<PsiDirectory> predicate) {
+        @Nullable PsiDirectory single = null;
+        boolean found = false;
+        for (PsiDirectory it : directories) {
+            if (predicate.test(it)) {
+                if (found) {
+                    throw new IllegalArgumentException("Array contains more than one matching element.");
+                }
+                single = it;
+                found = true;
+            }
+        }
+        if (single == null) {
+            throw new java.util.NoSuchElementException("Array contains no element matching the predicate.");
+        }
+        return single;
+    }
+
+    @Override
+    public int getTypeSortWeight(boolean sortByType) {
+        return BazelTreeStructureOrder.ROOT.getWeight();
+    }
 }
 
-private class UnimportedDirectoriesNode(
-  project: Project,
-  directory: PsiDirectory,
-  viewSettings: ViewSettings?,
-  filter: PsiFileSystemItemFilter,
-) : PsiDirectoryNode(project, directory, viewSettings, filter) {
-  override fun isAlwaysShowPlus(): Boolean = true
+class UnimportedDirectoriesNode extends PsiDirectoryNode {
+    UnimportedDirectoriesNode(
+        Project project,
+        PsiDirectory directory,
+        ViewSettings viewSettings,
+        PsiFileSystemItemFilter filter
+    ) {
+        super(project, directory, viewSettings, filter);
+    }
 
-  override fun update(presentation: PresentationData) {
-    presentation.presentableText = BazelPluginBundle.message("widget.project.tree.unimported.directories")
-    presentation.tooltip = BazelPluginBundle.message("widget.project.tree.unimported.directories.tooltip")
-    presentation.setIcon(AllIcons.Nodes.Workspace)
-  }
+    @Override
+    public boolean isAlwaysShowPlus() {
+        return true;
+    }
 
-  override fun getTypeSortWeight(sortByType: Boolean): Int = BazelTreeStructureOrder.UNIMPORTED.weight
+    @Override
+    public void update(PresentationData presentation) {
+        presentation.setPresentableText(BazelPluginLocalize.widgetProjectTreeUnimportedDirectories());
+        presentation.setTooltip(BazelPluginLocalize.widgetProjectTreeUnimportedDirectoriesTooltip().get());
+        // consulo: no AllIcons.Nodes.Workspace in PlatformIconGroup, closest key
+        presentation.setIcon(PlatformIconGroup.nodesProject());
+    }
+
+    @Override
+    public int getTypeSortWeight(boolean sortByType) {
+        return BazelTreeStructureOrder.UNIMPORTED.getWeight();
+    }
 }
 
-private class ExcludedDirectoriesNode(
-  project: Project,
-  directory: PsiDirectory,
-  viewSettings: ViewSettings?,
-  filter: PsiFileSystemItemFilter,
-) : PsiDirectoryNode(project, directory, viewSettings, filter) {
-  override fun isAlwaysShowPlus(): Boolean = true
+class ExcludedDirectoriesNode extends PsiDirectoryNode {
+    ExcludedDirectoriesNode(
+        Project project,
+        PsiDirectory directory,
+        ViewSettings viewSettings,
+        PsiFileSystemItemFilter filter
+    ) {
+        super(project, directory, viewSettings, filter);
+    }
 
-  override fun isIncludedInExpandAll(): Boolean = false
+    @Override
+    public boolean isAlwaysShowPlus() {
+        return true;
+    }
 
-  override fun update(presentation: PresentationData) {
-    presentation.presentableText = BazelPluginBundle.message("widget.project.tree.excluded.directories")
-    presentation.setIcon(AllIcons.Modules.ExcludeRoot)
-    // Show in gray even if the project root dir is excluded (for better visibility)
-    presentation.background = null
-  }
+    // TODO consulo: AbstractTreeNode.isIncludedInExpandAll() is missing
+    //override fun isIncludedInExpandAll(): Boolean = false
 
-  override fun getTypeSortWeight(sortByType: Boolean): Int = BazelTreeStructureOrder.EXCLUDED.weight
+    @Override
+    public void update(PresentationData presentation) {
+        presentation.setPresentableText(BazelPluginLocalize.widgetProjectTreeExcludedDirectories());
+        presentation.setIcon(PlatformIconGroup.modulesExcluderoot());
+        // Show in gray even if the project root dir is excluded (for better visibility)
+        presentation.setBackground(null);
+    }
+
+    @Override
+    public int getTypeSortWeight(boolean sortByType) {
+        return BazelTreeStructureOrder.EXCLUDED.getWeight();
+    }
 }
 
-private enum class BazelTreeStructureOrder(val weight: Int) {
-  ROOT(1),
-  UNIMPORTED(2),
-  EXCLUDED(3),
+enum BazelTreeStructureOrder {
+    ROOT(1),
+    UNIMPORTED(2),
+    EXCLUDED(3);
+
+    private final int myWeight;
+
+    BazelTreeStructureOrder(int weight) {
+        myWeight = weight;
+    }
+
+    public int getWeight() {
+        return myWeight;
+    }
 }

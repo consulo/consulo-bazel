@@ -1,62 +1,133 @@
-package org.jetbrains.bazel.languages.bazelversion.inspection
+package org.jetbrains.bazel.languages.bazelversion.inspection;
 
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.LocalQuickFix
-import com.intellij.codeInspection.ProblemDescriptor
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiDocumentManager
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.bazelversion.BazelVersionFileType
-import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionFile
-import org.jetbrains.bazel.languages.bazelversion.psi.toBazelVersionStringLiteral
-import org.jetbrains.bazel.languages.bazelversion.psi.toSemVer
-import org.jetbrains.bazel.languages.bazelversion.service.BazelVersionCheckerService
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.document.Document;
+import consulo.language.Language;
+import consulo.language.editor.WriteCommandAction;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.LocalQuickFix;
+import consulo.language.editor.inspection.ProblemDescriptor;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiDocumentManager;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.util.lang.SemVer;
+import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage.BazelVersionFileType;
+import org.jetbrains.bazel.languages.bazelversion.BazelVersionLanguage;
+import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionFile;
+import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionLiteral;
+import org.jetbrains.bazel.languages.bazelversion.service.BazelVersionCheckerService;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelVersionInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is BazelVersionFileType
+import java.util.Objects;
 
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = BazelVersionVisitor(holder)
-
-  class BazelVersionVisitor(val holder: ProblemsHolder) : PsiElementVisitor() {
-    override fun visitFile(psiFile: PsiFile) {
-      val file = psiFile as? BazelVersionFile ?: return
-      val currentVersion = file.bazelVersion?.toSemVer() ?: return
-      val latestVersion =
-        holder.project
-          .service<BazelVersionCheckerService>()
-          .latestBazelVersion
-          ?.toSemVer() ?: return
-      if (latestVersion.isGreaterThan(currentVersion)) {
-        holder.registerProblem(
-          psiFile,
-          BazelPluginBundle.message("inspection.description.bazel.version", latestVersion),
-          BazelVersionQuickFix(),
-        )
-      }
+@ExtensionImpl
+public class BazelVersionInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof BazelVersionFileType;
     }
-  }
 
-  class BazelVersionQuickFix : LocalQuickFix {
-    override fun getFamilyName(): String = BazelPluginBundle.message("quickfix.bazel.version")
-
-    override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
-      val manager = PsiDocumentManager.getInstance(project)
-      val doc = manager.getDocument(descriptor.psiElement as PsiFile) ?: return
-      val version =
-        project
-          .service<BazelVersionCheckerService>()
-          .latestBazelVersion ?: return
-      WriteCommandAction.runWriteCommandAction(project) {
-        doc.setText(version.toBazelVersionStringLiteral())
-        manager.commitDocument(doc)
-      }
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        return new BazelVersionVisitor(holder);
     }
-  }
+
+    // consulo: upstream XML registration <localInspection language="BazelVersion" key="inspection.display.name.bazel.version.check"
+    // groupPath="Bazel" groupKey="bazel.inspection.group.name" enabledByDefault="true" level="WARNING">
+    @Override
+    public @Nullable Language getLanguage() {
+        return BazelVersionLanguage.INSTANCE;
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameBazelVersionCheck();
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.bazelInspectionGroupName();
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.WARNING;
+    }
+
+    public static class BazelVersionVisitor extends PsiElementVisitor {
+        private final ProblemsHolder myHolder;
+
+        public BazelVersionVisitor(ProblemsHolder holder) {
+            myHolder = holder;
+        }
+
+        public ProblemsHolder getHolder() {
+            return myHolder;
+        }
+
+        @Override
+        public void visitFile(PsiFile psiFile) {
+            if (!(psiFile instanceof BazelVersionFile file)) {
+                return;
+            }
+            BazelVersionLiteral bazelVersion = file.getBazelVersion();
+            SemVer currentVersion = bazelVersion != null ? BazelVersionLiteral.toSemVer(bazelVersion) : null;
+            if (currentVersion == null) {
+                return;
+            }
+            BazelVersionLiteral latestBazelVersion =
+                myHolder.getProject()
+                    .getInstance(BazelVersionCheckerService.class)
+                    .getLatestBazelVersion();
+            SemVer latestVersion = latestBazelVersion != null ? BazelVersionLiteral.toSemVer(latestBazelVersion) : null;
+            if (latestVersion == null) {
+                return;
+            }
+            // consulo: IntelliJ SemVer.isGreaterThan(other) is compareTo(other) > 0
+            if (latestVersion.compareTo(currentVersion) > 0) {
+                myHolder.newProblem(BazelPluginLocalize.inspectionDescriptionBazelVersion(latestVersion))
+                    .range(psiFile)
+                    .withFixes(new BazelVersionQuickFix())
+                    .create();
+            }
+        }
+    }
+
+    public static class BazelVersionQuickFix implements LocalQuickFix {
+        // consulo: upstream getFamilyName(); Consulo quick fixes only have getName()
+        @Override
+        public LocalizeValue getName() {
+            return BazelPluginLocalize.quickfixBazelVersion();
+        }
+
+        @Override
+        public void applyFix(Project project, ProblemDescriptor descriptor) {
+            PsiDocumentManager manager = PsiDocumentManager.getInstance(project);
+            Document doc = manager.getDocument((PsiFile) Objects.requireNonNull(descriptor.getPsiElement()));
+            if (doc == null) {
+                return;
+            }
+            BazelVersionLiteral version =
+                project
+                    .getInstance(BazelVersionCheckerService.class)
+                    .getLatestBazelVersion();
+            if (version == null) {
+                return;
+            }
+            WriteCommandAction.runWriteCommandAction(project, () -> {
+                doc.setText(BazelVersionLiteral.toBazelVersionStringLiteral(version));
+                manager.commitDocument(doc);
+            });
+        }
+    }
 }

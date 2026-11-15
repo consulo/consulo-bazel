@@ -1,67 +1,125 @@
-package org.jetbrains.bazel.languages.starlark.inspection
+package org.jetbrains.bazel.languages.starlark.inspection;
 
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.localize.LocalizeValue;
+import consulo.util.collection.ArrayUtil;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement;
+import org.jspecify.annotations.Nullable;
 
 
-@ApiStatus.Internal
-class StarlarkLoadPlacementInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is StarlarkFileType
-
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = LoadPlacementVisitor(holder)
-
-  private class LoadPlacementVisitor(private val holder: ProblemsHolder) : StarlarkElementVisitor() {
-    override fun visitLoadStatement(node: StarlarkLoadStatement) {
-      if (holder.file.name == Constants.MODULE_BAZEL_FILE_NAME) {
-        holder.registerProblem(
-          node,
-          StarlarkBundle.message("inspection.description.load.not.allowed.in.module.bazel")
-        )
-      } else if (node.parent !is StarlarkFile) {
-        holder.registerProblem(
-          node,
-          StarlarkBundle.message("inspection.description.load.not.at.top.level")
-        )
-      } else if (holder.file.name !in (CONFIG_FILE_NAMES) && hasPreviousNonLoadTopLevelStatement(node)) {
-        holder.registerProblem(
-          node,
-          StarlarkBundle.message("inspection.description.load.after.statement")
-        )
-      }
+@ExtensionImpl
+public class StarlarkLoadPlacementInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof StarlarkLanguage.StarlarkFileType;
     }
 
-    private fun hasPreviousNonLoadTopLevelStatement(loadStatement: StarlarkLoadStatement): Boolean {
-      var sibling = PsiTreeUtil.skipWhitespacesAndCommentsBackward(loadStatement)
-      while (sibling != null) {
-        if (sibling !is StarlarkLoadStatement && !isStringComment(sibling)) {
-          return true
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        return new LoadPlacementVisitor(holder);
+    }
+
+    private static class LoadPlacementVisitor extends StarlarkElementVisitor {
+        private final ProblemsHolder myHolder;
+
+        LoadPlacementVisitor(ProblemsHolder holder) {
+            myHolder = holder;
         }
-        sibling = PsiTreeUtil.skipWhitespacesAndCommentsBackward(sibling)
-      }
-      return false
+
+        @Override
+        public void visitLoadStatement(StarlarkLoadStatement node) {
+            if (myHolder.getFile().getName().equals(Constants.MODULE_BAZEL_FILE_NAME)) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionLoadNotAllowedInModuleBazel())
+                    .range(node)
+                    .create();
+            }
+            else if (!(node.getParent() instanceof StarlarkFile)) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionLoadNotAtTopLevel())
+                    .range(node)
+                    .create();
+            }
+            else if (!ArrayUtil.contains(myHolder.getFile().getName(), CONFIG_FILE_NAMES) && hasPreviousNonLoadTopLevelStatement(node)) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionLoadAfterStatement())
+                    .range(node)
+                    .create();
+            }
+        }
+
+        private boolean hasPreviousNonLoadTopLevelStatement(StarlarkLoadStatement loadStatement) {
+            PsiElement sibling = PsiTreeUtil.skipWhitespacesAndCommentsBackward(loadStatement);
+            while (sibling != null) {
+                if (!(sibling instanceof StarlarkLoadStatement) && !isStringComment(sibling)) {
+                    return true;
+                }
+                sibling = PsiTreeUtil.skipWhitespacesAndCommentsBackward(sibling);
+            }
+            return false;
+        }
+
+        private boolean isStringComment(PsiElement node) {
+            if (!(node instanceof StarlarkExpressionStatement stmt)) {
+                return false;
+            }
+            PsiElement child = stmt.getFirstChild();
+            if (child == null) {
+                return false;
+            }
+            return child == stmt.getLastChild() && child instanceof StarlarkStringLiteralExpression;
+        }
     }
 
-    private fun isStringComment(node: PsiElement): Boolean {
-      val stmt = node as? StarlarkExpressionStatement ?: return false
-      val child = stmt.firstChild ?: return false
-      return child == stmt.lastChild && child is StarlarkStringLiteralExpression
-    }
-  }
+    private static final String[] CONFIG_FILE_NAMES = ArrayUtil.mergeArrays(Constants.WORKSPACE_FILE_NAMES, Constants.BUILD_FILE_NAMES);
 
-  companion object {
-    private val CONFIG_FILE_NAMES = Constants.WORKSPACE_FILE_NAMES + Constants.BUILD_FILE_NAMES
-  }
+    // consulo: registration attributes of <localInspection> in intellij.bazel.core.xml
+    @Override
+    public @Nullable Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    @Override
+    public String getShortName() {
+        return "StarlarkLoadPlacement";
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameStarlarkLoadPlacementCheck();
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.starlarkInspectionGroupName();
+    }
+
+    // consulo: upstream groupPath="Bazel"
+    @Override
+    public LocalizeValue[] getGroupPath() {
+        return new LocalizeValue[]{BazelPluginLocalize.bazelInspectionGroupName(), getGroupDisplayName()};
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }

@@ -1,93 +1,114 @@
-package org.jetbrains.bazel.flow.open
+package org.jetbrains.bazel.flow.open;
 
-import com.intellij.ide.impl.toOpenProjectTask
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.diagnostic.trace
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ex.ProjectManagerEx
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.refreshAndFindVirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import com.intellij.projectImport.ProjectOpenProcessor
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.BazelPluginConstants
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import org.jetbrains.bazel.languages.projectview.project.ProjectViewFileLocalizer.pickProjectViewFileForProject
-import org.jetbrains.bazel.target.ModuleTargetService
-import org.jetbrains.bazel.target.TargetStorage
-import javax.swing.Icon
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.BazelProjectStoreService;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.module.Module;
+import consulo.module.ModifiableModuleModel;
+import consulo.module.creation.importing.ModuleImportContext;
+import consulo.module.creation.importing.ModuleImportProvider;
+import consulo.project.Project;
+import consulo.project.startup.StartupActivity;
+import consulo.project.startup.StartupManager;
+import consulo.ui.image.Image;
+import consulo.util.concurrent.coroutine.Coroutine;
+import consulo.util.concurrent.coroutine.step.CodeExecution;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.config.BazelPluginConstants;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jetbrains.bazel.target.ModuleTargetService;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bazel.utils.PathUtil;
+
+import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+
+import static org.jetbrains.bazel.languages.projectview.project.ProjectViewFileLocalizer.pickProjectViewFileForProject;
 
 /**
- * Refrain from using [VirtualFile.getChildren] as it causes performance issues in large projects, such as [BAZEL-1717](https://youtrack.jetbrains.com/issue/BAZEL-1717)
+ * Refrain from using {@link VirtualFile#getChildren} as it causes performance issues in large projects, such as <a href="https://youtrack.jetbrains.com/issue/BAZEL-1717">BAZEL-1717</a>
  */
-internal class BazelProjectOpenProcessor : ProjectOpenProcessor() {
-  override suspend fun openProjectAsync(
-    virtualFile: VirtualFile,
-    projectOpenOptions: ProjectOpenOptions
-  ): Project? {
-    val fileBeingOpen = virtualFile.toNioPathOrNull() ?: return null
-    log.info("Opening asynchronously file as a Bazel project: $fileBeingOpen")
+// consulo: IntelliJ's ProjectOpenProcessor is internal in Consulo; opening a Bazel workspace goes through the import of the
+// Consulo open flow (ModuleImportProvider). The project is opened by the platform, the processor records the Bazel store
+// descriptor (upstream: ProjectStorePathCustomizer) and runs the upstream open callback after the project is opened.
+@ExtensionImpl
+public class BazelProjectOpenProcessor implements ModuleImportProvider<ModuleImportContext> {
+    private static final Logger LOG = Logger.getInstance(BazelProjectOpenProcessor.class);
 
-    // The user (or another part of the plugin) may try to open the project by pointing to:
-    // BUILD files, MODULE.bazel, project view file, etc. so we need to do normalization here
-    val projectRootDir = findProjectFolderFromFile(fileBeingOpen) ?: return null
-    log.trace { "Found project root directory: $projectRootDir" }
+    @Override
+    public Coroutine<Object, Object> process(
+        ModuleImportContext context,
+        Project project,
+        ModifiableModuleModel model,
+        Consumer<Module> newModuleConsumer
+    ) {
+        return CodeExecution.run(continuation -> {
+            Path fileBeingOpen = Path.of(context.getFileToImport());
+            LOG.info("Opening asynchronously file as a Bazel project: " + fileBeingOpen);
 
-    val projectViewFile = pickProjectViewFileForProject(fileBeingOpen, projectRootDir)
-    log.trace { "Using project view file: $projectViewFile" }
-
-    val openProjectTask = projectOpenOptions.toOpenProjectTask().copy(
-      // Setting this flag to true will remove existing .idea directory.
-      // We must overwrite it because ProjectUtil#openOrImportAsync sets it to true.
-      isNewProject = false,
-      runConfigurators = true,
-
-      projectRootDir = projectRootDir,
-      createModule = false,
-
-      callback = { project, _ ->
-        BazelCoroutineService.getInstance(project).start {
-          projectViewFile
-            .refreshAndFindVirtualFile()
-            ?.let { projectViewPath ->
-              openProjectViewInEditor(project, projectViewPath)
+            // The user (or another part of the plugin) may try to open the project by pointing to:
+            // BUILD files, MODULE.bazel, project view file, etc. so we need to do normalization here
+            Path projectRootDir = utils.findProjectFolderFromFile(fileBeingOpen);
+            if (projectRootDir == null) {
+                return;
             }
-        }
+            LOG.trace("Found project root directory: " + projectRootDir);
 
-        // force async load targets cache
-        project.service<TargetStorage>()
-        project.service<ModuleTargetService>()
-      }
-    )
+            Path projectViewFile = pickProjectViewFileForProject(fileBeingOpen, projectRootDir);
+            LOG.trace("Using project view file: " + projectViewFile);
 
-    return ProjectManagerEx
-      .getInstanceEx()
-      .openProjectAsync(projectViewFile, openProjectTask)
-  }
+            // consulo: upstream opens the project view file with createModule = false; the store descriptor that
+            // BazelProjectStorePathCustomizer computes for it marks the project as a Bazel project
+            BazelProjectStoreDescriptor descriptor = new BazelProjectStorePathCustomizer().getStoreDirectoryPath(projectViewFile);
+            if (descriptor == null) {
+                return;
+            }
+            BazelProjectStoreService.getInstance(project).setDescriptor(descriptor);
 
-  override val icon: Icon
-    get() = BazelPluginIcons.bazel
+            // consulo: upstream OpenProjectTask callback
+            StartupManager.getInstance(project).runAfterOpened((StartupActivity) (openedProject, uiAccess) -> {
+                BazelCoroutineService.getInstance(project).start(() -> {
+                    VirtualFile projectViewPath = PathUtil.refreshAndFindVirtualFile(projectViewFile);
+                    if (projectViewPath != null) {
+                        return utils.openProjectViewInEditor(project, projectViewPath);
+                    }
+                    return CompletableFuture.completedFuture(null);
+                });
 
-  override val name: String
-    get() = BazelPluginConstants.BAZEL_DISPLAY_NAME
+                // force async load targets cache
+                project.getInstance(TargetStorage.class);
+                project.getInstance(ModuleTargetService.class);
+            });
+        }).toCoroutine();
+    }
 
-  override val isStrongProjectInfoHolder: Boolean
-    get() = BazelFeatureFlags.autoOpenProjectIfPresent
+    @Override
+    public Image getIcon() {
+        return BazelPluginIcons.bazel();
+    }
 
-  /**
-   * The project is only eligible to be opened with Bazel Plugin if workspace files can be reached from the given vFile
-   */
-  override fun canOpenProject(file: VirtualFile): Boolean {
-    if (!BazelFeatureFlags.autoOpenProjectIfPresent &&
-        file.isDirectory &&
-        file.findChild(Project.DIRECTORY_STORE_FOLDER) != null) return false
+    @Override
+    public LocalizeValue getName() {
+        return LocalizeValue.of(BazelPluginConstants.BAZEL_DISPLAY_NAME);
+    }
 
-    return findProjectFolderFromVFile(file) != null
-  }
+    // consulo: upstream isStrongProjectInfoHolder (BazelFeatureFlags.autoOpenProjectIfPresent) has no Consulo counterpart
 
-  companion object {
-    private val log = logger<BazelProjectOpenProcessor>()
-  }
+    /**
+     * The project is only eligible to be opened with Bazel Plugin if workspace files can be reached from the given vFile
+     */
+    @Override
+    public boolean canImport(Path file) {
+        // consulo: upstream skips directories with an existing .idea unless autoOpenProjectIfPresent is set; Consulo itself asks
+        // whether to open the existing project or to import it again
+        return utils.findProjectFolderFromFile(file) != null;
+    }
+
+    @Override
+    public String getPathToBeImported(Path file) {
+        return file.toString();
+    }
 }

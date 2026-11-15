@@ -1,23 +1,41 @@
-package org.jetbrains.bazel.run
+package org.jetbrains.bazel.run;
 
-import com.intellij.execution.process.ProcessOutputType
-import com.intellij.execution.testframework.sm.ServiceMessageBuilder
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.Deferred
+import consulo.execution.test.sm.ServiceMessageBuilder;
+import consulo.process.ProcessOutputType;
+import consulo.project.Project;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelTestProcessHandler(
-  project: Project,
-  runDeferred: Deferred<*>,
-  pidDeferred: Deferred<Long?>? = null,
-  private val isIdBasedTestTree: Boolean = false,
-) : BazelProcessHandler(project, runDeferred, pidDeferred) {
-  override fun destroyProcessImpl() {
-    // send a fake terminated test to the test console - otherwise it will show "No tests were found" instead of "Terminated"
-    val message = ServiceMessageBuilder.testSuiteStarted("Run cancelled")
-    if (isIdBasedTestTree) {
-      message.addAttribute("nodeId", "cancelled").addAttribute("parentNodeId", "0")
+import java.util.concurrent.CompletableFuture;
+
+class BazelTestProcessHandler extends BazelProcessHandler {
+    private final boolean myIsIdBasedTestTree;
+
+    BazelTestProcessHandler(
+        Project project,
+        CompletableFuture<?> runDeferred,
+        @Nullable CompletableFuture<@Nullable Long> pidDeferred,
+        boolean isIdBasedTestTree
+    ) {
+        super(project, runDeferred, pidDeferred);
+        myIsIdBasedTestTree = isIdBasedTestTree;
     }
-    notifyTextAvailable(message.toString() + "\n", ProcessOutputType.STDOUT)
-    super.destroyProcessImpl()
-  }
+
+    BazelTestProcessHandler(Project project, CompletableFuture<?> runDeferred, @Nullable CompletableFuture<@Nullable Long> pidDeferred) {
+        this(project, runDeferred, pidDeferred, false);
+    }
+
+    BazelTestProcessHandler(Project project, CompletableFuture<?> runDeferred) {
+        this(project, runDeferred, null);
+    }
+
+    @Override
+    protected void destroyProcessImpl() {
+        // send a fake terminated test to the test console - otherwise it will show "No tests were found" instead of "Terminated"
+        ServiceMessageBuilder message = ServiceMessageBuilder.testSuiteStarted("Run cancelled");
+        if (myIsIdBasedTestTree) {
+            message.addAttribute("nodeId", "cancelled").addAttribute("parentNodeId", "0");
+        }
+        notifyTextAvailable(message.toString() + "\n", ProcessOutputType.STDOUT);
+        super.destroyProcessImpl();
+    }
 }

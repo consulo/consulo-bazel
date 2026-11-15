@@ -1,56 +1,96 @@
-package org.jetbrains.bazel.flow.exclude
+package org.jetbrains.bazel.flow.exclude;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManager
-import com.intellij.openapi.util.io.toNioPathOrNull
-import com.intellij.openapi.vfs.AsyncFileListener
-import com.intellij.openapi.vfs.newvfs.BulkFileListener
-import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator
-import org.jetbrains.bazel.config.bazelProjectName
-import org.jetbrains.bazel.config.isBazelProject
-import java.nio.file.Path
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import consulo.project.ProjectManager;
+import consulo.util.io.FileAttributes;
+import consulo.virtualFileSystem.event.AsyncFileListener;
+import consulo.virtualFileSystem.event.VFileCreateEvent;
+import consulo.virtualFileSystem.event.VFileEvent;
+import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelSymlinkExcludeFileListener : AsyncFileListener {
-  override fun prepareChange(events: List<VFileEvent>): AsyncFileListener.ChangeApplier? {
-    val project2Paths = events
-      .asSequence()
-      .filterIsInstance<VFileCreateEvent>()
-      .filter { it.attributes?.isSymLink ?: false }
-      .flatMap { it.toListOfProjectAndPath() }
-      .filter { BazelSymlinksCalculator.isBazelSymlink(it.project.bazelProjectName, it.path) }
-      .groupBy({ it.project }, { it.path })
-      .toList()
-    return object : AsyncFileListener.ChangeApplier {
-      override fun beforeVfsChange() {
-        for ((project, paths) in project2Paths) {
-          val bazelSymlinkExcludeService = BazelSymlinkExcludeService.getInstance(project)
-          bazelSymlinkExcludeService.addBazelSymlinksToExclude(paths.toSet())
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@ExtensionImpl
+public class BazelSymlinkExcludeFileListener implements AsyncFileListener {
+    @Override
+    public @Nullable ChangeApplier prepareChange(List<? extends VFileEvent> events) {
+        Map<Project, List<Path>> project2Paths = new LinkedHashMap<>();
+        for (VFileEvent event : events) {
+            if (!(event instanceof VFileCreateEvent createEvent)) {
+                continue;
+            }
+            FileAttributes attributes = createEvent.getAttributes();
+            if (!(attributes != null && attributes.isSymLink())) {
+                continue;
+            }
+            for (ProjectAndPath it : toListOfProjectAndPath(createEvent)) {
+                if (BazelSymlinksCalculator.isBazelSymlink(org.jetbrains.bazel.config.project.getBazelProjectName(it.project()), it.path())) {
+                    project2Paths.computeIfAbsent(it.project(), k -> new ArrayList<>()).add(it.path());
+                }
+            }
         }
-      }
+        return new ChangeApplier() {
+            @Override
+            public void beforeVfsChange() {
+                for (Map.Entry<Project, List<Path>> entry : project2Paths.entrySet()) {
+                    BazelSymlinkExcludeService bazelSymlinkExcludeService = BazelSymlinkExcludeService.getInstance(entry.getKey());
+                    bazelSymlinkExcludeService.addBazelSymlinksToExclude(new HashSet<>(entry.getValue()));
+                }
+            }
+        };
     }
-  }
 
-  private fun VFileCreateEvent.toListOfProjectAndPath(): List<ProjectAndPath> {
-    val nioPath = path.toNioPathOrNull() ?: return emptyList()
-    val projects = findProjectsByFilePath(nioPath)
-    return projects.map { ProjectAndPath(it, nioPath) }
-  }
-
-  private fun findProjectsByFilePath(path: Path): List<Project> =
-    ProjectManager.getInstance().openProjects
-      .filter { project ->
-        if (project.isDisposed || !project.isBazelProject) {
-          return@filter false
+    private List<ProjectAndPath> toListOfProjectAndPath(VFileCreateEvent receiver) {
+        Path nioPath = toNioPathOrNull(receiver.getPath());
+        if (nioPath == null) {
+            return List.of();
         }
-        // we can't use content roots, etc. because from the observations it turns out that
-        // an event can be dispatched when a project doesn't have any modules or content roots.
-        val projectBasePath = project.basePath?.toNioPathOrNull() ?: return@filter false
-        path.startsWith(projectBasePath)
-      }
+        List<Project> projects = findProjectsByFilePath(nioPath);
+        List<ProjectAndPath> result = new ArrayList<>(projects.size());
+        for (Project it : projects) {
+            result.add(new ProjectAndPath(it, nioPath));
+        }
+        return result;
+    }
 
-  private data class ProjectAndPath(val project: Project, val path: Path)
+    private List<Project> findProjectsByFilePath(Path path) {
+        List<Project> result = new ArrayList<>();
+        for (Project project : ProjectManager.getInstance().getOpenProjects()) {
+            if (project.isDisposed() || !org.jetbrains.bazel.config.project.isBazelProject(project)) {
+                continue;
+            }
+            // we can't use content roots, etc. because from the observations it turns out that
+            // an event can be dispatched when a project doesn't have any modules or content roots.
+            String basePath = project.getBasePath();
+            Path projectBasePath = basePath != null ? toNioPathOrNull(basePath) : null;
+            if (projectBasePath == null) {
+                continue;
+            }
+            if (path.startsWith(projectBasePath)) {
+                result.add(project);
+            }
+        }
+        return result;
+    }
+
+    // consulo: IntelliJ String.toNioPathOrNull()
+    private static @Nullable Path toNioPathOrNull(String path) {
+        try {
+            return Path.of(path);
+        }
+        catch (InvalidPathException e) {
+            return null;
+        }
+    }
+
+    private record ProjectAndPath(Project project, Path path) {
+    }
 }

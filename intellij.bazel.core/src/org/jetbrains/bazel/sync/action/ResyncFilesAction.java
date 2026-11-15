@@ -1,53 +1,118 @@
-package org.jetbrains.bazel.sync.action
+package org.jetbrains.bazel.sync.action;
 
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.sync.ProjectSyncScope
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.sync.ProjectSyncScope;
+import org.jspecify.annotations.Nullable;
 
-internal fun VirtualFile.isResyncable(): Boolean =
-  (isDirectory && Constants.BUILD_FILE_NAMES.any { this.findChild(it) != null })
-  || this.name in Constants.BUILD_FILE_NAMES
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
-internal sealed class ResyncFilesAction :
-  BazelSyncAction({ BazelPluginBundle.message("resync.files.and.directories.action.text") }, BazelPluginIcons.bazelReload) {
-  protected abstract fun selectedFiles(e: AnActionEvent): List<VirtualFile>
-
-  private fun resyncableFiles(e: AnActionEvent): List<VirtualFile> = selectedFiles(e).filter { it.isResyncable() }
-
-  override fun computeScope(project: Project, e: AnActionEvent): ProjectSyncScope? {
-    val paths = resyncableFiles(e).mapNotNull { it.toNioPathOrNull() }.distinct()
-    return if (paths.isEmpty()) {
-      null
+// consulo: upstream sealed class; not sealed because the registered ResyncFilesActionXmlRegistered extends XmlRegistered
+public abstract class ResyncFilesAction extends BazelSyncAction {
+    public static boolean isResyncable(VirtualFile receiver) {
+        if (receiver.isDirectory()) {
+            for (String it : Constants.BUILD_FILE_NAMES) {
+                if (receiver.findChild(it) != null) {
+                    return true;
+                }
+            }
+        }
+        return Arrays.asList(Constants.BUILD_FILE_NAMES).contains(receiver.getName());
     }
-    else {
-      ProjectSyncScope.Files(files = paths, build = false)
+
+    protected ResyncFilesAction() {
+        super(BazelPluginLocalize.resyncFilesAndDirectoriesActionText(), BazelPluginIcons.bazelReload());
     }
-  }
 
-  override fun shouldBeVisible(project: Project, e: AnActionEvent): Boolean = resyncableFiles(e).isNotEmpty()
+    protected abstract List<VirtualFile> selectedFiles(AnActionEvent e);
 
-  override fun updatePresentation(project: Project, e: AnActionEvent) {
-    val files = resyncableFiles(e)
-    val directories = files.count { it.isDirectory }
-    e.presentation.text = when (directories) {
-      files.size -> BazelPluginBundle.message("resync.directories.action.text", files.size)
-      0 -> BazelPluginBundle.message("resync.files.action.text", files.size)
-      else -> BazelPluginBundle.message("resync.files.and.directories.action.text")
+    private List<VirtualFile> resyncableFiles(AnActionEvent e) {
+        List<VirtualFile> result = new ArrayList<>();
+        for (VirtualFile it : selectedFiles(e)) {
+            if (isResyncable(it)) {
+                result.add(it);
+            }
+        }
+        return result;
     }
-  }
 
-  @Suppress("CanSealedSubClassBeObject")
-  class XmlRegistered : ResyncFilesAction() {
-    override fun selectedFiles(e: AnActionEvent): List<VirtualFile> = e.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY)?.asList().orEmpty()
-  }
+    @Override
+    protected @Nullable ProjectSyncScope computeScope(Project project, AnActionEvent e) {
+        Set<Path> paths = new LinkedHashSet<>();
+        for (VirtualFile it : resyncableFiles(e)) {
+            Path path = toNioPathOrNull(it);
+            if (path != null) {
+                paths.add(path);
+            }
+        }
+        if (paths.isEmpty()) {
+            return null;
+        }
+        else {
+            return new ProjectSyncScope.Files(/* files = */ new ArrayList<>(paths), /* build = */ false);
+        }
+    }
 
-  class NonXmlRegistered(private val files: List<VirtualFile>) : ResyncFilesAction() {
-    override fun selectedFiles(e: AnActionEvent): List<VirtualFile> = files
-  }
+    @Override
+    protected boolean shouldBeVisible(Project project, AnActionEvent e) {
+        return !resyncableFiles(e).isEmpty();
+    }
+
+    @Override
+    protected void updatePresentation(Project project, AnActionEvent e) {
+        List<VirtualFile> files = resyncableFiles(e);
+        int directories = (int) files.stream().filter(VirtualFile::isDirectory).count();
+        if (directories == files.size()) {
+            e.getPresentation().setText(BazelPluginLocalize.resyncDirectoriesActionText(files.size()));
+        }
+        else if (directories == 0) {
+            e.getPresentation().setText(BazelPluginLocalize.resyncFilesActionText(files.size()));
+        }
+        else {
+            e.getPresentation().setText(BazelPluginLocalize.resyncFilesAndDirectoriesActionText());
+        }
+    }
+
+    // consulo: IntelliJ VirtualFile.toNioPathOrNull()
+    private static @Nullable Path toNioPathOrNull(VirtualFile file) {
+        try {
+            return file.toNioPath();
+        }
+        catch (UnsupportedOperationException e) {
+            return null;
+        }
+    }
+
+    /**
+     * consulo: registered through the top-level {@link ResyncFilesActionXmlRegistered} (annotation processor limitation)
+     */
+    public static class XmlRegistered extends ResyncFilesAction {
+        @Override
+        protected List<VirtualFile> selectedFiles(AnActionEvent e) {
+            VirtualFile[] files = e.getData(VirtualFile.KEY_OF_ARRAY);
+            return files != null ? Arrays.asList(files) : List.of();
+        }
+    }
+
+    public static class NonXmlRegistered extends ResyncFilesAction {
+        private final List<VirtualFile> myFiles;
+
+        public NonXmlRegistered(List<VirtualFile> files) {
+            myFiles = files;
+        }
+
+        @Override
+        protected List<VirtualFile> selectedFiles(AnActionEvent e) {
+            return myFiles;
+        }
+    }
 }

@@ -1,0 +1,564 @@
+action.Bazel.AddToProjectViewDirectoriesAction.description:
+    text: "Add this directory to the project view file."
+action.Bazel.AddToProjectViewDirectoriesAction.text:
+    text: "Add to {0} Directories Section"
+action.Bazel.ExcludeFromProjectViewDirectoriesAction.description:
+    text: "Exclude this directory from the project view file."
+action.Bazel.ExcludeFromProjectViewDirectoriesAction.text:
+    text: "Exclude from {0} Directories Section"
+action.Bazel.NewBazelPackageAction.text:
+    text: "New Bazel Package"
+action.Bazel.ResyncOpenDocumentsAction.text:
+    text: "Resync All Open Documents"
+action.Bazel.ShowBazelLogAction.text:
+    text: "Show Bazel Log in {0}"
+action.Bazel.ToggleBazelLogAction.text:
+    text: "Collect Bazel Logs"
+action.link.bazel.project.from.linked.project:
+    text: "Load Bazel Project"
+action.load.project.view.file:
+    text: "Load Project View"
+action.new.bazel.package.description:
+    text: "Create a new {0} package"
+action.new.bazel.package.text:
+    text: "{0} Package"
+action.run.all.tests:
+    text: "Run all tests"
+action.run.all.tests.under:
+    text: "Run all tests under {0}"
+action.run.all.tests.under.with.coverage:
+    text: "Run all tests under {0} with Coverage"
+action.run.all.tests.with.coverage:
+    text: "Run all tests with Coverage"
+advanced.settings.display.name:
+    text: "Advanced Settings"
+annotation.bazelrc.deprecated.flag:
+    text: "Flag: {0} is deprecated"
+annotation.bazelrc.flag.not.applicable:
+    text: "Flag: {0} is not applicable to command {1}"
+annotation.bazelrc.idle.flag:
+    text: "Flag: {0} doesn''t do anything"
+annotation.bazelrc.undocumented.flag:
+    text: "Undocumented flag: {0}"
+annotation.bazelrc.unknown.flag:
+    text: "Unknown flag: {0}"
+application.settings.display.name:
+    text: "Advanced Settings"
+application.settings.plugin.enable.phased.sync.checkbox.text:
+    text: "Enable phased sync"
+application.settings.plugin.enable.phased.sync.help.text:
+    text: "Phased sync runs in multiple steps, making code available sooner with limited dependency resolution."
+application.settings.plugin.experimental.settings:
+    text: "Experimental Settings"
+application.settings.update.channel.dropdown.help.description:
+    text: "You can switch to EAP/Release channel from Nightly to downgrade Bazel plugin to stable versions."
+application.settings.update.channel.dropdown.title:
+    text: "Update Channel:"
+application.settings.updates.title:
+    text: "Updates Settings"
+background.progress.building.targets:
+    text: "Building target(s)..."
+background.task.description.preparing.for.debugging.kotlin:
+    text: "Preparing for debugging Kotlin coroutines in target {0}"
+balloon.add.target.dependency.to.build.file.failed.message:
+    text: "Please add the target dependency manually to the corresponding BUILD file"
+balloon.add.target.dependency.to.build.file.failed.title:
+    text: "Failed to add target dependency automatically"
+bazel.bin.not.found:
+    text: "Unable to find bazel-bin (resync the project to fix)"
+bazel.inspection.group.name:
+    text: "Bazel"
+bazel.language.project.parser.error:
+    text: "{0} expected"
+bsp.run.error.cannotRun:
+    text: "This target cannot be run"
+build.and.resync.action.text:
+    text: "Generate sources and resync project"
+buildifier.configurable.display.name:
+    text: "Buildifier Settings"
+buildifier.executable.auto.detected.path:
+    text: "Auto-detected: {0}"
+buildifier.executable.label:
+    text: "Buildifier executable:"
+buildifier.executable.not.found:
+    text: "Unable to auto-detect buildifier executable in {0, choice, 0#%PATH%|1#$PATH}"
+buildifier.executable.not.found.brief:
+    text: "Buildifier not found"
+buildifier.formatted.ignored:
+    text: "Document formatting has been ignored"
+buildifier.formatting.service.name:
+    text: "Starlark file"
+buildifier.run.error.message:
+    text: "Failed to run buildifier"
+buildifier.select.path.to.executable:
+    text: "Select Path to Executable"
+cancel.action.text:
+    text: "Stop"
+configurable.display.name.bazel.experimental.project.settings:
+    text: "Experimental Settings"
+console.task.apk.install.apk.not.found:
+    text: "APK {0} not found after build"
+console.task.apk.install.could.not.get.apk:
+    text: "Could not get the APK path of the target. Try to resync the project."
+console.task.apk.install.could.not.get.application.id:
+    text: "Could not get applicationId"
+console.task.apply.changes.on.target.utils.message:
+    text: "Apply changes to the internal targets model"
+console.task.build.in.progress.many:
+    text: "Building {0} targets..."
+console.task.build.in.progress.one:
+    text: "Building {0}..."
+console.task.build.no.targets:
+    text: "No targets to build. Skipping."
+console.task.build.title:
+    text: "Build"
+console.task.copy.plugin.to.sandbox:
+    text: "Copy plugin to sandbox"
+console.task.exception.cancellation:
+    text: "Cancelled"
+console.task.exception.copy.plugin.to.sandbox:
+    text: "Could not copy plugin to sandbox."
+console.task.exception.no.intellij.platform.plugin.sdk:
+    text: "Could not find an IntelliJ Platform Plugin SDK."
+console.task.exception.no.plugin.jars:
+    text: "No plugin jars found. Try to resync the project."
+console.task.exception.other:
+    text: "Failed"
+console.task.exception.plugin.jar.could.not.copy:
+    text: "Could not copy plugin jar {0} to sandbox {1}: {2}."
+console.task.exception.plugin.jar.not.found:
+    text: "Plugin jar {0} not found."
+console.task.exception.timed.out:
+    text: "Timed out"
+console.task.mobile.cannot.run.on.multiple.devices:
+    text: "Cannot run on multiple devices."
+console.task.mobile.install.in.progress:
+    text: "Running mobile-install..."
+console.task.mobile.install.in.progress.target:
+    text: "mobile-install for {0}..."
+console.task.mobile.install.title:
+    text: "mobile-install"
+console.task.mobile.install.waiting.for.target.device:
+    text: "Waiting for the target device to come online..."
+console.task.mobile.no.target.device:
+    text: "No target device found."
+console.task.model.add.android.fetched.sdks:
+    text: "Add fetched Android SDKs"
+console.task.model.add.fetched.jdks:
+    text: "Add fetched JDKs"
+console.task.model.add.go.support.in.targets:
+    text: "Add Go support in targets"
+console.task.model.add.scala.fetched.sdks:
+    text: "Add fetched Scala SDKs"
+console.task.model.apply.changes.attempt.0.1.failed:
+    text: "Applying changes to the workspace model failed (attempt {0}/{1})"
+console.task.model.apply.changes.attempt.0.fallback:
+    text: "Failed to fast-apply to the workspace model in {0} attempts, fallback to slower apply in WriteAction"
+console.task.model.apply.changes.wsm:
+    text: "[Bazel] Apply changes to the workspace model"
+console.task.model.calculate.add.go.fetched.sdk:
+    text: "Calculate and add fetched Go SDK"
+console.task.model.calculate.jdks.infos:
+    text: "Calculate all unique jdk infos"
+console.task.model.calculate.scala.sdk.infos:
+    text: "Calculate all scala sdk infos"
+console.task.model.collect:
+    text: "Collect model"
+console.task.model.go.importer:
+    text: "Go importer"
+console.task.run.cancelled:
+    text: "Run cancelled."
+console.task.status.cancelled:
+    text: "Cancelled."
+console.task.status.error:
+    text: "Ended with an error."
+console.task.status.ok:
+    text: "Successfully completed."
+console.task.status.other:
+    text: "Finished."
+console.task.sync.import.fail:
+    text: "File not found: {0} referenced in {1} does not exist. Use try_import to import files optionally"
+console.tasks.test.framework.name:
+    text: "Bazel"
+console.tasks.title:
+    text: "{0}: {1}"
+coverage.bazel.loading.failed.invalid.suite:
+    text: "Cannot load Bazel coverage data: incompatible coverage suite"
+coverage.bazel.loading.failed.no.files:
+    text: "Cannot load Bazel coverage data: no coverage files found in {0}"
+coverage.bazel.loading.progress:
+    text: "Loading Bazel coverage data"
+coverage.bazel.presentable.text:
+    text: "Bazel Coverage"
+coverage.go.report.malformed.line:
+    text: "Unexpected Go coverage line format: {0}"
+coverage.go.report.path.collision:
+    text: "Multiple Go sources map to coverage path {0}: {1} and {2}"
+coverage.go.report.unresolved.file:
+    text: "Cannot resolve Go coverage source file: {0}"
+coverage.lcov.report.empty:
+    text: "No LCOV coverage data found in {0}"
+coverage.lcov.report.failed:
+    text: "Cannot read LCOV coverage report {0}"
+debug.editor.label:
+    text: "Debug port"
+editor.action.copy.target.id:
+    text: "Copy Target Label"
+error.message.failed.to.resolve.sources.0:
+    text: "Failed to resolve sources for targets: {0} Please verify if they were correctly generated"
+file.change.processing.message.cancelled:
+    text: "Processing cancelled"
+file.change.processing.message.failed:
+    text: "Processing failed"
+file.change.processing.message.finish:
+    text: "Processing finished"
+file.change.processing.message.start:
+    text: "Processing..."
+file.change.processing.step.commit:
+    text: "Committing file changes"
+file.change.processing.step.query:
+    text: "Querying Bazel"
+file.change.processing.step.update:
+    text: "Updating model"
+file.change.processing.title:
+    text: "Processing file changes"
+findusages.starlark.code.usages:
+    text: "Usage in code"
+findusages.starlark.load.usages:
+    text: "Usage in load statement"
+go.debug.prepare.failed.reason.read.script:
+    text: "Unable to read the script"
+go.debug.prepare.failed.reason.runfile.manifest.only:
+    text: "Runfiles are manifest-only. Please enable symlink support by adding the following lines to your .bazelrc file: startup --windows_enable_symlinks build --enable_runfiles Refer to the online documentation for Using Bazel on Windows: https://bazel.build/configure/windows"
+go.debug.prepare.failed.reason.unexpected.error:
+    text: "Unexpected error occurred"
+go.debug.prepare.failed.reason.unexpected.script.content:
+    text: "Unexpected script content"
+go.debug.prepare.failed.title:
+    text: "Failed to prepare {0} for debugging"
+go.debug.progress.manager.preparing.process.title:
+    text: "Preparing Go Application Running State"
+go.runner.wrong.configuration:
+    text: "Couldn't get BSP target from run configuration"
+go.test.handler.error.target.missing.from.config:
+    text: "Couldn't get target from run configuration"
+hotswap.error.parsing.jars:
+    text: "Error parsing runtime jars"
+hotswap.error.reading.jars:
+    text: "Error reading runtime jars"
+hotswap.missing.file.inside.jar:
+    text: "Couldn''t find class file {0} inside jar {1}."
+inspection.configurator.bazel.commandline.description:
+    text: "Bsp Command Line Inspection"
+inspection.description.bazel.version:
+    text: "New Bazel version available: {0}"
+inspection.display.name.bazel.version.check:
+    text: "Bazel Version Check"
+inspection.display.name.starlark.assignment.arity.mismatch.check:
+    text: "Assignment Arity Mismatch Check"
+inspection.display.name.starlark.binding.conflict.check:
+    text: "Top Level Binding Conflict Check"
+inspection.display.name.starlark.collection.mutation.during.iteration.check:
+    text: "Collection Mutation During Iteration Check"
+inspection.display.name.starlark.control.flow.context.check:
+    text: "Control Flow Context Check"
+inspection.display.name.starlark.frozen.loaded.value.mutation.check:
+    text: "Frozen Loaded Value Mutation Check"
+inspection.display.name.starlark.function.call.validation.check:
+    text: "Function Call Arguments Validation Check"
+inspection.display.name.starlark.function.declaration.check:
+    text: "Function Declaration Check"
+inspection.display.name.starlark.function.parameter.validation.check:
+    text: "Function Parameter Validation Check"
+inspection.display.name.starlark.invalid.assignment.target.check:
+    text: "Invalid Assignment Target Check"
+inspection.display.name.starlark.invalid.dict.key.check:
+    text: "Invalid Dictionary Key Check"
+inspection.display.name.starlark.load.cycle.check:
+    text: "Load Cycle Check"
+inspection.display.name.starlark.load.parameters.check:
+    text: "Load Parameters Check"
+inspection.display.name.starlark.load.placement.check:
+    text: "Load Placement Check"
+inspection.display.name.starlark.load.private.symbol.check:
+    text: "Load Private Symbol Check"
+inspection.display.name.starlark.recursion.check:
+    text: "Recursion Check"
+inspection.display.name.starlark.statement.container.placement.check:
+    text: "Statement Container Placement Check"
+inspection.display.name.starlark.unsupported.syntax.check:
+    text: "Unsupported Syntax Check"
+inspection.display.name.starlark.variable.usage.check:
+    text: "Variable Usage Check"
+notification.unresolved.imports:
+    text: "Unresolved imports detected"
+notificationGroup.Bazel.title:
+    text: "Bazel"
+notificationGroup.BazelPlugin.title:
+    text: "Bazel Plugin"
+notificationGroup.BazelSlowPlugins.title:
+    text: "Bazel slow plugins warning"
+path.validation.cannot.execute:
+    text: "Cannot execute {0}"
+path.validation.ends.with.whitespace:
+    text: "Path must not end with a whitespace"
+path.validation.file.not.found:
+    text: "File {0} is not found"
+path.validation.inaccessible:
+    text: "Path is inaccessible"
+path.validation.invalid:
+    text: "Path is invalid: {0}"
+path.validation.must.be.absolute:
+    text: "Path must be absolute"
+plugin.runner.idea.product.null:
+    text: "IDEA product info is null"
+post.startup.activity.id.enable.k2.compiler:
+    text: "Enable K2 Compiler Mode with Bazel"
+progress.bar.calculate.android.sdk.infos:
+    text: "Calculating all unique Android SDK infos"
+progress.bar.calculate.go.sdk.infos:
+    text: "Calculating all unique Go SDK infos"
+progress.bar.calculate.jdk.infos:
+    text: "Calculating all unique JDK infos"
+progress.bar.collect.project.details:
+    text: "Collecting project details"
+progress.bar.update.internal.model:
+    text: "Updating internal model"
+progress.reporter.calculating.scala.sdk.info:
+    text: "Calculating all unique scala sdk infos"
+project.base.path.not.found:
+    text: "Unable to find the project's base path"
+project.configurable.display.name.bazel:
+    text: "Bazel"
+project.settings.buildifier.label:
+    text: "Buildifier Executable Path:"
+project.settings.buildifier.placeholder:
+    text: "Auto-detected: {0}"
+project.settings.buildifier.revert.tooltip:
+    text: "Use auto-detected path"
+project.settings.display.name:
+    text: "Bazel"
+project.settings.experimental.settings:
+    text: "Experimental Settings"
+project.settings.general.settings:
+    text: "General Settings"
+project.settings.plugin.enable.kotlin.coroutine.debug.checkbox.text:
+    text: "Enable Kotlin coroutine debug"
+project.settings.plugin.hotswap.enabled.checkbox.help.text:
+    text: "If enabled, hotswap will be available for Java/Kotlin during debugging executable Bazel targets."
+project.settings.plugin.hotswap.enabled.checkbox.text:
+    text: "Enable HotSwap for Java/Kotlin"
+project.settings.plugin.run.buildifier.on.save.checkbox.text:
+    text: "Run buildifier on file save"
+project.settings.plugin.title:
+    text: "Plugin Settings"
+project.settings.project.view.label:
+    text: "Project View Path:"
+project.view.import.unresolved:
+    text: "Imported project view ''{0}'' does not exist. Please provide the file or use ''try_import'' for optional imports."
+project.view.tree.project.view.file.hint:
+    text: "selected"
+project.view.validate.subtask:
+    text: "Validate project view"
+python.debug.error.build.failed:
+    text: "Failed to build Python debug target {0}: {1}"
+python.debug.error.no.id:
+    text: "Failed to get build target ID"
+python.debug.error.no.sdk:
+    text: "Python SDK for target {0} failed to be resolved"
+python.debug.error.other:
+    text: "Unable to start Python debugging for target {0}"
+python.debug.error.wrong.state:
+    text: "PythonBspDebugRunner was used with an unsupported state type"
+quickfix.bazel.version:
+    text: "Update version"
+quickfix.bazelrc.delete.noop.flag.declaration:
+    text: "Delete NO_OP flag declarations"
+quickfix.bazelrc.delete.noop.flag.presentation:
+    text: "Delete NO_OP flag use"
+quickfix.bazelrc.rename.flag.description:
+    text: "Replace old flag names with new ones."
+quickfix.bazelrc.rename.flag.presentation:
+    text: "Replace with {0} variant"
+rebuild.action.text:
+    text: "Rebuild previous target(s)"
+resync.action.text:
+    text: "Resync project"
+resync.directories.action.text:
+    text: "Resync {0,plural,one{Directory}other{Directories}}"
+resync.files.action.text:
+    text: "Resync {0,plural,one{File}other{Files}}"
+resync.files.and.directories.action.text:
+    text: "Resync Selected Files and Directories"
+resync.targets.action.text:
+    text: "Resync {0,plural,one{Target}other{Targets}}"
+runconfig.bazel.errors.multiple.platform.targets:
+    text: "Currently, the Bazel plugin does not support running multiple targets from different platforms. Detected: {0}"
+runconfig.bazel.errors.no.targets:
+    text: "No targets to run"
+runconfig.bazel.errors.target.not.executable:
+    text: "Target ''{0}'' found, but it is not executable"
+runconfig.bazel.errors.target.not.found:
+    text: "Target ''{0}'' not found. If the target exists, make sure that it is included in the project view file."
+runconfig.bazel.errors.target.not.supported:
+    text: "Executable target ''{0}'' found, but running it is not supported by the Bazel plugin"
+runconfig.bazel.flags:
+    text: "Bazel flags"
+runconfig.bazel.warnings.bazel.flags:
+    text: "Adding Bazel flags may invalidate Bazel caches. Prefer configuring them in .bazelrc or .bazelproject"
+runconfig.bazel.warnings.env.vars:
+    text: "Adding environment variables may invalidate Bazel caches. Uncheck \"Run with Bazel\" to prevent it."
+runconfig.coverage.group:
+    text: "Code Coverage with Bazel"
+runconfig.coverage.instrumentation.filter:
+    text: "Instrumentation filter"
+runconfig.coverage.instrumentation.filter.empty.text:
+    text: "^//my/package[/:]"
+runconfig.coverage.instrumentation.filter.hint:
+    text: "<html>If empty, Bazel falls back to its own filter, which can give an empty report.<br>Set your own filter here or in <code>.bazelrc</code> to get more precise coverage reports.</html>"
+runconfig.coverage.name:
+    text: "Code coverage with Bazel"
+runconfig.header:
+    text: "Run/Test"
+runconfig.name.and.location:
+    text: "{0} ({1})"
+runconfig.run.description:
+    text: "Run a target with {0}"
+runconfig.run.with.bazel:
+    text: "Run with Bazel"
+runconfig.run.with.bazel.hint:
+    text: "If enabled, will invoke Bazel for running. This means the Bazel lock is consumed, and run configurations can't run in parallel. This also means JVM languages don't get native IDEA coverage experience. The advantage is that Bazel test result caching and/or Remote build execution (RBE) can be used. Note: this setting is ignored when debugging/profiling. Also see: run_config_run_with_bazel section in the project view."
+runconfig.synthetic:
+    text: "{0} (synthetic)"
+runconfig.targets.action.hint:
+    text: "Specify the targets to run."
+runconfig.targets.group:
+    text: "Bazel"
+runconfig.targets.hint:
+    text: "Specify all the targets to run separated by space. Each target must be executable!"
+runconfig.targets.name:
+    text: "Targets to run"
+settings.editor.label.test.filter:
+    text: "Test filter"
+sources.attach.action.text:
+    text: "Attach sources from bazel"
+sources.files.not.resolved:
+    text: "Bazel sources not available"
+sources.pending.text:
+    text: "Attaching sources in progress..."
+starlark.debug.action.name:
+    text: "Starlark Debug"
+starlark.debug.breakpoint.type.title:
+    text: "Starlark Line Breakpoints"
+starlark.debug.config.target.label:
+    text: "Target:"
+starlark.debug.config.template:
+    text: "Starlark debug {0}"
+starlark.debug.config.type.description:
+    text: "Remote Starlark debug"
+starlark.debug.config.type.name:
+    text: "Remote Starlark Debug"
+starlark.debug.connecting.progress.name:
+    text: "Connecting to the debugger"
+starlark.debug.exception.cancellation:
+    text: "Debug session was cancelled"
+starlark.debug.exception.connect:
+    text: "Unable to connect to debug server (manual Bazel restart may be necessary)"
+starlark.debug.not.top.frame:
+    text: "Expression evaluation can only be used on the top stack frame"
+starlark.debug.task.title:
+    text: "Debugging Starlark analysis"
+starlark.debug.value.obtain.failed:
+    text: "Failed to get a result"
+starlark.inspection.group.name:
+    text: "Starlark"
+state.android.use.mobile.install.name:
+    text: "Use mobile-install"
+state.bazel.intellij.sdk:
+    text: "IntelliJ SDK"
+sync.status.unsynced.source.file.banner.resync.file:
+    text: "Resync file"
+sync.status.unsynced.source.file.hint:
+    text: "(not in sync scope)"
+sync.status.unsynced.source.file.notification:
+    text: "The source file is not in the current sync scope, please modify the project view file or BUILD file to sync it."
+tool.window.generic.config.file:
+    text: "project view file"
+widget.build.target.popup.message:
+    text: "Build Target"
+widget.config.file.popup.message:
+    text: "Open {0} in editor"
+widget.copy.target.id:
+    text: "Copy Target Label"
+widget.factory.display.name:
+    text: "File Targets"
+widget.fastbuild.completed.description:
+    text: "Hotswap completed without errors"
+widget.fastbuild.completed.title:
+    text: "Hotswap successful"
+widget.fastbuild.error.missing.path:
+    text: "Missing bazelBinPath. Try to resync the project."
+widget.fastbuild.error.no.targets:
+    text: "Unable to determine build targets for files. Try to resync the project."
+widget.fastbuild.error.null.bazel.exec.path:
+    text: "bazelExecPath is null. Try to resync the project."
+widget.fastbuild.error.null.jvm.toolchain:
+    text: "jvmToolchainInfo is null. Try to resync the project."
+widget.fastbuild.error.params.not.found:
+    text: "Params file not found for fast compile. Falling back to bazel build."
+widget.fastbuild.error.recompile:
+    text: "Recompile"
+widget.fastbuild.error.title:
+    text: "Hotswap failed"
+widget.fastbuild.error.wrong.canonical.path:
+    text: "Hotswap failed with errors: {0} is not under workspace root {1}."
+widget.fastbuild.hotswaping:
+    text: "Hotswapping"
+widget.fastbuild.recompile:
+    text: "Recompile"
+widget.filter.action.group:
+    text: "Filter Targets"
+widget.filter.can.run:
+    text: "Show runnable targets"
+widget.filter.can.test:
+    text: "Show testable targets"
+widget.filter.turn.off:
+    text: "Show all targets"
+widget.new.bazel.package.popup.title:
+    text: "New Bazel Package"
+widget.no.renderable.component:
+    text: "\"[not renderable]\""
+widget.no.targets.message:
+    text: "No targets to show"
+widget.open.build.file:
+    text: "Jump to BUILD file"
+widget.project.tree.excluded.directories:
+    text: "Excluded Directories"
+widget.project.tree.unimported.directories:
+    text: "Unimported Directories"
+widget.project.tree.unimported.directories.tooltip:
+    text: "Directories not included as imported targets"
+widget.settings.popup.message:
+    text: "Open {0} settings"
+widget.side.menu.error.title:
+    text: "Error"
+widget.target.choose:
+    text: "Choose Target"
+widget.target.search.clear:
+    text: "Clear search query"
+widget.target.search.display.as.tree:
+    text: "Display search results as a tree"
+widget.target.search.hint:
+    text: "Search targets ({0})"
+widget.target.search.match.case:
+    text: "Match case ({0})"
+widget.target.search.no.results:
+    text: "No matching targets found"
+widget.target.search.regex:
+    text: "Search using regex ({0})"
+widget.title:
+    text: "Targets Available For The File"
+widget.tooltip.text.active:
+    text: "Check targets available for the file"
+widget.tooltip.text.inactive:
+    text: "Open a file to see available targets"

@@ -1,36 +1,63 @@
-package org.jetbrains.bazel.languages.starlark.completion.lookups
+package org.jetbrains.bazel.languages.starlark.completion.lookups;
 
-import com.intellij.codeInsight.completion.InsertionContext
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.codeInsight.lookup.LookupElementPresentation
-import org.jetbrains.bazel.languages.starlark.utils.StarlarkQuote
-import javax.swing.Icon
+import consulo.language.editor.completion.lookup.InsertionContext;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.editor.completion.lookup.LookupElementPresentation;
+import consulo.language.psi.PsiElement;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkQuote;
+import org.jspecify.annotations.Nullable;
 
-internal abstract class StarlarkLookupElement(val name: String, private val wrapping: StarlarkQuote = StarlarkQuote.UNQUOTED) : LookupElement() {
-  override fun getLookupString(): String = wrapping.wrap(name)
+public abstract class StarlarkLookupElement extends LookupElement {
+    private final String myName;
+    private final StarlarkQuote myWrapping;
 
-  override fun renderElement(presentation: LookupElementPresentation) {
-    presentation.itemText = name
-    presentation.icon = icon
-  }
-
-  override fun handleInsert(context: InsertionContext) {
-    if (wrapping == StarlarkQuote.UNQUOTED) {
-      super.handleInsert(context)
-      return
+    public StarlarkLookupElement(String name, StarlarkQuote wrapping) {
+        myName = name;
+        myWrapping = wrapping;
     }
 
-    adjustQuotation(context)
-    context.commitDocument()
-  }
-
-  private fun adjustQuotation(context: InsertionContext) {
-    val suffixElement = context.file.findElementAt(context.tailOffset) ?: return
-    if (suffixElement.text.startsWith(wrapping.quote)) {
-      val offset = suffixElement.textOffset
-      context.document.deleteString(offset, offset + wrapping.quote.length)
+    // consulo: overload for the upstream default argument (wrapping = StarlarkQuote.UNQUOTED)
+    public StarlarkLookupElement(String name) {
+        this(name, StarlarkQuote.UNQUOTED);
     }
-  }
 
-  abstract val icon: Icon?
+    public String getName() {
+        return myName;
+    }
+
+    @Override
+    public String getLookupString() {
+        return myWrapping.wrap(myName);
+    }
+
+    @Override
+    public void renderElement(LookupElementPresentation presentation) {
+        presentation.setItemText(myName);
+        presentation.setIcon(getIcon());
+    }
+
+    @Override
+    public void handleInsert(InsertionContext context) {
+        if (myWrapping == StarlarkQuote.UNQUOTED) {
+            super.handleInsert(context);
+            return;
+        }
+
+        adjustQuotation(context);
+        context.commitDocument();
+    }
+
+    private void adjustQuotation(InsertionContext context) {
+        PsiElement suffixElement = context.getFile().findElementAt(context.getTailOffset());
+        if (suffixElement == null) {
+            return;
+        }
+        if (suffixElement.getText().startsWith(myWrapping.getQuote())) {
+            int offset = suffixElement.getTextOffset();
+            context.getDocument().deleteString(offset, offset + myWrapping.getQuote().length());
+        }
+    }
+
+    public abstract @Nullable Image getIcon();
 }

@@ -1,18 +1,19 @@
-package org.jetbrains.bazel.startup.utils
+package org.jetbrains.bazel.startup.utils;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.startup.ProjectActivity
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
+import consulo.project.Project;
+import consulo.project.startup.PostStartupActivity;
+import consulo.ui.UIAccess;
+
+import java.util.concurrent.CompletableFuture;
 
 // todo to be removed
-@ApiStatus.Internal
-abstract class BazelProjectActivity : ProjectActivity {
-  final override suspend fun execute(project: Project) {
-    if (project.isBazelProject) {
-      executeForBazelProject(project)
+public abstract class BazelProjectActivity implements PostStartupActivity {
+    @Override
+    public final void runActivity(Project project, UIAccess uiAccess) {
+        if (org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            executeForBazelProject(project);
+        }
     }
-  }
 
-  abstract suspend fun executeForBazelProject(project: Project)
+    public abstract CompletableFuture<?> executeForBazelProject(Project project);
 }

@@ -1,50 +1,64 @@
-package org.jetbrains.bazel.run.synthetic
+package org.jetbrains.bazel.run.synthetic;
 
-import com.intellij.openapi.application.ReadAction
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
+import consulo.application.ReadAction;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-abstract class MainClassSyntheticRunTargetTemplateGenerator : SyntheticRunTargetTemplateGenerator {
-  private val DEFAULT_TARGET_NAME = "synthetic_binary"
+public abstract class MainClassSyntheticRunTargetTemplateGenerator implements SyntheticRunTargetTemplateGenerator {
+    private static final String DEFAULT_TARGET_NAME = "synthetic_binary";
 
-  override fun isSupported(target: BuildTarget): Boolean = true
+    @Override
+    public boolean isSupported(BuildTarget target) {
+        return true;
+    }
 
-  override fun getSyntheticTargetLabel(original: BuildTarget, element: PsiElement): Label {
-    val mainClass = element.getMainClassInternal() ?: error("failed to get main class")
-    val pkg = getTargetPath(original, mainClass)
-    return SyntheticRunTargetUtils.getSyntheticTargetLabel(packageParts = pkg, targetName = DEFAULT_TARGET_NAME)
-  }
+    @Override
+    public Label getSyntheticTargetLabel(BuildTarget original, PsiElement element) {
+        String mainClass = getMainClassInternal(element);
+        if (mainClass == null) {
+            throw new IllegalStateException("failed to get main class");
+        }
+        String[] pkg = getTargetPath(original, mainClass);
+        return SyntheticRunTargetUtils.getSyntheticTargetLabel(/* packageParts = */ pkg, /* targetName = */ DEFAULT_TARGET_NAME);
+    }
 
-  override fun getSyntheticParams(target: BuildTarget, element: PsiElement): SyntheticRunTargetTemplateGenerator.Params {
-    val mainClass = element.getMainClassInternal() ?: error("failed to get main class")
-    return SyntheticRunTargetTemplateGenerator.Params(mainClass)
-  }
+    @Override
+    public SyntheticRunTargetTemplateGenerator.Params getSyntheticParams(BuildTarget target, PsiElement element) {
+        String mainClass = getMainClassInternal(element);
+        if (mainClass == null) {
+            throw new IllegalStateException("failed to get main class");
+        }
+        return new SyntheticRunTargetTemplateGenerator.Params(mainClass);
+    }
 
-  override fun createSyntheticTemplate(
-    target: BuildTarget,
-    params: SyntheticRunTargetTemplateGenerator.Params,
-  ): SyntheticRunTargetTemplate {
-    val mainClass = params.data ?: error("failed to get main class")
-    val build = getBuildContent(target, DEFAULT_TARGET_NAME, mainClass)
-    val pkg = getTargetPath(target, mainClass)
-    return SyntheticRunTargetTemplate(buildFileContent = build, buildFilePath = pkg.joinToString("/"))
-  }
+    @Override
+    public SyntheticRunTargetTemplate createSyntheticTemplate(
+        BuildTarget target,
+        SyntheticRunTargetTemplateGenerator.Params params
+    ) {
+        String mainClass = params.data();
+        if (mainClass == null) {
+            throw new IllegalStateException("failed to get main class");
+        }
+        String build = getBuildContent(target, DEFAULT_TARGET_NAME, mainClass);
+        String[] pkg = getTargetPath(target, mainClass);
+        return new SyntheticRunTargetTemplate(/* buildFileContent = */ build, /* buildFilePath = */ String.join("/", pkg));
+    }
 
-  fun getTargetPath(original: BuildTarget, mainClass: String): Array<String> {
-    return arrayOf(
-      SyntheticRunTargetUtils.escapeTargetLabel(original.id.toString()),
-      SyntheticRunTargetUtils.escapeTargetLabel(mainClass),
-    )
-  }
+    public String[] getTargetPath(BuildTarget original, String mainClass) {
+        return new String[]{
+            SyntheticRunTargetUtils.escapeTargetLabel(BuildTarget.getId(original).toString()),
+            SyntheticRunTargetUtils.escapeTargetLabel(mainClass),
+        };
+    }
 
-  fun PsiElement.getMainClassInternal(): String? = ReadAction.compute<String?, Throwable> {
-    return@compute getMainClass(this@getMainClassInternal)
-  }
+    public @Nullable String getMainClassInternal(PsiElement receiver) {
+        return ReadAction.<@Nullable String, RuntimeException>compute(() -> getMainClass(receiver));
+    }
 
-  protected abstract fun getMainClass(element: PsiElement): String?
-  protected abstract fun getBuildContent(target: BuildTarget, syntheticTarget: String, mainClass: String): String
+    protected abstract @Nullable String getMainClass(PsiElement element);
+
+    protected abstract String getBuildContent(BuildTarget target, String syntheticTarget, String mainClass);
 }

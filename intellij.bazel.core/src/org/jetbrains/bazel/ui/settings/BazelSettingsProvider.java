@@ -1,28 +1,66 @@
-package org.jetbrains.bazel.ui.settings
+package org.jetbrains.bazel.ui.settings;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.options.UnnamedConfigurable
-import com.intellij.openapi.project.Project
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.configurable.UnnamedConfigurable;
+import consulo.project.Project;
 
-internal interface BazelSettingsProvider {
-  fun createConfigurable(project: Project): UnnamedConfigurable
+import java.util.List;
 
-  fun searchIndexKeys(): List<String>
+// consulo: upstream registers this interface as two extension points (bazelExperimentalSettingsProvider and
+// bazelGeneralSettingsProvider); Consulo has one extension point per interface, isExperimental() selects the list
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelSettingsProvider {
+    UnnamedConfigurable createConfigurable(Project project);
+
+    List<String> searchIndexKeys();
+
+    /**
+     * consulo: {@code true} - upstream extension point {@code org.jetbrains.bazel.bazelExperimentalSettingsProvider},
+     * {@code false} - upstream extension point {@code org.jetbrains.bazel.bazelGeneralSettingsProvider}
+     */
+    default boolean isExperimental() {
+        return false;
+    }
+
+    static List<BazelSettingsProvider> getBazelExperimentalSettingsProviders(Project receiver) {
+        return BazelExperimentalSettingsProvider.getExtensionList();
+    }
+
+    static List<BazelSettingsProvider> getBazelGeneralSettingsProviders(Project receiver) {
+        return BazelGeneralSettingsProvider.getExtensionList();
+    }
 }
 
-internal object BazelExperimentalSettingsProvider {
-  val ep = ExtensionPointName.create<BazelSettingsProvider>("org.jetbrains.bazel.bazelExperimentalSettingsProvider")
+final class BazelExperimentalSettingsProvider {
+    private BazelExperimentalSettingsProvider() {
+    }
 
-  fun searchIndexKeys(): List<String> = ep.extensionList.flatMap { it.searchIndexKeys() }
+    // consulo: upstream ep.extensionList
+    static List<BazelSettingsProvider> getExtensionList() {
+        return Application.get().getExtensionList(BazelSettingsProvider.class).stream()
+            .filter(BazelSettingsProvider::isExperimental)
+            .toList();
+    }
+
+    static List<String> searchIndexKeys() {
+        return getExtensionList().stream().flatMap(it -> it.searchIndexKeys().stream()).toList();
+    }
 }
 
-internal object BazelGeneralSettingsProvider {
-  val ep = ExtensionPointName.create<BazelSettingsProvider>("org.jetbrains.bazel.bazelGeneralSettingsProvider")
+final class BazelGeneralSettingsProvider {
+    private BazelGeneralSettingsProvider() {
+    }
 
-  fun searchIndexKeys(): List<String> = ep.extensionList.flatMap { it.searchIndexKeys() }
+    // consulo: upstream ep.extensionList
+    static List<BazelSettingsProvider> getExtensionList() {
+        return Application.get().getExtensionList(BazelSettingsProvider.class).stream()
+            .filter(it -> !it.isExperimental())
+            .toList();
+    }
+
+    static List<String> searchIndexKeys() {
+        return getExtensionList().stream().flatMap(it -> it.searchIndexKeys().stream()).toList();
+    }
 }
-
-internal val Project.bazelExperimentalSettingsProviders: List<BazelSettingsProvider>
-  get() = BazelExperimentalSettingsProvider.ep.extensionList
-internal val Project.bazelGeneralSettingsProviders: List<BazelSettingsProvider>
-  get() = BazelGeneralSettingsProvider.ep.extensionList

@@ -1,12 +1,20 @@
-package org.jetbrains.bazel.ui.widgets.fileTargets
+package org.jetbrains.bazel.ui.widgets.fileTargets;
 
-import org.jetbrains.bazel.sync.ProjectPostSyncHook
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.sync.ProjectPostSyncHook;
+
+import java.util.concurrent.CompletableFuture;
 
 /**
  * A sync hook that updates the BazelFileTargetsWidget when a sync event occurs.
  */
-private class BazelFileTargetsWidgetSyncHook : ProjectPostSyncHook {
-  override suspend fun onPostSync(environment: ProjectPostSyncHook.ProjectPostSyncHookEnvironment) {
-    updateBazelFileTargetsWidget(environment.project)
-  }
+@ExtensionImpl
+class BazelFileTargetsWidgetSyncHook implements ProjectPostSyncHook {
+    public BazelFileTargetsWidgetSyncHook() {
+    }
+
+    @Override
+    public CompletableFuture<Void> onPostSync(ProjectPostSyncHookEnvironment environment) {
+        return BazelFileTargetsWidget.updateBazelFileTargetsWidget(environment.project());
+    }
 }

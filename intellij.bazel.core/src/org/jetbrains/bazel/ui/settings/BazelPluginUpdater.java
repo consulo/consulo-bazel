@@ -1,60 +1,69 @@
-package org.jetbrains.bazel.ui.settings
+package org.jetbrains.bazel.ui.settings;
 
-import com.intellij.ide.plugins.IdeaPluginDescriptorImpl
-import com.intellij.ide.plugins.PluginMainDescriptor
-import com.intellij.ide.plugins.PluginManagerCore
-import com.intellij.openapi.extensions.PluginId
-import com.intellij.openapi.updateSettings.impl.UpdateChecker
-import com.intellij.openapi.updateSettings.impl.UpdateSettings
-import org.jetbrains.annotations.ApiStatus
+import consulo.container.plugin.PluginDescriptor;
+import consulo.container.plugin.PluginId;
+import consulo.container.plugin.PluginManager;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-const val BAZEL_PLUGIN_ID: String = "org.jetbrains.bazel"
+// TODO consulo: UpdateChecker, UpdateSettings.storedPluginHosts and IdeaPluginDescriptorImpl/PluginMainDescriptor
+//  (JetBrains Marketplace plugin hosts) are missing, switching the update channel does not change the plugin repository
+public final class BazelPluginUpdater {
+    public static final String BAZEL_PLUGIN_ID = "org.jetbrains.bazel";
 
-@Suppress("UnstableApiUsage")
-@ApiStatus.Internal
-object BazelPluginUpdater {
-  fun updatePlugins() {
-    UpdateChecker.updateAndShowResult(null, UpdateSettings.getInstance())
-  }
-
-  internal fun updatePluginsHost(newUpdateChannel: UpdateChannel) {
-    val currentUpdateChannel = BazelApplicationSettingsService.getInstance().settings.updateChannel
-    updatePluginHost(newUpdateChannel, currentUpdateChannel)
-  }
-
-  private fun updatePluginHost(newUpdateChannel: UpdateChannel, currentUpdateChannel: UpdateChannel) {
-    if (newUpdateChannel == currentUpdateChannel) return
-    // go from a presumably higher version (e.g., nightly) to a smaller version (e.g., release)
-    if (newUpdateChannel < currentUpdateChannel) {
-      getPluginDescriptorForId(BAZEL_PLUGIN_ID)?.let { patchPluginVersion("0.0.0", it) }
+    private BazelPluginUpdater() {
     }
-    val updateSettings = UpdateSettings.getInstance()
-    val nightlyRepo = UpdateChannel.NIGHTLY.getPluginUrlFromId(BAZEL_PLUGIN_ID)
-    updateSettings.storedPluginHosts.remove(nightlyRepo)
 
-    when (newUpdateChannel) {
-      UpdateChannel.NIGHTLY -> updateSettings.storedPluginHosts.add(nightlyRepo)
-      else -> {}
+    public static void updatePlugins() {
+        // TODO consulo: UpdateChecker is missing
+        //UpdateChecker.updateAndShowResult(null, UpdateSettings.getInstance())
     }
-  }
 
-  /**
-   * This function is used to force-downgrade a plugin version
-   */
-  fun patchPluginVersion(newVersion: String, descriptor: IdeaPluginDescriptorImpl) {
-    if (descriptor !is PluginMainDescriptor) throw IllegalArgumentException("Unsupported descriptor type: ${descriptor.javaClass.name}")
-
-    val versionField = PluginMainDescriptor::class.java.getDeclaredField("version")
-    try {
-      versionField.setAccessible(true)
-      versionField.set(descriptor, newVersion)
+    static void updatePluginsHost(UpdateChannel newUpdateChannel) {
+        UpdateChannel currentUpdateChannel = BazelApplicationSettingsService.getInstance().getSettings().getUpdateChannel();
+        updatePluginHost(newUpdateChannel, currentUpdateChannel);
     }
-    finally {
-      versionField.setAccessible(false)
-    }
-  }
 
-  fun getPluginDescriptorForId(id: String): IdeaPluginDescriptorImpl? =
-    PluginManagerCore.getPlugin(PluginId.getId(id)) as? IdeaPluginDescriptorImpl
+    private static void updatePluginHost(UpdateChannel newUpdateChannel, UpdateChannel currentUpdateChannel) {
+        if (newUpdateChannel == currentUpdateChannel) {
+            return;
+        }
+        // go from a presumably higher version (e.g., nightly) to a smaller version (e.g., release)
+        if (newUpdateChannel.compareTo(currentUpdateChannel) < 0) {
+            PluginDescriptor descriptor = getPluginDescriptorForId(BAZEL_PLUGIN_ID);
+            if (descriptor != null) {
+                patchPluginVersion("0.0.0", descriptor);
+            }
+        }
+        // TODO consulo: UpdateSettings.storedPluginHosts is missing
+        //val updateSettings = UpdateSettings.getInstance()
+        //val nightlyRepo = UpdateChannel.NIGHTLY.getPluginUrlFromId(BAZEL_PLUGIN_ID)
+        //updateSettings.storedPluginHosts.remove(nightlyRepo)
+        //
+        //when (newUpdateChannel) {
+        //  UpdateChannel.NIGHTLY -> updateSettings.storedPluginHosts.add(nightlyRepo)
+        //  else -> {}
+        //}
+    }
+
+    /**
+     * This function is used to force-downgrade a plugin version
+     */
+    public static void patchPluginVersion(String newVersion, PluginDescriptor descriptor) {
+        // TODO consulo: PluginMainDescriptor (version field patched by reflection) is missing
+        //if (descriptor !is PluginMainDescriptor)
+        //  throw IllegalArgumentException("Unsupported descriptor type: ${descriptor.javaClass.name}")
+        //
+        //val versionField = PluginMainDescriptor::class.java.getDeclaredField("version")
+        //try {
+        //  versionField.setAccessible(true)
+        //  versionField.set(descriptor, newVersion)
+        //}
+        //finally {
+        //  versionField.setAccessible(false)
+        //}
+    }
+
+    public static @Nullable PluginDescriptor getPluginDescriptorForId(String id) {
+        return PluginManager.findPlugin(PluginId.getId(id));
+    }
 }

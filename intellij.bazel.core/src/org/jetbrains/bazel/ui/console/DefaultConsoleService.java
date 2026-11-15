@@ -1,33 +1,46 @@
-package org.jetbrains.bazel.ui.console
+package org.jetbrains.bazel.ui.console;
 
-import com.intellij.build.BuildViewManager
-import com.intellij.build.SyncViewManager
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.progress.ConsoleService
-import org.jetbrains.bazel.progress.TaskConsole
+import consulo.annotation.component.ServiceImpl;
+import consulo.build.ui.BuildViewManager;
+import consulo.build.ui.SyncViewManager;
+import consulo.project.Project;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.progress.ConsoleService;
+import org.jetbrains.bazel.progress.TaskConsole;
 
-@Service(Service.Level.PROJECT)
-internal class DefaultConsoleService(project: Project) : ConsoleService {
-  override val buildConsole: TaskConsole
+@ServiceImpl
+@Singleton
+public class DefaultConsoleService implements ConsoleService {
+    private final TaskConsole myBuildConsole;
 
-  override val syncConsole: TaskConsole
+    private final TaskConsole mySyncConsole;
 
-  init {
-    val basePath = project.rootDir.path
+    @Inject
+    public DefaultConsoleService(Project project, BuildViewManager buildViewManager, SyncViewManager syncViewManager) {
+        String basePath = org.jetbrains.bazel.config.project.getRootDir(project).getPath();
 
-    buildConsole =
-      BuildTaskConsole(
-        project.getService(BuildViewManager::class.java),
-        basePath,
-        project,
-      )
-    syncConsole =
-      SyncTaskConsole(
-        project.getService(SyncViewManager::class.java),
-        basePath,
-        project,
-      )
-  }
+        myBuildConsole =
+            new BuildTaskConsole(
+                buildViewManager,
+                basePath,
+                project
+            );
+        mySyncConsole =
+            new SyncTaskConsole(
+                syncViewManager,
+                basePath,
+                project
+            );
+    }
+
+    @Override
+    public TaskConsole getBuildConsole() {
+        return myBuildConsole;
+    }
+
+    @Override
+    public TaskConsole getSyncConsole() {
+        return mySyncConsole;
+    }
 }

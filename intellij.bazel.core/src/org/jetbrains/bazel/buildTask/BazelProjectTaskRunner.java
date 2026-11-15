@@ -1,105 +1,123 @@
-package org.jetbrains.bazel.buildTask
+package org.jetbrains.bazel.buildTask;
 
-import com.intellij.ide.trustedProjects.TrustedProjects
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import com.intellij.platform.workspace.jps.entities.ModuleEntity
-import com.intellij.task.ModuleBuildTask
-import com.intellij.task.ProjectTask
-import com.intellij.task.ProjectTaskContext
-import com.intellij.task.ProjectTaskManager
-import com.intellij.task.ProjectTaskRunner
-import com.intellij.task.TaskRunnerResults
-import com.intellij.task.impl.ProjectTaskList
-import com.intellij.workspaceModel.ide.legacyBridge.findModuleEntity
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.server.tasks.runBuildTargetTask
-import org.jetbrains.bazel.workspacemodel.entities.bazelModuleExtension
-import org.jetbrains.bazel.workspacemodel.entities.targetKey
-import org.jetbrains.concurrency.Promise
-import org.jetbrains.concurrency.toPromiseWithoutLogError
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.ReadAction;
+import consulo.build.ui.progress.BuildProgress;
+import consulo.build.ui.progress.BuildProgressDescriptor;
+import consulo.compiler.CompileContextEx;
+import consulo.compiler.CompileDriver;
+import consulo.compiler.CompilerManager;
+import consulo.compiler.CompilerRunner;
+import consulo.compiler.ExitException;
+import consulo.compiler.scope.CompileScope;
+import consulo.dataContext.DataContext;
+import consulo.localize.LocalizeValue;
+import consulo.module.Module;
+import consulo.project.Project;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.server.tasks.BuildTargetTask;
 
-internal class BazelProjectTaskRunner : ProjectTaskRunner() {
-  override fun canRun(project: Project, projectTask: ProjectTask, context: ProjectTaskContext?): Boolean =
-    project.isBazelProject &&
-    TrustedProjects.isProjectTrusted(project) &&
-    projectTask is ModuleBuildTask
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
-  override fun run(
-    project: Project,
-    projectTaskContext: ProjectTaskContext,
-    vararg tasks: ProjectTask,
-  ): Promise<Result> = BazelCoroutineService.getInstance(project).startAsync {
-    val targetsToBuild = obtainTargetsToBuild(project, tasks)
-    val additionalTasks = AdditionalProjectTaskRunnerProvider.ep.extensionList.mapNotNull {
-      it.createTask(project, projectTaskContext, targetsToBuild)
+// consulo: IntelliJ's ProjectTaskRunner (ModuleBuildTask) does not exist; "Build" goes through the Consulo compiler, so the
+// runner is a CompilerRunner that builds the targets of the affected modules. Trusted projects are not checked (no Consulo API).
+// AdditionalProjectTaskRunnerProvider, AdditionalProjectTask, TargetsToBuildProvider and DefaultTargetsToBuildProvider,
+// declared in this upstream file, have their own files.
+@ExtensionImpl
+public class BazelProjectTaskRunner implements CompilerRunner {
+    @Override
+    public LocalizeValue getName() {
+        return LocalizeValue.of(org.jetbrains.bazel.config.BazelPluginConstants.BAZEL_DISPLAY_NAME);
     }
-    additionalTasks.forEach { it.preRun() }
-    val result = runBuildTargetTask(
-      targetsToBuild, project,
-      customRedoAction = {
-        // Rerun through ProjectTaskManager to make sure hotswap works
-        ProjectTaskManager.getInstance(project).run(ProjectTaskList(tasks.toList()))
-      },
-    )
-    additionalTasks.forEach { it.postRun(result) }
-    result.toTaskRunnerResult()
-  }.toPromiseWithoutLogError()
 
-  private fun obtainTargetsToBuild(project: Project, tasks: Array<out ProjectTask>): List<Label> {
-    val targetsToBuildProviders = TargetsToBuildProvider.ep.extensionList
-    return tasks.filterIsInstance<ModuleBuildTask>()
-      .mapNotNull { it.module.findModuleEntity() }
-      .flatMap { moduleEntity -> targetsToBuildProviders.flatMap { it.getTargetsToBuild(project, moduleEntity) } }
-  }
-
-  private fun BazelStatus.toTaskRunnerResult() =
-    when (this) {
-      BazelStatus.SUCCESS -> TaskRunnerResults.SUCCESS
-      BazelStatus.CANCEL -> TaskRunnerResults.ABORTED
-      else -> TaskRunnerResults.FAILURE
+    @RequiredReadAction
+    @Override
+    public Result checkAvailable(DataContext dataContext) {
+        Project project = dataContext.getData(Project.KEY);
+        return project != null && org.jetbrains.bazel.config.project.isBazelProject(project)
+            ? new YesResult(BazelPluginIcons.bazel())
+            : NO;
     }
-}
 
-/**
- * This extension is useful when there is a need to inject before and after actions with respect to the project task runner
- */
-@ApiStatus.Internal
-interface AdditionalProjectTaskRunnerProvider {
-  fun createTask(
-    project: Project,
-    projectTaskContext: ProjectTaskContext,
-    targetsToBuild: List<Label>,
-  ): AdditionalProjectTask?
+    @Override
+    public boolean build(
+        CompileDriver compileDriver,
+        CompileContextEx context,
+        BuildProgress<BuildProgressDescriptor> buildProgress,
+        boolean isRebuild,
+        boolean forceCompile,
+        boolean onlyCheckStatus
+    ) throws ExitException {
+        if (onlyCheckStatus) {
+            return true;
+        }
+        Project project = context.getProject();
+        CompileScope compileScope = context.getCompileScope();
+        BazelStatus status = run(project, context, compileScope).join();
+        return status == BazelStatus.SUCCESS;
+    }
 
-  companion object {
-    val ep: ExtensionPointName<AdditionalProjectTaskRunnerProvider> =
-      ExtensionPointName.create("org.jetbrains.bazel.additionalProjectTaskRunnerProvider")
-  }
-}
+    // consulo: upstream run(project, projectTaskContext, vararg tasks): Promise<Result>
+    private CompletableFuture<BazelStatus> run(
+        Project project,
+        CompileContextEx projectTaskContext,
+        CompileScope compileScope
+    ) {
+        return BazelCoroutineService.getInstance(project).startAsync(() -> {
+            List<Label> targetsToBuild = ReadAction.compute(() -> obtainTargetsToBuild(project, compileScope.getAffectedModules()));
+            List<AdditionalProjectTask> additionalTasks = new ArrayList<>();
+            for (AdditionalProjectTaskRunnerProvider provider : AdditionalProjectTaskRunnerProvider.getEp()) {
+                AdditionalProjectTask task = provider.createTask(project, projectTaskContext, targetsToBuild);
+                if (task != null) {
+                    additionalTasks.add(task);
+                }
+            }
+            CompletableFuture<?> preRun = CompletableFuture.completedFuture(null);
+            for (AdditionalProjectTask task : additionalTasks) {
+                preRun = preRun.thenCompose(unused -> task.preRun());
+            }
+            return preRun.thenCompose(unused -> BuildTargetTask.runBuildTargetTask(
+                targetsToBuild,
+                project,
+                false,
+                () -> {
+                    // Rerun through ProjectTaskManager to make sure hotswap works
+                    // consulo: the rerun goes through the Consulo compiler with the same scope
+                    return project.getUIAccess().giveAsync(() -> {
+                        CompilerManager.getInstance(project).make(compileScope, null);
+                    });
+                }
+            )).thenCompose(result -> {
+                CompletableFuture<?> postRun = CompletableFuture.completedFuture(null);
+                for (AdditionalProjectTask task : additionalTasks) {
+                    postRun = postRun.thenCompose(unused -> task.postRun(result));
+                }
+                return postRun.thenApply(unused -> result);
+            });
+        }).await();
+    }
 
-@ApiStatus.Internal
-interface AdditionalProjectTask {
-  suspend fun preRun()
-  suspend fun postRun(result: BazelStatus)
-}
+    private List<Label> obtainTargetsToBuild(Project project, Module[] modules) {
+        List<TargetsToBuildProvider> targetsToBuildProviders = TargetsToBuildProvider.getEp();
+        List<Label> result = new ArrayList<>();
+        for (Module module : modules) {
+            for (TargetsToBuildProvider provider : targetsToBuildProviders) {
+                result.addAll(provider.getTargetsToBuild(project, module));
+            }
+        }
+        return result;
+    }
 
-@ApiStatus.Internal
-interface TargetsToBuildProvider {
-  fun getTargetsToBuild(project: Project, moduleEntity: ModuleEntity): List<Label>
-
-  companion object {
-    val ep: ExtensionPointName<TargetsToBuildProvider> =
-      ExtensionPointName.create("org.jetbrains.bazel.targetsToBuildProvider")
-  }
-}
-
-internal class DefaultTargetsToBuildProvider : TargetsToBuildProvider {
-  override fun getTargetsToBuild(project: Project, moduleEntity: ModuleEntity): List<Label> {
-    return listOfNotNull(moduleEntity.bazelModuleExtension?.targetKey?.label)
-  }
+    // consulo: upstream BazelStatus.toTaskRunnerResult(); the Consulo compiler takes a boolean, see build()
+    @SuppressWarnings("unused")
+    private static boolean toTaskRunnerResult(BazelStatus receiver) {
+        return Objects.requireNonNull(receiver) == BazelStatus.SUCCESS;
+    }
 }

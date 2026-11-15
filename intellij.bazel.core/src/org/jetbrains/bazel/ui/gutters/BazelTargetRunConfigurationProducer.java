@@ -1,18 +1,25 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.psi.PsiElement
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelRunConfigurationFromTargetProducer : BazelRunConfigurationProducer() {
-  override fun getGutterAction(
-    element: PsiElement,
-    target: BuildTarget,
-  ): GutterAction? {
-    return if (element is PsiBazelTarget) {
-      GutterAction()
+@ExtensionImpl
+class BazelRunConfigurationFromTargetProducer extends BazelRunConfigurationProducer {
+    public BazelRunConfigurationFromTargetProducer() {
     }
-    else {
-      null
+
+    @Override
+    public @Nullable GutterAction getGutterAction(
+        PsiElement element,
+        BuildTarget target
+    ) {
+        if (element instanceof PsiBazelTarget) {
+            return new GutterAction();
+        }
+        else {
+            return null;
+        }
     }
-  }
 }

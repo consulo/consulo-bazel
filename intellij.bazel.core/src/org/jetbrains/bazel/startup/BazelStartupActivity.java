@@ -1,37 +1,27 @@
-package org.jetbrains.bazel.startup
+package org.jetbrains.bazel.startup;
 
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.externalSystem.service.project.manage.ExternalProjectsManagerImpl
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Key
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.workspaceModel.ide.impl.WorkspaceModelImpl
-import kotlinx.coroutines.flow.update
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.TestOnly
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.projectAware.BazelWorkspace
-import org.jetbrains.bazel.startup.utils.BazelProjectActivity
-import org.jetbrains.bazel.sync.ProjectDirtyStateService
-import org.jetbrains.bazel.sync.ProjectSyncScope
-import org.jetbrains.bazel.sync.ProjectSyncService
-import org.jetbrains.bazel.sync.workspace.snapshot.workspaceSnapshotOrNull
-import org.jetbrains.bazel.target.ModuleTargetService
-import org.jetbrains.bazel.target.TargetStorage
-import org.jetbrains.bazel.ui.settings.BazelApplicationSettingsService
-import org.jetbrains.bazel.ui.widgets.fileTargets.updateBazelFileTargetsWidget
-import kotlin.io.path.isDirectory
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.workspace.BazelProjectModelService;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.dataholder.Key;
+import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.projectAware.BazelWorkspace;
+import org.jetbrains.bazel.startup.utils.BazelProjectActivity;
+import org.jetbrains.bazel.sync.ProjectDirtyStateService;
+import org.jetbrains.bazel.sync.ProjectSyncScope;
+import org.jetbrains.bazel.sync.ProjectSyncService;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.target.ModuleTargetService;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bazel.ui.settings.BazelApplicationSettingsService;
+import org.jetbrains.bazel.ui.widgets.fileTargets.BazelFileTargetsWidget;
+import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
 
-private val log = logger<BazelStartupActivity>()
-private val skipStartupSync = Key.create<Boolean>("bazel.skip.startup.sync.in.tests")
-
-/** Controls automatic startup sync for one test project. Explicit sync is not affected. */
-@TestOnly
-@ApiStatus.Internal
-fun setBazelStartupSyncEnabledInTests(project: Project, enabled: Boolean) {
-  project.putUserData(skipStartupSync, if (enabled) null else true)
-}
+import java.nio.file.Files;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Runs actions after the project has started up and the index is up to date.
@@ -39,55 +29,84 @@ fun setBazelStartupSyncEnabledInTests(project: Project, enabled: Boolean) {
  * @see org.jetbrains.bazel.flow.open.BazelProjectOpenProcessor for additional actions that
  * may run when a project is being imported for the first time.
  */
-internal class BazelStartupActivity : BazelProjectActivity() {
-  override suspend fun executeForBazelProject(project: Project) {
-    log.info("Executing Bazel startup activity for project: $project")
-    val trackerService = project.serviceAsync<BspConfigurationTrackerService>()
-    try {
-      trackerService.isRunning.update { true }
+@ExtensionImpl
+public class BazelStartupActivity extends BazelProjectActivity {
+    private static final Logger LOG = Logger.getInstance(BazelStartupActivity.class);
+    private static final Key<Boolean> SKIP_STARTUP_SYNC = Key.create("bazel.skip.startup.sync.in.tests");
 
-      executeOnEveryProjectStartup(project)
-
-      resyncProjectIfNeeded(project)
-    } finally {
-      trackerService.isRunning.update { false }
+    /**
+     * Controls automatic startup sync for one test project. Explicit sync is not affected.
+     */
+    @TestOnly
+    public static void setBazelStartupSyncEnabledInTests(Project project, boolean enabled) {
+        project.putUserData(SKIP_STARTUP_SYNC, enabled ? null : true);
     }
-  }
+
+    @Override
+    public CompletableFuture<?> executeForBazelProject(Project project) {
+        LOG.info("Executing Bazel startup activity for project: " + project);
+        BspConfigurationTrackerService trackerService = BspConfigurationTrackerService.getInstance(project);
+        trackerService.setRunning(true);
+        CompletableFuture<?> result;
+        try {
+            result = executeOnEveryProjectStartup(project)
+                .thenCompose(unused -> resyncProjectIfNeeded(project));
+        }
+        catch (Throwable e) {
+            result = CompletableFuture.failedFuture(e);
+        }
+        return result.whenComplete((value, error) -> trackerService.setRunning(false));
+    }
+
+    private static CompletableFuture<?> executeOnEveryProjectStartup(Project project) {
+        LOG.debug("Executing Bazel startup activities for every opening");
+        return BazelFileTargetsWidget.updateBazelFileTargetsWidget(project)
+            .thenCompose(unused -> project.getInstance(BazelWorkspace.class).initialize())
+            .thenApply(unused -> {
+                project.getInstance(ProjectDirtyStateService.class); // must come after initialize(), because it reads the registered project id
+                project.getInstance(ModuleTargetService.class); // warm up service
+                project.getInstance(TargetStorage.class); // warm up service
+
+                // store generated IML files outside the project directory
+                // consulo: ExternalProjectsManagerImpl.setStoreExternally does not exist, Consulo keeps the module files in .consulo
+                return null;
+            });
+    }
+
+    private static CompletableFuture<?> resyncProjectIfNeeded(Project project) {
+        if (Boolean.TRUE.equals(project.getUserData(SKIP_STARTUP_SYNC))) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        return isProjectInIncompleteState(project).thenCompose(incomplete -> {
+            if (!incomplete) {
+                return CompletableFuture.completedFuture(null);
+            }
+
+            boolean phased = BazelApplicationSettingsService.getInstance().getSettings().getEnablePhasedSync();
+            LOG.info(phased ? "Running Bazel phased sync task" : "Running Bazel sync task");
+            return project.getInstance(ProjectSyncService.class).sync(
+                new ProjectSyncScope.Full(
+                    BazelFeatureFlags.isBuildProjectOnSyncEnabled(),
+                    phased
+                )
+            );
+        });
+    }
+
+    private static CompletableFuture<Boolean> isProjectInIncompleteState(Project project) {
+        TargetStorage targetStorage = project.getInstance(TargetStorage.class);
+        return targetStorage.awaitLoaded().thenApply(unused ->
+            targetStorage.getTotalTargetCount() == 0 ||
+                // consulo: upstream checks that the IntelliJ workspace model was loaded from its cache; the Bazel data of the
+                // classic project model (BazelProjectModelService) is kept in memory, so it is missing after a restart
+                BazelProjectModelService.getInstance(project).getProjectData(BazelProjectDirectoriesEntity.class) == null ||
+                !bazelExecPathExists(project)
+        );
+    }
+
+    private static boolean bazelExecPathExists(Project project) {
+        WorkspaceSnapshot snapshot = WorkspaceHelpers.getWorkspaceSnapshotOrNull(project);
+        return snapshot != null && Files.isDirectory(snapshot.bazelInfo().execRoot());
+    }
 }
-
-private suspend fun executeOnEveryProjectStartup(project: Project) {
-  log.debug("Executing Bazel startup activities for every opening")
-  updateBazelFileTargetsWidget(project)
-  project.serviceAsync<BazelWorkspace>().initialize()
-  project.serviceAsync<ProjectDirtyStateService>() // must come after initialize(), because it reads the registered project id
-  project.serviceAsync<ModuleTargetService>() // warm up service
-  project.serviceAsync<TargetStorage>() // warm up service
-
-  // store generated IML files outside the project directory
-  ExternalProjectsManagerImpl.getInstance(project).setStoreExternally(true)
-}
-
-private suspend fun resyncProjectIfNeeded(project: Project) {
-  if (project.getUserData(skipStartupSync) == true)
-    return
-
-  if (!isProjectInIncompleteState(project))
-    return
-
-  val phased = serviceAsync<BazelApplicationSettingsService>().settings.enablePhasedSync
-  log.info(if (phased) "Running Bazel phased sync task" else "Running Bazel sync task")
-  project.serviceAsync<ProjectSyncService>().sync(
-    ProjectSyncScope.Full(
-      build = BazelFeatureFlags.isBuildProjectOnSyncEnabled,
-      phased = phased,
-    )
-  )
-}
-
-private suspend fun isProjectInIncompleteState(project: Project): Boolean =
-  project.serviceAsync<TargetStorage>().also { it.awaitLoaded() }.getTotalTargetCount() == 0 ||
-    !(project.serviceAsync<WorkspaceModel>() as WorkspaceModelImpl).loadedFromCache ||
-    !bazelExecPathExists(project)
-
-private fun bazelExecPathExists(project: Project): Boolean =
-  project.workspaceSnapshotOrNull?.bazelInfo?.execRoot?.isDirectory() == true

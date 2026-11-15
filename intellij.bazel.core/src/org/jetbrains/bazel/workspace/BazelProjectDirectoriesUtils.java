@@ -1,57 +1,58 @@
-package org.jetbrains.bazel.workspace
+package org.jetbrains.bazel.workspace;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.backend.workspace.impl.WorkspaceModelInternal
-import com.intellij.platform.backend.workspace.virtualFile
-import com.intellij.platform.workspace.storage.CachedValue
-import com.intellij.platform.workspace.storage.EntityStorage
-import com.intellij.platform.workspace.storage.entities
-import com.intellij.platform.workspace.storage.url.VirtualFileUrl
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity
-import java.util.Optional
-import kotlin.jvm.optionals.getOrNull
+import consulo.bazel.workspace.BazelProjectModelService;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
+import org.jspecify.annotations.Nullable;
 
-/**
- * Returns the set of excluded directories, i.e., explicit excludes from project view and Bazel symlinks.
- * Returns `null` if the project has not been synced yet or no project model is present after clearing cache/IDEA update
- */
-@ApiStatus.Internal
-fun Project.excludedRoots(): Set<VirtualFile>? =
-  (WorkspaceModel.getInstance(this) as WorkspaceModelInternal).entityStorage.cachedValue(excludedRoots).getOrNull()
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
-/**
- * @see [excludedRoots]
- */
-@ApiStatus.Internal
-fun Project.includedRoots(): Set<VirtualFile>? =
-  (WorkspaceModel.getInstance(this) as WorkspaceModelInternal).entityStorage.cachedValue(includedRoots).getOrNull()
+// consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name.
+// The IntelliJ workspace model is not used: BazelProjectDirectoriesEntity is project data of BazelProjectModelService and the
+// upstream CachedValue over the entity storage is computed on each call
+public final class BazelProjectDirectoriesUtils {
+    private BazelProjectDirectoriesUtils() {
+    }
 
-private val excludedRoots: CachedValue<Optional<Set<VirtualFile>>> =
-  CachedValue { storage ->
-    val bazelProjectDirectories =
-      storage.bazelProjectDirectoriesEntity()
-        ?: return@CachedValue Optional.empty()
-    Optional.of(bazelProjectDirectories.excludedRoots.toVirtualFileSet())
-  }
+    /**
+     * Returns the set of excluded directories, i.e., explicit excludes from project view and Bazel symlinks.
+     * Returns `null` if the project has not been synced yet or no project model is present after clearing cache/IDEA update
+     */
+    public static @Nullable Set<VirtualFile> excludedRoots(Project receiver) {
+        BazelProjectDirectoriesEntity bazelProjectDirectories = bazelProjectDirectoriesEntity(receiver);
+        if (bazelProjectDirectories == null) {
+            return null;
+        }
+        return toVirtualFileSet(bazelProjectDirectories.excludedRoots());
+    }
 
-private val includedRoots: CachedValue<Optional<Set<VirtualFile>>> =
-  CachedValue { storage ->
-    val bazelProjectDirectories =
-      storage.bazelProjectDirectoriesEntity()
-        ?: return@CachedValue Optional.empty()
-    Optional.of(bazelProjectDirectories.includedRoots.toVirtualFileSet())
-  }
+    /**
+     * @see #excludedRoots
+     */
+    public static @Nullable Set<VirtualFile> includedRoots(Project receiver) {
+        BazelProjectDirectoriesEntity bazelProjectDirectories = bazelProjectDirectoriesEntity(receiver);
+        if (bazelProjectDirectories == null) {
+            return null;
+        }
+        return toVirtualFileSet(bazelProjectDirectories.includedRoots());
+    }
 
-@ApiStatus.Internal
-fun Project.bazelProjectDirectoriesEntity(): BazelProjectDirectoriesEntity? =
-  WorkspaceModel.getInstance(this).currentSnapshot.bazelProjectDirectoriesEntity()
+    public static @Nullable BazelProjectDirectoriesEntity bazelProjectDirectoriesEntity(Project receiver) {
+        return BazelProjectModelService.getInstance(receiver).getProjectData(BazelProjectDirectoriesEntity.class);
+    }
 
-internal fun EntityStorage.bazelProjectDirectoriesEntity(): BazelProjectDirectoriesEntity? = entities<BazelProjectDirectoriesEntity>().firstOrNull()
-
-internal fun List<VirtualFileUrl>.toVirtualFileSet(): Set<VirtualFile> =
-  asSequence()
-    .mapNotNull { it.virtualFile }
-    .toSet()
+    public static Set<VirtualFile> toVirtualFileSet(List<String> receiver) {
+        Set<VirtualFile> result = new LinkedHashSet<>();
+        for (String url : receiver) {
+            VirtualFile file = VirtualFileManager.getInstance().findFileByUrl(url);
+            if (file != null) {
+                result.add(file);
+            }
+        }
+        return result;
+    }
+}

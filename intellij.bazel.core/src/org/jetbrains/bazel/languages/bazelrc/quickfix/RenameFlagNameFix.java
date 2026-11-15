@@ -1,32 +1,58 @@
-package org.jetbrains.bazel.languages.bazelrc.quickfix
+package org.jetbrains.bazel.languages.bazelrc.quickfix;
 
-import com.intellij.codeInspection.util.IntentionFamilyName
-import com.intellij.modcommand.ActionContext
-import com.intellij.modcommand.ModPsiUpdater
-import com.intellij.modcommand.Presentation
-import com.intellij.modcommand.PsiUpdateModCommandAction
-import com.intellij.psi.PsiElement
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.bazelrc.flags.Flag
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcElementGenerator
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.codeEditor.Editor;
+import consulo.language.editor.inspection.LocalQuickFixAndIntentionActionOnPsiElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcElementGenerator;
+import org.jspecify.annotations.Nullable;
 
-internal class RenameFlagNameFix(element: PsiElement, val flag: Flag) : PsiUpdateModCommandAction<PsiElement>(element) {
-  override fun invoke(
-    context: ActionContext,
-    element: PsiElement,
-    updater: ModPsiUpdater,
-  ) {
-    val target =
-      when {
-        element.text.startsWith("--no") -> "no${flag.option.name}"
-        else -> flag.option.name
-      }
+// consulo: the ModCommand API (PsiUpdateModCommandAction) does not exist in Consulo; a classic intention action bound to the
+// element (smart pointer), run in a write action
+public class RenameFlagNameFix extends LocalQuickFixAndIntentionActionOnPsiElement {
+    private final Flag myFlag;
 
-    element.replace(BazelrcElementGenerator(context.project).createFlagName(target))
-  }
+    public RenameFlagNameFix(PsiElement element, Flag flag) {
+        super(element);
+        myFlag = flag;
+    }
 
-  override fun getPresentation(context: ActionContext, element: PsiElement): Presentation? =
-    Presentation.of(BazelPluginBundle.message("quickfix.bazelrc.rename.flag.presentation", flag.option.name))
+    public Flag getFlag() {
+        return myFlag;
+    }
 
-  override fun getFamilyName(): @IntentionFamilyName String = BazelPluginBundle.message("quickfix.bazelrc.rename.flag.description")
+    // consulo: upstream invoke(context: ActionContext, element: PsiElement, updater: ModPsiUpdater)
+    @Override
+    public void invoke(
+        Project project,
+        PsiFile psiFile,
+        @Nullable Editor editor,
+        PsiElement element,
+        PsiElement endElement
+    ) {
+        String target;
+        if (element.getText().startsWith("--no")) {
+            target = "no" + myFlag.getOption().name();
+        }
+        else {
+            target = myFlag.getOption().name();
+        }
+
+        element.replace(new BazelrcElementGenerator(project).createFlagName(target));
+    }
+
+    // consulo: upstream getPresentation(context, element) returned Presentation.of(text)
+    @Override
+    public LocalizeValue getText() {
+        return BazelPluginLocalize.quickfixBazelrcRenameFlagPresentation(myFlag.getOption().name());
+    }
+
+    // consulo: Consulo intention actions have no family name; kept from upstream
+    public LocalizeValue getFamilyName() {
+        return BazelPluginLocalize.quickfixBazelrcRenameFlagDescription();
+    }
 }

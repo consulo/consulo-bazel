@@ -1,63 +1,103 @@
-package org.jetbrains.bazel.ui.settings
+package org.jetbrains.bazel.ui.settings;
 
-import com.intellij.openapi.options.UnnamedConfigurable
-import com.intellij.openapi.project.Project
-import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.dsl.builder.panel
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.settings.bazel.bazelJVMProjectSettings
-import javax.swing.JComponent
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.configurable.UnnamedConfigurable;
+import consulo.disposer.Disposable;
+import consulo.project.Project;
+import consulo.ui.Component;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.awt.FormBuilder;
+import consulo.ui.ex.awt.JBCheckBox;
+import consulo.ui.ex.awtUnsafe.TargetAWT;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.settings.bazel.BazelJVMProjectSettings;
 
-internal class BazelJVMExperimentalSettingsProvider : BazelSettingsProvider {
-  override fun createConfigurable(project: Project): UnnamedConfigurable = BazelJVMExperimentalConfigurable(project)
+import javax.swing.JComponent;
+import java.util.List;
 
-  override fun searchIndexKeys() =
-    listOf(
-      "project.settings.plugin.hotswap.enabled.checkbox.text",
-    )
+// consulo: upstream registers this provider in the Java integration (intellij.bazel.java.core.xml,
+// bazelExperimentalSettingsProvider), so it has no @ExtensionImpl here
+public class BazelJVMExperimentalSettingsProvider implements BazelSettingsProvider {
+    @Override
+    public UnnamedConfigurable createConfigurable(Project project) {
+        return new BazelJVMExperimentalConfigurable(project);
+    }
+
+    @Override
+    public List<String> searchIndexKeys() {
+        return List.of(
+            "project.settings.plugin.hotswap.enabled.checkbox.text"
+        );
+    }
+
+    // consulo: upstream extension point bazelExperimentalSettingsProvider
+    @Override
+    public boolean isExperimental() {
+        return true;
+    }
 }
 
-internal class BazelJVMExperimentalConfigurable(private val project: Project) : UnnamedConfigurable {
-  private val hotswapEnabledCheckBox: JBCheckBox
-  private val enableKotlinCoroutineDebugCheckBox: JBCheckBox
+class BazelJVMExperimentalConfigurable implements UnnamedConfigurable {
+    private final Project myProject;
 
-  private var currentJVMProjectSettings = project.bazelJVMProjectSettings
+    private final JBCheckBox myHotswapEnabledCheckBox;
+    private final JBCheckBox myEnableKotlinCoroutineDebugCheckBox;
 
-  init {
-    hotswapEnabledCheckBox = initHotSwapEnabledCheckBox()
-    enableKotlinCoroutineDebugCheckBox = initEnableKotlinCoroutineDebugCheckBox()
-  }
+    private BazelJVMProjectSettings myCurrentJVMProjectSettings;
 
-  override fun createComponent(): JComponent =
-    panel {
-      row {
-        cell(hotswapEnabledCheckBox)
-          .contextHelp(BazelPluginBundle.message("project.settings.plugin.hotswap.enabled.checkbox.help.text"))
-      }
-      row { cell(enableKotlinCoroutineDebugCheckBox) }
+    BazelJVMExperimentalConfigurable(Project project) {
+        myProject = project;
+        myCurrentJVMProjectSettings = BazelJVMProjectSettings.getBazelJVMProjectSettings(project);
+
+        myHotswapEnabledCheckBox = initHotSwapEnabledCheckBox();
+        myEnableKotlinCoroutineDebugCheckBox = initEnableKotlinCoroutineDebugCheckBox();
     }
 
-  override fun isModified(): Boolean = currentJVMProjectSettings != project.bazelJVMProjectSettings
-
-  override fun apply() {
-    project.bazelJVMProjectSettings = currentJVMProjectSettings
-  }
-
-  private fun initHotSwapEnabledCheckBox(): JBCheckBox =
-    JBCheckBox(BazelPluginBundle.message("project.settings.plugin.hotswap.enabled.checkbox.text")).apply {
-      isEnabled = !BazelFeatureFlags.fastBuildEnabled
-      isSelected = currentJVMProjectSettings.hotSwapEnabled
-      addItemListener {
-        currentJVMProjectSettings = currentJVMProjectSettings.copy(hotSwapEnabled = isSelected)
-      }
+    public JComponent createComponent() {
+        // consulo: Kotlin UI DSL panel -> FormBuilder, contextHelp -> tooltip row
+        return FormBuilder.createFormBuilder()
+            .addComponent(myHotswapEnabledCheckBox)
+            .addTooltip(BazelPluginLocalize.projectSettingsPluginHotswapEnabledCheckboxHelpText().get())
+            .addComponent(myEnableKotlinCoroutineDebugCheckBox)
+            .getPanel();
     }
 
-  private fun initEnableKotlinCoroutineDebugCheckBox(): JBCheckBox =
-    JBCheckBox(BazelPluginBundle.message("project.settings.plugin.enable.kotlin.coroutine.debug.checkbox.text")).apply {
-      isSelected = currentJVMProjectSettings.enableKotlinCoroutineDebug
-      addItemListener {
-        currentJVMProjectSettings = currentJVMProjectSettings.copy(enableKotlinCoroutineDebug = isSelected)
-      }
+    @RequiredUIAccess
+    @Override
+    public Component createUIComponent(Disposable parentDisposable) {
+        return TargetAWT.wrap(createComponent());
+    }
+
+    @RequiredUIAccess
+    @Override
+    public boolean isModified() {
+        return !myCurrentJVMProjectSettings.equals(BazelJVMProjectSettings.getBazelJVMProjectSettings(myProject));
+    }
+
+    @RequiredUIAccess
+    @Override
+    public void apply() {
+        BazelJVMProjectSettings.setBazelJVMProjectSettings(myProject, myCurrentJVMProjectSettings);
+    }
+
+    private JBCheckBox initHotSwapEnabledCheckBox() {
+        JBCheckBox checkBox = new JBCheckBox(BazelPluginLocalize.projectSettingsPluginHotswapEnabledCheckboxText().get());
+        checkBox.setEnabled(!BazelFeatureFlags.getFastBuildEnabled());
+        checkBox.setSelected(myCurrentJVMProjectSettings.hotSwapEnabled());
+        checkBox.addItemListener(e ->
+            myCurrentJVMProjectSettings =
+                new BazelJVMProjectSettings(checkBox.isSelected(), myCurrentJVMProjectSettings.enableKotlinCoroutineDebug())
+        );
+        return checkBox;
+    }
+
+    private JBCheckBox initEnableKotlinCoroutineDebugCheckBox() {
+        JBCheckBox checkBox = new JBCheckBox(BazelPluginLocalize.projectSettingsPluginEnableKotlinCoroutineDebugCheckboxText().get());
+        checkBox.setSelected(myCurrentJVMProjectSettings.enableKotlinCoroutineDebug());
+        checkBox.addItemListener(e ->
+            myCurrentJVMProjectSettings =
+                new BazelJVMProjectSettings(myCurrentJVMProjectSettings.hotSwapEnabled(), checkBox.isSelected())
+        );
+        return checkBox;
     }
 }

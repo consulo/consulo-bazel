@@ -1,174 +1,358 @@
-package org.jetbrains.bazel.languages.starlark.formatting
+package org.jetbrains.bazel.languages.starlark.formatting;
 
-import com.intellij.application.options.CodeStyle
-import com.intellij.codeInsight.hint.HintManager
-import com.intellij.codeInsight.hint.HintManagerImpl
-import com.intellij.codeInsight.hint.HintUtil
-import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.process.CapturingProcessAdapter
-import com.intellij.execution.process.CapturingProcessHandler
-import com.intellij.execution.process.ProcessEvent
-import com.intellij.formatting.FormattingContext
-import com.intellij.formatting.FormattingMode
-import com.intellij.formatting.service.AsyncDocumentFormattingService
-import com.intellij.formatting.service.AsyncFormattingRequest
-import com.intellij.formatting.service.FormattingService.Feature
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.readAndWriteAction
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.fileTypes.FileTypeRegistry
-import com.intellij.openapi.project.guessProjectDir
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiDocumentManager
-import com.intellij.psi.PsiFile
-import com.intellij.psi.util.PsiEditorUtil
-import com.intellij.ui.LightweightHint
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.settings.bazel.bazelProjectSettings
-import org.jetbrains.bazel.sync.environment.BazelProjectInfoService
-import java.io.File
+import consulo.annotation.access.RequiredWriteAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.bazel.core.BazelNotificationGroupContributor;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.codeEditor.Editor;
+import consulo.document.Document;
+import consulo.document.util.TextRange;
+import consulo.language.codeStyle.CodeStyle;
+import consulo.language.codeStyle.ExternalFormatProcessor;
+import consulo.language.codeStyle.FormattingContext;
+import consulo.language.codeStyle.FormattingMode;
+import consulo.language.editor.hint.HintManager;
+import consulo.language.editor.util.PsiEditorUtil;
+import consulo.language.psi.PsiDocumentManager;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.process.ExecutionException;
+import consulo.process.ProcessHandler;
+import consulo.process.ProcessHandlerBuilderFactory;
+import consulo.process.cmd.GeneralCommandLine;
+import consulo.process.event.ProcessEvent;
+import consulo.process.util.CapturingProcessAdapter;
+import consulo.project.Project;
+import consulo.project.ui.notification.NotificationService;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.fileType.FileTypeRegistry;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage.StarlarkFileType;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.settings.bazel.BazelProjectSettings;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jspecify.annotations.Nullable;
 
-private val LOG = logger<StarlarkFormattingService>()
-private const val NOTIFICATION_GROUP_ID = "Buildifier"
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
-internal class StarlarkFormattingService : AsyncDocumentFormattingService() {
-  override fun getFeatures(): Set<Feature> = emptySet()
+// TODO consulo: IntelliJ AsyncDocumentFormattingService (with AsyncFormattingRequest/FormattingTask) does not exist in Consulo.
+//  The service is registered as the public ExternalFormatProcessor extension and runs buildifier synchronously
+//  (AsyncFormattingRequest/FormattingTask are minimal private replacements below). Consulo only calls
+//  ExternalFormatProcessor.format() from CodeStyleManager.reformat()/reformatRange(); reformatText() (Reformat Code action)
+//  skips the built-in formatter for such files but has no post-format adapter calling the external formatter.
+@ExtensionImpl
+public class StarlarkFormattingService implements ExternalFormatProcessor {
+    private static final Logger LOG = Logger.getInstance(StarlarkFormattingService.class);
+    private static final String NOTIFICATION_GROUP_ID = "Buildifier";
 
-  override fun canFormat(file: PsiFile): Boolean {
-    val virtualFile = file.virtualFile ?: return false
-    if (!FileTypeRegistry.getInstance().isFileOfType(virtualFile, StarlarkFileType)) return false
-    return file.project.bazelProjectSettings.getBuildifierPathString(file.project) != null
-  }
+    // consulo: the synchronous run is bounded (upstream ran the task asynchronously under progress)
+    private static final long BUILDIFIER_TIMEOUT_MILLIS = 30_000;
 
-  override fun createFormattingTask(request: AsyncFormattingRequest): FormattingTask? {
-    val formattingContext = request.context
-    val project = formattingContext.project
-    val buildifierPath = project.bazelProjectSettings.getBuildifierPathString(request.context.project) ?: return null
+    // consulo: getFeatures() (upstream emptySet()) has no ExternalFormatProcessor counterpart; the whole file is always formatted
 
-    if (!checkDocumentExists(request)) {
-      LOG.warn("Document for file ${request.context.containingFile.name} is null")
-      return null
+    public boolean canFormat(PsiFile file) {
+        VirtualFile virtualFile = file.getVirtualFile();
+        if (virtualFile == null) {
+            return false;
+        }
+        if (!FileTypeRegistry.getInstance().isFileOfType(virtualFile, StarlarkFileType.INSTANCE)) {
+            return false;
+        }
+        return BazelProjectSettings.getBazelProjectSettings(file.getProject()).getBuildifierPathString(file.getProject()) != null;
     }
 
-    val handler = createProcessHandler(request, buildifierPath) ?: return null
-
-    return object : FormattingTask {
-      override fun run() {
-        try {
-          handler.addProcessListener(BuildifierProcessListener(request))
-          handler.startNotify()
-        } catch (e: Exception) {
-          LOG.warn(e.localizedMessage)
-          request.onTextReady(null)
+    private @Nullable FormattingTask createFormattingTask(AsyncFormattingRequest request) {
+        FormattingContext formattingContext = request.getContext();
+        Project project = formattingContext.getProject();
+        String buildifierPath =
+            BazelProjectSettings.getBazelProjectSettings(project).getBuildifierPathString(request.getContext().getProject());
+        if (buildifierPath == null) {
+            return null;
         }
-      }
 
-      override fun cancel(): Boolean {
-        handler.destroyProcess()
-        return true
-      }
+        if (!checkDocumentExists(request)) {
+            LOG.warn("Document for file " + request.getContext().getContainingFile().getName() + " is null");
+            return null;
+        }
 
-      override fun isRunUnderProgress(): Boolean = true
+        ProcessHandler handler = createProcessHandler(request, buildifierPath);
+        if (handler == null) {
+            return null;
+        }
+
+        return new FormattingTask() {
+            @Override
+            public void run() {
+                try {
+                    handler.addProcessListener(new BuildifierProcessListener(request));
+                    handler.startNotify();
+                    // consulo: upstream passed the text with GeneralCommandLine.withInput(ioFile); Consulo has no withInput()
+                    writeInput(handler, request.getDocumentText());
+                    // consulo: wait for the process, the formatting runs synchronously
+                    if (!handler.waitFor(BUILDIFIER_TIMEOUT_MILLIS)) {
+                        cancel();
+                        request.onTextReady(null);
+                    }
+                }
+                catch (Exception e) {
+                    LOG.warn(String.valueOf(e.getLocalizedMessage()));
+                    request.onTextReady(null);
+                }
+            }
+
+            @Override
+            public boolean cancel() {
+                handler.destroyProcess();
+                return true;
+            }
+
+            @Override
+            public boolean isRunUnderProgress() {
+                return true;
+            }
+        };
     }
-  }
 
-  private fun checkDocumentExists(request: AsyncFormattingRequest): Boolean {
-    val psiFile = request.context.containingFile
-    val project = request.context.project
-    val document = PsiDocumentManager.getInstance(project).getDocument(psiFile)
+    private boolean checkDocumentExists(AsyncFormattingRequest request) {
+        PsiFile psiFile = request.getContext().getContainingFile();
+        Project project = request.getContext().getProject();
+        Document document = PsiDocumentManager.getInstance(project).getDocument(psiFile);
 
-    return document != null
-  }
+        return document != null;
+    }
 
-  private fun createProcessHandler(request: AsyncFormattingRequest, buildifierPath: String): CapturingProcessHandler? {
-    val ioFile = request.ioFile ?: return null
-    val project = request.context.project
-    // Formatter can be called for non-Bazel projects as well (if they contain some Starlark).
-    // Don't use project.rootDir as it will throw.
-    val rootDir = project.service<BazelProjectInfoService>().projectRootDir ?: project.guessProjectDir() ?: return null
-    val commandLine =
-      GeneralCommandLine()
-        .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
-        .withExePath(buildifierPath)
-        .withInput(ioFile)
-        .apply {
-          // Because we pass the input file's text into stdin, buildifier doesn't know the original filename.
-          // We must therefore tell buildifier what file type it was.
-          addParameter("--type=${fileTypeArgument(ioFile)}")
+    private @Nullable ProcessHandler createProcessHandler(AsyncFormattingRequest request, String buildifierPath) {
+        Project project = request.getContext().getProject();
+        // Formatter can be called for non-Bazel projects as well (if they contain some Starlark).
+        // Don't use project.rootDir as it will throw.
+        VirtualFile rootDir = project.getInstance(BazelProjectInfoService.class).getProjectRootDir();
+        if (rootDir == null) {
+            // consulo: Project.guessProjectDir() -> Project.getBaseDir()
+            rootDir = project.getBaseDir();
         }
+        if (rootDir == null) {
+            return null;
+        }
+        GeneralCommandLine commandLine =
+            new GeneralCommandLine()
+                .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
+                .withExePath(buildifierPath)
+                // consulo: buildifier reads the document text from stdin (see FormattingTask.run()), always as UTF-8
+                .withCharset(StandardCharsets.UTF_8);
+        // Because we pass the input file's text into stdin, buildifier doesn't know the original filename.
+        // We must therefore tell buildifier what file type it was.
+        commandLine.addParameter("--type=" + fileTypeArgument(request.getContext().getContainingFile().getName()));
         // Set the work directory to workspace root so that Buildifier can read .buildifier-tables.json
-        .withWorkingDirectory(rootDir.toNioPath())
+        commandLine.withWorkingDirectory(rootDir.toNioPath());
 
-    return CapturingProcessHandler(commandLine)
-  }
-
-  private fun fileTypeArgument(file: File) =
-    when (BazelFileType.ofFileName(file.name)) {
-      BazelFileType.BUILD -> "build"
-      BazelFileType.EXTENSION -> "bzl"
-      BazelFileType.MODULE -> "module"
-      BazelFileType.WORKSPACE -> "workspace"
+        try {
+            return Application.get().getInstance(ProcessHandlerBuilderFactory.class).newBuilder(commandLine).build();
+        }
+        catch (ExecutionException e) {
+            // consulo: upstream CapturingProcessHandler(commandLine) let the exception propagate
+            LOG.warn(String.valueOf(e.getLocalizedMessage()));
+            return null;
+        }
     }
 
-  override fun getNotificationGroupId(): String = NOTIFICATION_GROUP_ID
+    // consulo: takes the original file name instead of the upstream temporary io file (there is no io file, the text goes to stdin)
+    private String fileTypeArgument(String fileName) {
+        return switch (BazelFileType.ofFileName(fileName)) {
+            case BUILD -> "build";
+            case EXTENSION -> "bzl";
+            case MODULE -> "module";
+            case WORKSPACE -> "workspace";
+        };
+    }
 
-  override fun getName(): String = BazelPluginBundle.message("buildifier.formatting.service.name")
+    public String getNotificationGroupId() {
+        return NOTIFICATION_GROUP_ID;
+    }
+
+    public LocalizeValue getName() {
+        return BazelPluginLocalize.buildifierFormattingServiceName();
+    }
+
+    // consulo: ExternalFormatProcessor implementation (replaces the AsyncDocumentFormattingService plumbing)
+
+    @Override
+    public boolean activeForFile(PsiFile source) {
+        return canFormat(source);
+    }
+
+    @Override
+    @RequiredWriteAction
+    public @Nullable TextRange format(PsiFile source, TextRange range, boolean canChangeWhiteSpacesOnly) {
+        Document document = PsiDocumentManager.getInstance(source.getProject()).getDocument(source);
+        if (document == null) {
+            return null;
+        }
+        TextRange textRange = TextRange.from(0, source.getTextLength());
+        FormattingContext formattingContext =
+            FormattingContext.create(source, textRange, CodeStyle.getSettings(source), FormattingMode.REFORMAT);
+        if (!formatDocument(document, List.of(textRange), formattingContext, canChangeWhiteSpacesOnly, false)) {
+            return null;
+        }
+        return TextRange.from(0, document.getTextLength());
+    }
+
+    @Override
+    public @Nullable String indent(PsiFile source, int lineStartOffset) {
+        return null;
+    }
+
+    @Override
+    public String getId() {
+        return NOTIFICATION_GROUP_ID;
+    }
+
+    /**
+     * consulo: replaces IntelliJ {@code AsyncDocumentFormattingService.formatDocument()}: runs buildifier synchronously and
+     * replaces the document text with the result.
+     *
+     * @return true if the document was formatted
+     */
+    @RequiredWriteAction
+    public boolean formatDocument(
+        Document document,
+        List<TextRange> formattingRanges,
+        FormattingContext formattingContext,
+        boolean canChangeWhiteSpaceOnly,
+        boolean quickFormat
+    ) {
+        AsyncFormattingRequest request = new AsyncFormattingRequest(formattingContext, document.getText());
+        FormattingTask task = createFormattingTask(request);
+        if (task == null) {
+            return false;
+        }
+        task.run();
+        String formattedText = request.getFormattedText();
+        if (formattedText == null) {
+            return false;
+        }
+        if (!formattedText.equals(document.getText())) {
+            document.replaceString(0, document.getTextLength(), formattedText);
+        }
+        return true;
+    }
+
+    @RequiredWriteAction
+    public static void formatBuildFile(StarlarkFile buildFile) {
+        // consulo: upstream suspend readAndWriteAction { writeAction { ... } }; runs synchronously in the caller's write action
+        StarlarkFormattingService formattingService = new StarlarkFormattingService();
+        TextRange textRange = TextRange.from(0, buildFile.getTextLength());
+        FormattingContext formattingContext =
+            FormattingContext.create(buildFile, textRange, CodeStyle.getSettings(buildFile), FormattingMode.REFORMAT);
+        formattingService.formatDocument(buildFile.getContainingFile().getFileDocument(), List.of(textRange), formattingContext, true,
+            true);
+    }
+
+    // consulo: upstream GeneralCommandLine.withInput(ioFile)
+    private static void writeInput(ProcessHandler handler, String text) throws IOException {
+        OutputStream input = handler.getProcessInput();
+        if (input == null) {
+            return;
+        }
+        try (OutputStream stream = input) {
+            stream.write(text.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * consulo: minimal replacement of IntelliJ {@code AsyncDocumentFormattingService.FormattingTask}
+     */
+    private interface FormattingTask extends Runnable {
+        boolean cancel();
+
+        boolean isRunUnderProgress();
+    }
+
+    /**
+     * consulo: minimal replacement of IntelliJ {@code AsyncFormattingRequest}
+     */
+    private static final class AsyncFormattingRequest {
+        private final FormattingContext myContext;
+        private final String myDocumentText;
+        private @Nullable String myFormattedText;
+
+        private AsyncFormattingRequest(FormattingContext context, String documentText) {
+            myContext = context;
+            myDocumentText = documentText;
+        }
+
+        FormattingContext getContext() {
+            return myContext;
+        }
+
+        String getDocumentText() {
+            return myDocumentText;
+        }
+
+        @Nullable String getFormattedText() {
+            return myFormattedText;
+        }
+
+        void onTextReady(@Nullable String updatedText) {
+            myFormattedText = updatedText;
+        }
+
+        void onError(LocalizeValue title, String message) {
+            myFormattedText = null;
+            // consulo: the "Buildifier" notification group is not registered upstream either; errors go to the BazelPlugin group
+            NotificationService.getInstance()
+                .newError(BazelNotificationGroupContributor.BAZEL_PLUGIN)
+                .title(title)
+                .content(LocalizeValue.of(message))
+                .notify(myContext.getProject());
+        }
+    }
+
+    private static class BuildifierProcessListener extends CapturingProcessAdapter {
+        private final AsyncFormattingRequest myRequest;
+
+        private BuildifierProcessListener(AsyncFormattingRequest request) {
+            myRequest = request;
+        }
+
+        @Override
+        public void processTerminated(ProcessEvent event) {
+            int exitCode = event.getExitCode();
+            if (exitCode == 0) {
+                showFormattedOutput();
+            }
+            else {
+                myRequest.onError(BazelPluginLocalize.buildifierRunErrorMessage(), getOutput().getStderr());
+            }
+        }
+
+        private void showFormattedOutput() {
+            if (getOutput().getStdout().isEmpty()) {
+                showFormattedLinesInfo(BazelPluginLocalize.buildifierFormattedIgnored());
+                myRequest.onTextReady(null);
+            }
+            else {
+                myRequest.onTextReady(getOutput().getStdout());
+            }
+        }
+
+        private void showFormattedLinesInfo(LocalizeValue text) {
+            Application.get().invokeLater(
+                () -> {
+                    Editor editor = PsiEditorUtil.findEditor(myRequest.getContext().getContainingFile());
+                    if (editor == null) {
+                        return;
+                    }
+                    // consulo: HintManagerImpl.showEditorHint(LightweightHint(HintUtil.createInformationLabel(text)), editor, ABOVE,
+                    //  HIDE_BY_ANY_KEY | HIDE_BY_SCROLLING, 0, false) -> the public HintManager information hint
+                    HintManager.getInstance().showInformationHint(editor, text, HintManager.ABOVE);
+                },
+                Application.get().getDefaultModalityState()
+            );
+        }
+    }
 }
-
-private open class BuildifierProcessListener(private val request: AsyncFormattingRequest) : CapturingProcessAdapter() {
-  override fun processTerminated(event: ProcessEvent) {
-    val exitCode = event.exitCode
-    when (exitCode) {
-      0 -> showFormattedOutput()
-      else -> request.onError(BazelPluginBundle.message("buildifier.run.error.message"), output.stderr)
-    }
-  }
-
-  private fun showFormattedOutput() {
-    if (output.stdout.isEmpty()) {
-      showFormattedLinesInfo(BazelPluginBundle.message("buildifier.formatted.ignored"))
-      request.onTextReady(null)
-    } else {
-      request.onTextReady(output.stdout)
-    }
-  }
-
-  private fun showFormattedLinesInfo(text: String) =
-    ApplicationManager
-      .getApplication()
-      .invokeLater(
-        {
-          val editor = PsiEditorUtil.findEditor(request.context.containingFile) ?: return@invokeLater
-          val component = HintUtil.createInformationLabel(text)
-          val hint = LightweightHint(component)
-          HintManagerImpl
-            .getInstanceImpl()
-            .showEditorHint(
-              hint,
-              editor,
-              HintManager.ABOVE,
-              HintManager.HIDE_BY_ANY_KEY or HintManager.HIDE_BY_SCROLLING,
-              0,
-              false,
-            )
-        },
-        ModalityState.defaultModalityState(),
-      )
-}
-
-@ApiStatus.Internal
-suspend fun formatBuildFile(buildFile: StarlarkFile): Unit =
-  readAndWriteAction {
-    val formattingService = StarlarkFormattingService()
-    val textRange = TextRange.from(0, buildFile.textLength)
-    val formattingContext = FormattingContext.create(buildFile, textRange, CodeStyle.getSettings(buildFile), FormattingMode.REFORMAT)
-    writeAction {
-      formattingService.formatDocument(buildFile.containingFile.fileDocument, listOf(textRange), formattingContext, true, true)
-    }
-  }

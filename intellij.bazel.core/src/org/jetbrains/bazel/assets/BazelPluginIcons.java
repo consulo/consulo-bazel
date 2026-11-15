@@ -1,31 +1,49 @@
-package org.jetbrains.bazel.assets
+package org.jetbrains.bazel.assets;
 
-import com.intellij.openapi.util.IconLoader
-import org.jetbrains.annotations.ApiStatus
-import javax.swing.Icon
+import consulo.bazel.core.icon.BazelPluginIconGroup;
+import consulo.ui.image.Image;
 
 // TODO: this should be generated automatically
-@Suppress("unused") // should be able to provide us with all available icons
-@ApiStatus.Internal
-object BazelPluginIcons {
-  private fun loadIcon(path: String): Icon = IconLoader.getIcon(path, BazelPluginIcons::class.java.classLoader)
+// consulo: delegates to the generated consulo.bazel.core.icon.BazelPluginIconGroup (ICON-LIB)
+@SuppressWarnings("unused") // should be able to provide us with all available icons
+public final class BazelPluginIcons {
+    private BazelPluginIcons() {
+    }
 
-  @JvmField
-  val bazel: Icon = loadIcon("icons/bazel.svg")
+    public static Image bazel() {
+        return BazelPluginIconGroup.bazel();
+    }
 
-  @JvmField
-  val bazelConfig: Icon = loadIcon("icons/bazelConfig.svg")
+    public static Image bazelConfig() {
+        return BazelPluginIconGroup.bazelconfig();
+    }
 
-  @JvmField
-  val bazelDirectory: Icon = loadIcon("icons/bazelDirectory.svg")
-  val bazelError: Icon = loadIcon("icons/bazelError.svg")
+    public static Image bazelDirectory() {
+        return BazelPluginIconGroup.bazeldirectory();
+    }
 
-  @JvmField
-  val bazelReload: Icon = loadIcon("icons/bazelReload.svg")
+    public static Image bazelError() {
+        return BazelPluginIconGroup.bazelerror();
+    }
 
-  @JvmField
-  val bazelToolWindow: Icon = loadIcon("icons/toolWindowBazel.svg")
+    public static Image bazelReload() {
+        return BazelPluginIconGroup.bazelreload();
+    }
 
-  @JvmField
-  val bazelWarning: Icon = loadIcon("icons/bazelWarning.svg")
+    public static Image bazelToolWindow() {
+        return BazelPluginIconGroup.toolwindowbazel();
+    }
+
+    public static Image bazelWarning() {
+        return BazelPluginIconGroup.bazelwarning();
+    }
+
+    // consulo: upstream references these two by path in intellij.bazel.core.xml (icon="/icons/resync.svg", "/icons/buildAndResync.svg")
+    public static Image resync() {
+        return BazelPluginIconGroup.resync();
+    }
+
+    public static Image buildAndResync() {
+        return BazelPluginIconGroup.buildandresync();
+    }
 }

@@ -1,61 +1,79 @@
-package org.jetbrains.bazel.languages.starlark.index
+package org.jetbrains.bazel.languages.starlark.index;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.util.Processor
-import com.intellij.util.indexing.FileBasedIndex
-import com.intellij.util.indexing.ID
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.references.resolveFileTargetToVirtualFile
+import consulo.annotation.access.RequiredReadAction;
+import consulo.application.util.function.Processor;
+import consulo.index.io.ID;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.language.psi.stub.FileBasedIndex;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-object StarlarkLoadsIndex {
+import java.util.Collection;
+import java.util.Objects;
 
-  val NAME: ID<String, Collection<String>> = ID.create("starlark.loads")
-
-  /**
-   * Process files that load [element] from given [scope].
-   */
-  fun processFiles(
-    element: StarlarkNamedElement,
-    scope: GlobalSearchScope,
-    processor: Processor<VirtualFile>,
-  ): Boolean {
-    val name = element.name ?: return false
-    val containingFile = element.containingFile?.virtualFile ?: return false
-    val project = element.project
-    return FileBasedIndex
-      .getInstance()
-      .processValues(
-        NAME,
-        name,
-        null,
-        { file, labels ->
-          file == containingFile
-          || labels.none { resolveFileTargetToVirtualFile(project, it, file) == containingFile }
-          || processor.process(file)
-        },
-        scope,
-      )
-  }
-
-  /**
-   * Checks whether [element] was loaded in [scope].
-   */
-  fun isLoaded(element: StarlarkNamedElement, scope: GlobalSearchScope): Boolean {
-    var found = false
-    processFiles(element, scope) {
-      found = true
-      false
+public final class StarlarkLoadsIndex {
+    private StarlarkLoadsIndex() {
     }
-    return found
-  }
 
-  private fun resolveFileTargetToVirtualFile(project: Project, rawLabel: String, file: VirtualFile): VirtualFile? {
-    val label = Label.parseOrNull(rawLabel) ?: return null
-    return resolveFileTargetToVirtualFile(project, label, file)
-  }
+    public static final ID<String, Collection<String>> NAME = ID.create("starlark.loads");
+
+    /**
+     * Process files that load {@code element} from given {@code scope}.
+     */
+    @RequiredReadAction
+    public static boolean processFiles(
+        StarlarkNamedElement element,
+        GlobalSearchScope scope,
+        Processor<VirtualFile> processor
+    ) {
+        String name = element.getName();
+        if (name == null) {
+            return false;
+        }
+        PsiFile elementFile = element.getContainingFile();
+        VirtualFile containingFile = elementFile == null ? null : elementFile.getVirtualFile();
+        if (containingFile == null) {
+            return false;
+        }
+        Project project = element.getProject();
+        return FileBasedIndex
+            .getInstance()
+            .processValues(
+                NAME,
+                name,
+                null,
+                (file, labels) ->
+                    file.equals(containingFile)
+                        || labels.stream()
+                        .noneMatch(it -> Objects.equals(resolveFileTargetToVirtualFile(project, it, file), containingFile))
+                        || processor.process(file),
+                scope
+            );
+    }
+
+    /**
+     * Checks whether {@code element} was loaded in {@code scope}.
+     */
+    @RequiredReadAction
+    public static boolean isLoaded(StarlarkNamedElement element, GlobalSearchScope scope) {
+        boolean[] found = {false};
+        processFiles(element, scope, it -> {
+            found[0] = true;
+            return false;
+        });
+        return found[0];
+    }
+
+    private static @Nullable VirtualFile resolveFileTargetToVirtualFile(Project project, String rawLabel, VirtualFile file) {
+        Label label = Label.parseOrNull(rawLabel);
+        if (label == null) {
+            return null;
+        }
+        return LabelResolveUtils.resolveFileTargetToVirtualFile(project, label, file);
+    }
 }

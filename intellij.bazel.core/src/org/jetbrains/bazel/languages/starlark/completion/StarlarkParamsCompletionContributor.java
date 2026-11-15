@@ -1,30 +1,55 @@
-package org.jetbrains.bazel.languages.starlark.completion
+package org.jetbrains.bazel.languages.starlark.completion;
 
-import com.intellij.codeInsight.completion.CompletionContributor
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.CompletionProvider
-import com.intellij.codeInsight.completion.CompletionResultSet
-import com.intellij.codeInsight.completion.CompletionType
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.util.ProcessingContext
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkParameterList
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.editor.completion.CompletionContributor;
+import consulo.language.editor.completion.CompletionParameters;
+import consulo.language.editor.completion.CompletionProvider;
+import consulo.language.editor.completion.CompletionResultSet;
+import consulo.language.editor.completion.CompletionType;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.pattern.PsiElementPattern;
+import consulo.language.psi.PsiElement;
+import consulo.language.util.ProcessingContext;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkParameterList;
 
-internal class StarlarkParamsCompletionContributor : CompletionContributor() {
-  init {
-    extend(CompletionType.BASIC, paramElement("*"), StarlarkParamsCompletionProvider("args"))
-    extend(CompletionType.BASIC, paramElement("**"), StarlarkParamsCompletionProvider("kwargs"))
-  }
+import static consulo.language.pattern.PlatformPatterns.psiElement;
+
+@ExtensionImpl
+public class StarlarkParamsCompletionContributor extends CompletionContributor {
+    public StarlarkParamsCompletionContributor() {
+        extend(CompletionType.BASIC, paramElement("*"), new StarlarkParamsCompletionProvider("args"));
+        extend(CompletionType.BASIC, paramElement("**"), new StarlarkParamsCompletionProvider("kwargs"));
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    private static PsiElementPattern.Capture<PsiElement> paramElement(String token) {
+        return psiElement().inside(StarlarkParameterList.class).afterLeaf(token);
+    }
 }
 
-private class StarlarkParamsCompletionProvider(val lookupString: String) : CompletionProvider<CompletionParameters>() {
-  override fun addCompletions(
-    parameters: CompletionParameters,
-    context: ProcessingContext,
-    result: CompletionResultSet,
-  ) {
-    result.addElement(LookupElementBuilder.create(lookupString))
-  }
-}
+class StarlarkParamsCompletionProvider implements CompletionProvider {
+    private final String myLookupString;
 
-private fun paramElement(token: String) = psiElement().inside(StarlarkParameterList::class.java).afterLeaf(token)
+    StarlarkParamsCompletionProvider(String lookupString) {
+        myLookupString = lookupString;
+    }
+
+    public String getLookupString() {
+        return myLookupString;
+    }
+
+    @Override
+    public void addCompletions(
+        CompletionParameters parameters,
+        ProcessingContext context,
+        CompletionResultSet result
+    ) {
+        result.addElement(LookupElementBuilder.create(myLookupString));
+    }
+}

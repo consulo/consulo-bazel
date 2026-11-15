@@ -1,97 +1,164 @@
-package org.jetbrains.bazel.languages.starlark.findusages
+package org.jetbrains.bazel.languages.starlark.findusages;
 
-import com.intellij.openapi.application.QueryExecutorBase
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiManager
-import com.intellij.psi.PsiReference
-import com.intellij.psi.search.GlobalSearchScopeUtil
-import com.intellij.psi.search.PsiSearchHelper
-import com.intellij.psi.search.UsageSearchContext
-import com.intellij.psi.search.searches.ReferencesSearch
-import com.intellij.psi.util.descendantsOfType
-import com.intellij.util.Processor
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.label.Package
-import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.isRuleTarget
-import org.jetbrains.bazel.languages.starlark.repomapping.calculateLabel
-import org.jetbrains.bazel.languages.starlark.restrictToStarlarkFiles
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiManager;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.language.psi.scope.GlobalSearchScopeUtil;
+import consulo.language.psi.search.PsiSearchHelper;
+import consulo.language.psi.search.ReferencesSearch;
+import consulo.language.psi.search.ReferencesSearchQueryExecutor;
+import consulo.language.psi.search.UsageSearchContext;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.project.Project;
+import consulo.project.util.query.QueryExecutorBase;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.label.Label.Package;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.languages.starlark.StarlarkSearchScope;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelFileType;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.function.Predicate;
+
+import static org.jetbrains.bazel.config.project.isBazelProject;
 
 /**
  * Finds all references to a Bazel target name (e.g., `":lib"`, `"//core:lib"`) across Starlark files.
  */
-internal class BazelTargetReferenceSearcher : QueryExecutorBase<PsiReference, ReferencesSearch.SearchParameters>(true) {
-
-  override fun processQuery(queryParameters: ReferencesSearch.SearchParameters, consumer: Processor<in PsiReference>) {
-    val project = queryParameters.project
-    if (!project.isBazelProject) return
-    val element = queryParameters.elementToSearch
-    if (!element.isRuleTarget()) return
-    val targetName = element.getNameAttributeValue() ?: return
-    if (targetName.isEmpty()) return
-    val psiManager = PsiManager.getInstance(project)
-    val scope = GlobalSearchScopeUtil
-      .toGlobalSearchScope(queryParameters.effectiveSearchScope, project)
-      .restrictToStarlarkFiles(BazelFileType.BUILD)
-    val ownBuildFile = element.containingFile?.originalFile?.virtualFile
-    if (ownBuildFile != null
-        && scope.contains(ownBuildFile)
-        && !processTargetReferences(target = element, candidate = ownBuildFile, psiManager = psiManager, consumer = consumer)) return
-    val text = computeTargetSearchText(targetName, element)
-    PsiSearchHelper
-      .getInstance(project)
-      .processCandidateFilesForText(
-        scope,
-        UsageSearchContext.IN_STRINGS,
-        true,
-        text,
-      ) { virtualFile ->
-        if (virtualFile == ownBuildFile) return@processCandidateFilesForText true
-        processTargetReferences(target = element, candidate = virtualFile, psiManager = psiManager, consumer = consumer)
-      }
-  }
-
-  /**
-   * Computes the search text for [PsiSearchHelper.processCandidateFilesForText].
-   *
-   * The word index finds files containing ALL words from the search text.
-   * Using just the target name (e.g., "core") matches too many files.
-   * Cross-package labels must contain the package path segments (e.g., "//lib/core:core"),
-   * so we search for all package path segments plus the target name.
-   * For shorthand labels like "//lib/bar" (meaning "//lib/bar:bar"), the package path
-   * segments alone are sufficient to find the file.
-   */
-  private fun computeTargetSearchText(targetName: String, element: StarlarkCallExpression): String {
-    val buildFile = element.containingFile?.originalFile?.virtualFile ?: return targetName
-    val packagePath = calculateLabel(element.project, buildFile)?.packagePath as? Package ?: return targetName
-    val searchWords = (packagePath.pathSegments + targetName).toSet()
-    return searchWords.joinToString(separator = " ")
-  }
-
-  private fun processTargetReferences(
-    target: StarlarkCallExpression,
-    candidate: VirtualFile,
-    psiManager: PsiManager,
-    consumer: Processor<in PsiReference>,
-  ): Boolean {
-    val starlarkFile = psiManager.findFile(candidate) as? StarlarkFile ?: return true
-    for (literal in starlarkFile.descendantsOfType<StarlarkStringLiteralExpression>()) {
-      if (literal.isTargetNameAttributeValue()) continue
-      if (!psiManager.pointsToTarget(candidate = literal, target = target)) continue
-      val reference = literal.reference ?: continue
-      if (!consumer.process(reference)) return false
+@ExtensionImpl
+public class BazelTargetReferenceSearcher extends QueryExecutorBase<PsiReference, ReferencesSearch.SearchParameters>
+    implements ReferencesSearchQueryExecutor {
+    public BazelTargetReferenceSearcher() {
+        super(true);
     }
-    return true
-  }
 
-  private fun PsiManager.pointsToTarget(candidate: StarlarkStringLiteralExpression, target: StarlarkCallExpression): Boolean {
-    val targetName = target.getNameAttributeValue() ?: return false
-    // quick exit to avoid reference resolution for unrelated strings
-    if (!candidate.getStringContents().contains(targetName)) return false
-    val resolvedRef = candidate.reference?.resolve() ?: return false
-    return areElementsEquivalent(resolvedRef, target)
-  }
+    @Override
+    @RequiredReadAction
+    public void processQuery(ReferencesSearch.SearchParameters queryParameters, Predicate<? super PsiReference> consumer) {
+        Project project = queryParameters.getProject();
+        if (!isBazelProject(project)) {
+            return;
+        }
+        PsiElement elementToSearch = queryParameters.getElementToSearch();
+        if (!StarlarkCallExpression.isRuleTarget(elementToSearch)) {
+            return;
+        }
+        StarlarkCallExpression element = (StarlarkCallExpression) elementToSearch;
+        String targetName = element.getNameAttributeValue();
+        if (targetName == null) {
+            return;
+        }
+        if (targetName.isEmpty()) {
+            return;
+        }
+        PsiManager psiManager = PsiManager.getInstance(project);
+        GlobalSearchScope scope = StarlarkSearchScope.restrictToStarlarkFiles(
+            GlobalSearchScopeUtil.toGlobalSearchScope(queryParameters.getEffectiveSearchScope(), project),
+            BazelFileType.BUILD
+        );
+        PsiFile containingFile = element.getContainingFile();
+        VirtualFile ownBuildFile = containingFile == null ? null : containingFile.getOriginalFile().getVirtualFile();
+        if (ownBuildFile != null
+            && scope.contains(ownBuildFile)
+            && !processTargetReferences(element, ownBuildFile, psiManager, consumer)) {
+            return;
+        }
+        String text = computeTargetSearchText(targetName, element);
+        PsiSearchHelper
+            .getInstance(project)
+            .processCandidateFilesForText(
+                scope,
+                UsageSearchContext.IN_STRINGS,
+                true,
+                text,
+                virtualFile -> {
+                    if (virtualFile.equals(ownBuildFile)) {
+                        return true;
+                    }
+                    return processTargetReferences(element, virtualFile, psiManager, consumer);
+                }
+            );
+    }
+
+    /**
+     * Computes the search text for {@link PsiSearchHelper#processCandidateFilesForText}.
+     * <p>
+     * The word index finds files containing ALL words from the search text.
+     * Using just the target name (e.g., "core") matches too many files.
+     * Cross-package labels must contain the package path segments (e.g., "//lib/core:core"),
+     * so we search for all package path segments plus the target name.
+     * For shorthand labels like "//lib/bar" (meaning "//lib/bar:bar"), the package path
+     * segments alone are sufficient to find the file.
+     */
+    @RequiredReadAction
+    private String computeTargetSearchText(String targetName, StarlarkCallExpression element) {
+        PsiFile containingFile = element.getContainingFile();
+        VirtualFile buildFile = containingFile == null ? null : containingFile.getOriginalFile().getVirtualFile();
+        if (buildFile == null) {
+            return targetName;
+        }
+        ResolvedLabel label = BazelRepoMappingUtils.calculateLabel(element.getProject(), buildFile);
+        if (label == null || !(label.packagePath() instanceof Package packagePath)) {
+            return targetName;
+        }
+        Set<String> searchWords = new LinkedHashSet<>(packagePath.pathSegments());
+        searchWords.add(targetName);
+        return String.join(" ", searchWords);
+    }
+
+    @RequiredReadAction
+    private boolean processTargetReferences(
+        StarlarkCallExpression target,
+        VirtualFile candidate,
+        PsiManager psiManager,
+        Predicate<? super PsiReference> consumer
+    ) {
+        if (!(psiManager.findFile(candidate) instanceof StarlarkFile starlarkFile)) {
+            return true;
+        }
+        for (StarlarkStringLiteralExpression literal :
+            PsiTreeUtil.findChildrenOfType(starlarkFile, StarlarkStringLiteralExpression.class)) {
+            if (literal.isTargetNameAttributeValue()) {
+                continue;
+            }
+            if (!pointsToTarget(psiManager, literal, target)) {
+                continue;
+            }
+            PsiReference reference = literal.getReference();
+            if (reference == null) {
+                continue;
+            }
+            if (!consumer.test(reference)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @RequiredReadAction
+    private static boolean pointsToTarget(PsiManager receiver, StarlarkStringLiteralExpression candidate, StarlarkCallExpression target) {
+        String targetName = target.getNameAttributeValue();
+        if (targetName == null) {
+            return false;
+        }
+        // quick exit to avoid reference resolution for unrelated strings
+        if (!candidate.getStringContents().contains(targetName)) {
+            return false;
+        }
+        PsiReference reference = candidate.getReference();
+        PsiElement resolvedRef = reference == null ? null : reference.resolve();
+        if (resolvedRef == null) {
+            return false;
+        }
+        return receiver.areElementsEquivalent(resolvedRef, target);
+    }
 }

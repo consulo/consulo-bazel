@@ -1,102 +1,187 @@
-package org.jetbrains.bazel.run.synthetic
+package org.jetbrains.bazel.run.synthetic;
 
-import com.intellij.execution.BeforeRunTask
-import com.intellij.execution.BeforeRunTaskProvider
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.lang.Language
-import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.util.Key
-import com.intellij.util.xmlb.annotations.Attribute
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.target.targetStorage
-import java.nio.file.Files
-import java.nio.file.Path
+import consulo.annotation.component.ExtensionImpl;
+import consulo.dataContext.DataContext;
+import consulo.execution.BeforeRunFragment;
+import consulo.execution.BeforeRunTask;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.language.Language;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.ui.UIAccess;
+import consulo.ui.image.Image;
+import consulo.util.dataholder.Key;
+import consulo.util.xml.serializer.annotation.Attribute;
+import consulo.util.xml.serializer.annotation.Property;
+import consulo.util.xml.serializer.annotation.Transient;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-private const val GENERATE_SYNTHETIC_PROVIDER_NAME: String = "BazelGenerateSyntheticTargetRunTaskProvider"
-@ApiStatus.Internal
-val GENERATE_SYNTHETIC_PROVIDER_ID: Key<GenerateSyntheticTargetRunTaskProvider.Task> = Key.create(GENERATE_SYNTHETIC_PROVIDER_NAME)
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 
-internal val SYNTHETIC_BUILD_SESSION: Key<SyntheticRunTargetSession> = Key.create("bazel.run.synthetic.build_file.vfile")
+import static org.jetbrains.bazel.config.project.getRootDir;
 
-internal data class SyntheticRunTargetSession(
-  val buildFilePath: Path,
-)
+// consulo: IntelliJ BeforeRunTaskProvider is Consulo's BeforeRunFragment (stepsBeforeRunProvider -> project @ExtensionImpl)
+@ExtensionImpl
+public class GenerateSyntheticTargetRunTaskProvider implements BeforeRunFragment<GenerateSyntheticTargetRunTaskProvider.Task> {
+    private static final String GENERATE_SYNTHETIC_PROVIDER_NAME = "BazelGenerateSyntheticTargetRunTaskProvider";
 
-@ApiStatus.Internal
-class GenerateSyntheticTargetRunTaskProvider(
-) : BeforeRunTaskProvider<GenerateSyntheticTargetRunTaskProvider.Task>() {
-  override fun getId(): Key<Task> = GENERATE_SYNTHETIC_PROVIDER_ID
+    // consulo: Consulo before run tasks are identified by their state class (BeforeRunFragment.find(project, Task.class)), the key is
+    // kept for upstream callers
+    public static final Key<Task> GENERATE_SYNTHETIC_PROVIDER_ID = Key.create(GENERATE_SYNTHETIC_PROVIDER_NAME);
 
-  override fun getName(): String = GENERATE_SYNTHETIC_PROVIDER_NAME
+    static final Key<SyntheticRunTargetSession> SYNTHETIC_BUILD_SESSION = Key.create("bazel.run.synthetic.build_file.vfile");
 
-  override fun createTask(runConfiguration: RunConfiguration): Task = Task()
-
-  override fun executeTask(
-    context: DataContext,
-    configuration: RunConfiguration,
-    environment: ExecutionEnvironment,
-    task: Task,
-  ): Boolean {
-    val project = environment.project
-    val taskState = task.taskState
-    val targetLabel = Label.parse(taskState.target)
-    val target = project.targetStorage.getTargetSummary(targetLabel)
-      ?: return false
-    val language = Language.findLanguageByID(taskState.language) ?: return false
-    val generator = SyntheticRunTargetTemplateGenerator.ep.allForLanguage(language)
-      .find { it.isSupported(target) } ?: return false
-    val template = generator.createSyntheticTemplate(target, SyntheticRunTargetTemplateGenerator.Params(taskState.params))
-    val buildFilePath = project.rootDir.toNioPath()
-      .resolve(Constants.DOT_BAZELBSP_DIR_NAME)
-      .resolve("synthetic_targets")
-      .resolve(template.buildFilePath)
-      .resolve("BUILD")
-
-    configuration as BazelRunConfiguration
-    Files.createDirectories(buildFilePath.parent)
-    Files.writeString(buildFilePath, template.buildFileContent)
-
-    // See SyntheticRunExecutionListener
-    val session = SyntheticRunTargetSession(buildFilePath = buildFilePath)
-    configuration.putUserData(SYNTHETIC_BUILD_SESSION, session)
-
-    if (BazelFeatureFlags.syntheticRunDisableVisibilityCheck) {
-      configuration.disableVisibilityCheck()
+    public GenerateSyntheticTargetRunTaskProvider() {
     }
 
-    return true
-  }
-
-  class Task : BeforeRunTask<Task>(GENERATE_SYNTHETIC_PROVIDER_ID),
-               PersistentStateComponent<TaskState>,
-               SyntheticRunTaskMarker {
-    var taskState: TaskState = TaskState()
-    override fun getState(): TaskState {
-      return taskState
+    @Override
+    public String getId() {
+        return GENERATE_SYNTHETIC_PROVIDER_NAME;
     }
 
-    override fun loadState(state: TaskState) {
-      this.taskState = state
+    @Override
+    public LocalizeValue getName() {
+        return LocalizeValue.of(GENERATE_SYNTHETIC_PROVIDER_NAME);
     }
-  }
 
-  class TaskState {
-    @Attribute("target")
-    var target: String = ""
+    // consulo: BeforeRunFragment requires an icon, upstream BeforeRunTaskProvider has none by default
+    @Override
+    public @Nullable Image getIcon(RunConfiguration configuration) {
+        return null;
+    }
 
-    @Attribute("language")
-    var language: String = Language.ANY.id
+    @Override
+    public Class<Task> getStateClass() {
+        return Task.class;
+    }
 
-    @Attribute("params")
-    var params: String? = ""
-  }
+    @Override
+    public Task createTask(RunConfiguration runConfiguration) {
+        return new Task();
+    }
+
+    // consulo: BeforeRunFragment.executeAsync() replaces executeTask(); a task returning false cancels the run like upstream
+    @Override
+    public CompletableFuture<?> executeAsync(
+        UIAccess uiAccess,
+        DataContext context,
+        RunConfiguration configuration,
+        ExecutionEnvironment environment,
+        Task task
+    ) {
+        try {
+            if (executeTask(context, configuration, environment, task)) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return CompletableFuture.failedFuture(new CancellationException());
+        }
+        catch (IOException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    public boolean executeTask(
+        DataContext context,
+        RunConfiguration configuration,
+        ExecutionEnvironment environment,
+        Task task
+    ) throws IOException {
+        Project project = environment.getProject();
+        TaskState taskState = task.getTaskState();
+        Label targetLabel = Label.parse(taskState.target);
+        BuildTarget target = TargetStorage.getTargetStorage(project).getTargetSummary(targetLabel);
+        if (target == null) {
+            return false;
+        }
+        Language language = Language.findLanguageByID(taskState.language);
+        if (language == null) {
+            return false;
+        }
+        SyntheticRunTargetTemplateGenerator generator = null;
+        for (SyntheticRunTargetTemplateGenerator it : SyntheticRunTargetTemplateGenerator.allForLanguage(language)) {
+            if (it.isSupported(target)) {
+                generator = it;
+                break;
+            }
+        }
+        if (generator == null) {
+            return false;
+        }
+        SyntheticRunTargetTemplate template =
+            generator.createSyntheticTemplate(target, new SyntheticRunTargetTemplateGenerator.Params(taskState.params));
+        Path buildFilePath = getRootDir(project).toNioPath()
+            .resolve(Constants.DOT_BAZELBSP_DIR_NAME)
+            .resolve("synthetic_targets")
+            .resolve(template.buildFilePath())
+            .resolve("BUILD");
+
+        BazelRunConfiguration bazelConfiguration = (BazelRunConfiguration) configuration;
+        Files.createDirectories(Objects.requireNonNull(buildFilePath.getParent()));
+        Files.writeString(buildFilePath, template.buildFileContent());
+
+        // See SyntheticRunExecutionListener
+        SyntheticRunTargetSession session = new SyntheticRunTargetSession(/* buildFilePath = */ buildFilePath);
+        bazelConfiguration.putUserData(SYNTHETIC_BUILD_SESSION, session);
+
+        if (BazelFeatureFlags.getSyntheticRunDisableVisibilityCheck()) {
+            bazelConfiguration.disableVisibilityCheck();
+        }
+
+        return true;
+    }
+
+    // consulo: upstream BeforeRunTask<Task>(GENERATE_SYNTHETIC_PROVIDER_ID) + PersistentStateComponent<TaskState>; Consulo before
+    // run tasks are beans serialized by XmlSerializer, the state is a bean property
+    public static class Task extends BeforeRunTask implements SyntheticRunTaskMarker {
+        private TaskState myTaskState = new TaskState();
+
+        @Property(surroundWithTag = false)
+        public TaskState getTaskState() {
+            return myTaskState;
+        }
+
+        public void setTaskState(TaskState taskState) {
+            myTaskState = taskState;
+        }
+
+        @Transient
+        public TaskState getState() {
+            return myTaskState;
+        }
+
+        public void loadState(TaskState state) {
+            myTaskState = state;
+        }
+    }
+
+    public static class TaskState {
+        @Attribute("target")
+        public String target = "";
+
+        @Attribute("language")
+        public String language = Language.ANY.getID();
+
+        @Attribute("params")
+        public @Nullable String params = "";
+    }
+
+    public interface SyntheticRunTaskMarker {
+    }
 }
 
-internal interface SyntheticRunTaskMarker
+record SyntheticRunTargetSession(
+    Path buildFilePath
+) {
+}

@@ -1,25 +1,46 @@
-package org.jetbrains.bazel.settings
+package org.jetbrains.bazel.settings;
 
-import com.intellij.ide.projectView.PresentationData
-import com.intellij.ide.projectView.ProjectViewNode
-import com.intellij.ide.projectView.ProjectViewNodeDecorator
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.SimpleTextAttributes
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.project.projectViewFile
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.project.Project;
+import consulo.project.ui.view.tree.ProjectViewNode;
+import consulo.project.ui.view.tree.ProjectViewNodeDecorator;
+import consulo.ui.ex.SimpleTextAttributes;
+import consulo.ui.ex.tree.PresentationData;
+import consulo.virtualFileSystem.VirtualFile;
+import jakarta.inject.Inject;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.project.DefaultProjectViewService;
 
-internal class ProjectViewFileNodeDecorator(private val project: Project) : ProjectViewNodeDecorator {
-  override fun decorate(node: ProjectViewNode<*>, data: PresentationData) {
-    if (!project.isBazelProject) return
-    val vFile = node.virtualFile ?: return
-    if (!vFile.isProjectViewFile()) return
-    if (project.projectViewFile != vFile) return
-    data.addText(vFile.name + "  ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-    data.addText(BazelPluginBundle.message("project.view.tree.project.view.file.hint"), SimpleTextAttributes.GRAYED_ATTRIBUTES)
-  }
+@ExtensionImpl
+public class ProjectViewFileNodeDecorator implements ProjectViewNodeDecorator {
+    private final Project myProject;
 
-  private fun VirtualFile.isProjectViewFile(): Boolean = extension == Constants.PROJECT_VIEW_FILE_EXTENSION
+    @Inject
+    public ProjectViewFileNodeDecorator(Project project) {
+        myProject = project;
+    }
+
+    @Override
+    public void decorate(ProjectViewNode node, PresentationData data) {
+        if (!org.jetbrains.bazel.config.project.isBazelProject(myProject)) {
+            return;
+        }
+        VirtualFile vFile = node.getVirtualFile();
+        if (vFile == null) {
+            return;
+        }
+        if (!isProjectViewFile(vFile)) {
+            return;
+        }
+        if (!DefaultProjectViewService.getProjectViewFile(myProject).equals(vFile)) {
+            return;
+        }
+        data.addText(vFile.getName() + "  ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES);
+        data.addText(BazelPluginLocalize.projectViewTreeProjectViewFileHint(), SimpleTextAttributes.GRAYED_ATTRIBUTES);
+    }
+
+    private boolean isProjectViewFile(VirtualFile receiver) {
+        return Constants.PROJECT_VIEW_FILE_EXTENSION.equals(receiver.getExtension());
+    }
 }

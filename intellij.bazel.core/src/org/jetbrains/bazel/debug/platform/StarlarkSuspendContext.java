@@ -1,29 +1,67 @@
-package org.jetbrains.bazel.debug.platform
+package org.jetbrains.bazel.debug.platform;
 
-import com.intellij.util.containers.toArray
-import com.intellij.xdebugger.frame.XExecutionStack
-import com.intellij.xdebugger.frame.XSuspendContext
-import org.jetbrains.bazel.debug.connector.StarlarkValueComputer
-import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos as SDP
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.PausedThread;
+import consulo.execution.debug.frame.XExecutionStack;
+import consulo.execution.debug.frame.XSuspendContext;
+import org.jetbrains.bazel.debug.connector.StarlarkValueComputer;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkSuspendContext(
-  threads: List<SDP.PausedThread>,
-  private val valueComputer: StarlarkValueComputer,
-  private val evaluatorProvider: StarlarkDebuggerEvaluator.Provider,
-  primaryThreadId: Long? = null,
-) : XSuspendContext() {
-  private val executionStacks = threads.map { StarlarkExecutionStack(it, valueComputer, evaluatorProvider) }
-  private val activeExecutionStack =
-    primaryThreadId?.let { primary ->
-      val index = threads.indexOfFirst { it.id == primary }
-      executionStacks[index]
-    } ?: executionStacks.firstOrNull()
+import java.util.List;
 
-  override fun getActiveExecutionStack(): XExecutionStack? = activeExecutionStack
+public class StarlarkSuspendContext extends XSuspendContext {
+    private final StarlarkValueComputer myValueComputer;
+    private final StarlarkDebuggerEvaluator.Provider myEvaluatorProvider;
 
-  override fun getExecutionStacks(): Array<XExecutionStack> = executionStacks.toArray(emptyArray())
+    private final List<StarlarkExecutionStack> myExecutionStacks;
+    private final @Nullable StarlarkExecutionStack myActiveExecutionStack;
 
-  override fun computeExecutionStacks(container: XExecutionStackContainer?) {
-    container?.addExecutionStack(executionStacks, true)
-  }
+    // consulo: overload for the upstream default argument (primaryThreadId = null)
+    public StarlarkSuspendContext(
+        List<PausedThread> threads,
+        StarlarkValueComputer valueComputer,
+        StarlarkDebuggerEvaluator.Provider evaluatorProvider
+    ) {
+        this(threads, valueComputer, evaluatorProvider, null);
+    }
+
+    public StarlarkSuspendContext(
+        List<PausedThread> threads,
+        StarlarkValueComputer valueComputer,
+        StarlarkDebuggerEvaluator.Provider evaluatorProvider,
+        @Nullable Long primaryThreadId
+    ) {
+        myValueComputer = valueComputer;
+        myEvaluatorProvider = evaluatorProvider;
+        myExecutionStacks = threads.stream().map(it -> new StarlarkExecutionStack(it, myValueComputer, myEvaluatorProvider)).toList();
+        StarlarkExecutionStack activeExecutionStack = null;
+        if (primaryThreadId != null) {
+            int index = -1;
+            for (int i = 0; i < threads.size(); i++) {
+                if (threads.get(i).getId() == primaryThreadId) {
+                    index = i;
+                    break;
+                }
+            }
+            activeExecutionStack = myExecutionStacks.get(index);
+        }
+        if (activeExecutionStack == null) {
+            activeExecutionStack = myExecutionStacks.isEmpty() ? null : myExecutionStacks.get(0);
+        }
+        myActiveExecutionStack = activeExecutionStack;
+    }
+
+    @Override
+    public @Nullable XExecutionStack getActiveExecutionStack() {
+        return myActiveExecutionStack;
+    }
+
+    @Override
+    public XExecutionStack[] getExecutionStacks() {
+        return myExecutionStacks.toArray(new XExecutionStack[0]);
+    }
+
+    @Override
+    public void computeExecutionStacks(XExecutionStackContainer container) {
+        container.addExecutionStack(myExecutionStacks, true);
+    }
 }

@@ -1,15 +1,36 @@
-package org.jetbrains.bazel.languages.starlark.annotation
+package org.jetbrains.bazel.languages.starlark.annotation;
 
-import com.intellij.lang.annotation.AnnotationHolder
-import com.intellij.lang.annotation.Annotator
-import com.intellij.openapi.project.DumbAware
-import com.intellij.psi.PsiElement
-import org.jetbrains.bazel.languages.starlark.highlighting.starlarkSemanticHighlightingColor
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.colorScheme.TextAttributesKey;
+import consulo.language.Language;
+import consulo.language.editor.annotation.AnnotationHolder;
+import consulo.language.editor.annotation.Annotator;
+import consulo.language.editor.annotation.AnnotatorFactory;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.highlighting.StarlarkSemanticHighlighting;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkFunctionAnnotator : Annotator, DumbAware {
+// consulo: Consulo registers annotators through AnnotatorFactory; the stateless annotator is its own factory
+@ExtensionImpl
+public class StarlarkFunctionAnnotator implements Annotator, AnnotatorFactory, DumbAware {
 
-  override fun annotate(element: PsiElement, holder: AnnotationHolder) {
-    val highlighting = element.starlarkSemanticHighlightingColor()
-    if (highlighting != null) holder.annotateSilentInfo(element, highlighting)
-  }
+    @Override
+    public void annotate(PsiElement element, AnnotationHolder holder) {
+        TextAttributesKey highlighting = StarlarkSemanticHighlighting.starlarkSemanticHighlightingColor(element);
+        if (highlighting != null) {
+            AnnotatorUtils.annotateSilentInfo(holder, element, highlighting);
+        }
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    @Override
+    public @Nullable Annotator createAnnotator() {
+        return this;
+    }
 }

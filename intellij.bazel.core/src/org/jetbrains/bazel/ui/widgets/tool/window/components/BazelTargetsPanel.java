@@ -1,125 +1,142 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.components
+package org.jetbrains.bazel.ui.widgets.tool.window.components;
 
-import com.intellij.openapi.project.Project
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBPanel
-import com.intellij.ui.components.JBScrollPane
-import com.intellij.util.concurrency.annotations.RequiresEdt
-import com.intellij.util.ui.UIUtil
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.ui.widgets.tool.window.utils.BspShortcuts
-import org.jetbrains.bazel.ui.widgets.tool.window.utils.SimpleAction
-import java.awt.BorderLayout
-import java.awt.event.KeyAdapter
-import java.awt.event.KeyEvent
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
-import javax.swing.SwingConstants
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.project.Project;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.awt.JBLabel;
+import consulo.ui.ex.awt.JBPanel;
+import consulo.ui.ex.awt.JBScrollPane;
+import consulo.ui.ex.awt.UIUtil;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.ui.widgets.tool.window.utils.BspShortcuts;
+import org.jetbrains.bazel.ui.widgets.tool.window.utils.SimpleAction;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelTargetsPanel(project: Project, model: BazelTargetsPanelModel) : JBPanel<BazelTargetsPanel>(BorderLayout()) {
-  private val searchBarPanel = SearchBarPanel(model)
-  private val targetTree = BuildTargetTree(project = project)
-  private val scrollPane = JBScrollPane(targetTree)
+import javax.swing.SwingConstants;
+import java.awt.BorderLayout;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
 
-  private val message =
-    JBLabel(
-      BazelPluginBundle.message("widget.no.targets.message"),
-      SwingConstants.CENTER,
-    )
+public class BazelTargetsPanel extends JBPanel<BazelTargetsPanel> {
+    private final SearchBarPanel mySearchBarPanel;
+    private final BuildTargetTree myTargetTree;
+    private final JBScrollPane myScrollPane;
 
-  init {
-    targetTree.addKeyListener(SearchKeyAdapter())
-    message.addMouseListener(SearchBarFocusAdapter())
+    private final JBLabel myMessage =
+        new JBLabel(
+            BazelPluginLocalize.widgetNoTargetsMessage().get(),
+            SwingConstants.CENTER
+        );
 
-    searchBarPanel.isEnabled = true
-    searchBarPanel.registerSearchShortcutsOn(scrollPane)
-    registerMoveDownShortcut(searchBarPanel)
-    add(searchBarPanel, BorderLayout.NORTH)
-    showTargetTree()
-  }
+    public BazelTargetsPanel(Project project, BazelTargetsPanelModel model) {
+        super(new BorderLayout());
+        mySearchBarPanel = new SearchBarPanel(model);
+        myTargetTree = new BuildTargetTree(project);
+        myScrollPane = new JBScrollPane(myTargetTree);
 
-  private fun showTargetTree() {
-    if (scrollPane !in components) {
-      add(scrollPane, BorderLayout.CENTER)
-    }
-  }
+        myTargetTree.addKeyListener(new SearchKeyAdapter());
+        myMessage.addMouseListener(new SearchBarFocusAdapter());
 
-  private fun hideTargetTree() {
-    remove(scrollPane)
-  }
-
-  private fun showMessage() {
-    if (message !in components) {
-      add(message, BorderLayout.CENTER)
-    }
-  }
-
-  private fun hideMessage() {
-    remove(message)
-  }
-
-  @RequiresEdt(generateAssertion = false /* IJPL-115548 */)
-  fun update(
-    visibleTargets: List<Label>,
-    searchRegex: Regex?,
-    hasAnyTargets: Boolean,
-    displayAsTree: Boolean,
-  ) {
-    val isSearchActive = searchRegex != null
-    // Update the tree highlighter to highlight search matches
-    if (isSearchActive) {
-      targetTree.cellRenderer = TargetTreeCellRenderer { QueryHighlighter.highlight(it, searchRegex) }
-    } else {
-      targetTree.cellRenderer = TargetTreeCellRenderer { it }
+        mySearchBarPanel.setEnabled(true);
+        mySearchBarPanel.registerSearchShortcutsOn(myScrollPane);
+        registerMoveDownShortcut(mySearchBarPanel);
+        add(mySearchBarPanel, BorderLayout.NORTH);
+        showTargetTree();
     }
 
-    // Update visibility of components based on search results
-    if (!hasAnyTargets) {
-      message.text = BazelPluginBundle.message("widget.no.targets.message")
-      hideTargetTree()
-      showMessage()
-    } else if (isSearchActive && visibleTargets.isEmpty()) {
-      message.text = BazelPluginBundle.message("widget.target.search.no.results")
-      hideTargetTree()
-      showMessage()
-    } else {
-      hideMessage()
-      showTargetTree()
+    private void showTargetTree() {
+        if (!Arrays.asList(getComponents()).contains(myScrollPane)) {
+            add(myScrollPane, BorderLayout.CENTER);
+        }
     }
 
-    targetTree.updateTree(visibleTargets, displayAsTree)
-
-    // Refresh the panel
-    revalidate()
-    repaint()
-  }
-
-  private fun registerMoveDownShortcut(searchBarPanel: SearchBarPanel) {
-    val action =
-      SimpleAction {
-//      searchBarPanel.selectionRows = intArrayOf(0)
-        requestFocus()
-      }
-    action.registerCustomShortcutSet(BspShortcuts.fromSearchBarToTargets, searchBarPanel)
-  }
-
-  private inner class SearchKeyAdapter : KeyAdapter() {
-    override fun keyTyped(e: KeyEvent) {
-      if (!e.isConsumed && UIUtil.isReallyTypedEvent(e)) {
-        searchBarPanel.requestFocus()
-        searchBarPanel.processKeyEvent(e)
-        e.consume()
-      }
+    private void hideTargetTree() {
+        remove(myScrollPane);
     }
-  }
 
-  private inner class SearchBarFocusAdapter : MouseAdapter() {
-    override fun mouseClicked(e: MouseEvent?) {
-      if (e != null && !e.isConsumed && e.button == MouseEvent.BUTTON1) {
-        searchBarPanel.requestFocus()
-        e.consume()
-      }
+    private void showMessage() {
+        if (!Arrays.asList(getComponents()).contains(myMessage)) {
+            add(myMessage, BorderLayout.CENTER);
+        }
     }
-  }
+
+    private void hideMessage() {
+        remove(myMessage);
+    }
+
+    @RequiredUIAccess
+    public void update(
+        List<Label> visibleTargets,
+        @Nullable Pattern searchRegex,
+        boolean hasAnyTargets,
+        boolean displayAsTree
+    ) {
+        boolean isSearchActive = searchRegex != null;
+        // Update the tree highlighter to highlight search matches
+        if (isSearchActive) {
+            Pattern regex = Objects.requireNonNull(searchRegex);
+            myTargetTree.setCellRenderer(new TargetTreeCellRenderer(it -> QueryHighlighter.highlight(it, regex)));
+        }
+        else {
+            myTargetTree.setCellRenderer(new TargetTreeCellRenderer(it -> it));
+        }
+
+        // Update visibility of components based on search results
+        if (!hasAnyTargets) {
+            myMessage.setText(BazelPluginLocalize.widgetNoTargetsMessage().get());
+            hideTargetTree();
+            showMessage();
+        }
+        else if (isSearchActive && visibleTargets.isEmpty()) {
+            myMessage.setText(BazelPluginLocalize.widgetTargetSearchNoResults().get());
+            hideTargetTree();
+            showMessage();
+        }
+        else {
+            hideMessage();
+            showTargetTree();
+        }
+
+        myTargetTree.updateTree(visibleTargets, displayAsTree);
+
+        // Refresh the panel
+        revalidate();
+        repaint();
+    }
+
+    private void registerMoveDownShortcut(SearchBarPanel searchBarPanel) {
+        SimpleAction action =
+            new SimpleAction(() -> {
+//              searchBarPanel.selectionRows = intArrayOf(0)
+                requestFocus();
+            });
+        action.registerCustomShortcutSet(BspShortcuts.fromSearchBarToTargets, searchBarPanel);
+    }
+
+    private class SearchKeyAdapter extends KeyAdapter {
+        @Override
+        public void keyTyped(KeyEvent e) {
+            if (!e.isConsumed() && UIUtil.isReallyTypedEvent(e)) {
+                mySearchBarPanel.requestFocus();
+                mySearchBarPanel.processKeyEvent(e);
+                e.consume();
+            }
+        }
+    }
+
+    private class SearchBarFocusAdapter extends MouseAdapter {
+        @Override
+        public void mouseClicked(@Nullable MouseEvent e) {
+            if (e != null && !e.isConsumed() && e.getButton() == MouseEvent.BUTTON1) {
+                mySearchBarPanel.requestFocus();
+                e.consume();
+            }
+        }
+    }
 }

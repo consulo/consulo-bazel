@@ -1,56 +1,173 @@
-package org.jetbrains.bazel.ui.settings
+package org.jetbrains.bazel.ui.settings;
 
-import com.intellij.openapi.extensions.BaseExtensionPointName
-import com.intellij.openapi.options.BoundCompositeSearchableConfigurable
-import com.intellij.openapi.options.Configurable
-import com.intellij.openapi.options.ConfigurableProvider
-import com.intellij.openapi.options.UnnamedConfigurable
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.DialogPanel
-import com.intellij.ui.dsl.builder.panel
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.settings.bazel.bazelProjectSettings
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.configurable.Configurable;
+import consulo.configurable.ConfigurableProvider;
+import consulo.configurable.ConfigurationException;
+import consulo.configurable.OptionalConfigurable;
+import consulo.configurable.ProjectConfigurable;
+import consulo.configurable.SearchableConfigurable;
+import consulo.configurable.UnnamedConfigurable;
+import consulo.disposer.Disposable;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.ui.Component;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.awt.FormBuilder;
+import consulo.ui.ex.awtUnsafe.TargetAWT;
+import jakarta.inject.Inject;
+import org.jetbrains.bazel.settings.bazel.BazelProjectSettings;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelExperimentalProjectSettingsConfigurable(private val project: Project) :
-  BoundCompositeSearchableConfigurable<UnnamedConfigurable>(
-    displayName = BazelPluginBundle.message(DISPLAY_NAME_KEY),
-    helpTopic = "",
-  ),
-  Configurable.WithEpDependencies {
-  private var currentProjectSettings = project.bazelProjectSettings
+import javax.swing.JComponent;
+import javax.swing.JPanel;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
-  override fun createPanel(): DialogPanel =
-    panel {
-      // add settings from extensions
-      configurables
-        .sortedBy { c -> (c as? Configurable)?.displayName ?: "" }
-        .forEach { appendDslConfigurable(it) }
+// consulo: upstream BoundCompositeSearchableConfigurable (Kotlin UI DSL) -> ProjectConfigurable with a FormBuilder panel,
+// the composite part (child configurables of the settings providers) is implemented by hand
+@ExtensionImpl
+class BazelExperimentalProjectSettingsConfigurable implements ProjectConfigurable, SearchableConfigurable, OptionalConfigurable {
+    public static final String ID = "bazel.experimental.project.settings";
+    public static final String DISPLAY_NAME_KEY = "project.settings.experimental.settings";
+
+    private final Project myProject;
+
+    private BazelProjectSettings myCurrentProjectSettings;
+
+    private @Nullable List<UnnamedConfigurable> myConfigurables = null;
+
+    @Inject
+    public BazelExperimentalProjectSettingsConfigurable(Project project) {
+        myProject = project;
+        myCurrentProjectSettings = BazelProjectSettings.getBazelProjectSettings(project);
     }
 
-  override fun getDependencies(): List<BaseExtensionPointName<*>> = listOf(BazelExperimentalSettingsProvider.ep)
-
-  override fun createConfigurables(): List<UnnamedConfigurable> =
-    project.bazelExperimentalSettingsProviders.map {
-      it.createConfigurable(project)
+    private JComponent createPanel(Disposable parentDisposable) {
+        FormBuilder builder = FormBuilder.createFormBuilder();
+        // add settings from extensions
+        List<UnnamedConfigurable> sortedConfigurables = new ArrayList<>(getConfigurables());
+        sortedConfigurables.sort(
+            Comparator.comparing(
+                (UnnamedConfigurable c) -> c instanceof Configurable configurable ? configurable.getDisplayName().get() : ""
+            )
+        );
+        for (UnnamedConfigurable it : sortedConfigurables) {
+            Component component = it.createUIComponent(parentDisposable);
+            if (component != null) {
+                builder.addComponent(TargetAWT.to(component));
+            }
+        }
+        return builder.addComponentFillVertically(new JPanel(), 0).getPanel();
     }
 
-  override fun reset() {
-    super<BoundCompositeSearchableConfigurable>.reset()
-    currentProjectSettings = project.bazelProjectSettings
-  }
+    @RequiredUIAccess
+    @Override
+    public @Nullable Component createUIComponent(Disposable parentDisposable) {
+        return TargetAWT.wrap(createPanel(parentDisposable));
+    }
 
-  override fun getDisplayName(): String = BazelPluginBundle.message(DISPLAY_NAME_KEY)
+    // consulo: no Configurable.WithEpDependencies
+    //override fun getDependencies(): List<BaseExtensionPointName<*>> = listOf(BazelExperimentalSettingsProvider.ep)
 
-  override fun getId(): String = ID
+    private List<UnnamedConfigurable> createConfigurables() {
+        List<UnnamedConfigurable> result = new ArrayList<>();
+        for (BazelSettingsProvider it : BazelSettingsProvider.getBazelExperimentalSettingsProviders(myProject)) {
+            result.add(it.createConfigurable(myProject));
+        }
+        return result;
+    }
 
-  companion object {
-    const val ID = "bazel.experimental.project.settings"
-    const val DISPLAY_NAME_KEY = "project.settings.experimental.settings"
-  }
+    // consulo: upstream BoundCompositeSearchableConfigurable.configurables
+    private List<UnnamedConfigurable> getConfigurables() {
+        List<UnnamedConfigurable> configurables = myConfigurables;
+        if (configurables == null) {
+            configurables = createConfigurables();
+            myConfigurables = configurables;
+        }
+        return configurables;
+    }
+
+    @RequiredUIAccess
+    @Override
+    public boolean isModified() {
+        for (UnnamedConfigurable it : getConfigurables()) {
+            if (it.isModified()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @RequiredUIAccess
+    @Override
+    public void apply() throws ConfigurationException {
+        for (UnnamedConfigurable it : getConfigurables()) {
+            it.apply();
+        }
+    }
+
+    @RequiredUIAccess
+    @Override
+    public void reset() {
+        for (UnnamedConfigurable it : getConfigurables()) {
+            it.reset();
+        }
+        myCurrentProjectSettings = BazelProjectSettings.getBazelProjectSettings(myProject);
+    }
+
+    @RequiredUIAccess
+    @Override
+    public void disposeUIResources() {
+        List<UnnamedConfigurable> configurables = myConfigurables;
+        if (configurables != null) {
+            for (UnnamedConfigurable it : configurables) {
+                it.disposeUIResources();
+            }
+        }
+        myConfigurables = null;
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.projectSettingsExperimentalSettings();
+    }
+
+    @Override
+    public String getId() {
+        return ID;
+    }
+
+    // consulo: upstream nested <configurable> of <projectConfigurable id="bazel.project.settings">
+    @Override
+    public @Nullable String getParentId() {
+        return BazelProjectSettingsConfigurable.ID;
+    }
+
+    // consulo: upstream BazelExperimentalProjectSettingsConfigurableProvider.canCreateConfigurable()
+    @Override
+    public boolean needDisplay() {
+        return !BazelSettingsProvider.getBazelExperimentalSettingsProviders(myProject).isEmpty();
+    }
 }
 
-internal class BazelExperimentalProjectSettingsConfigurableProvider(private val project: Project) : ConfigurableProvider() {
-  override fun canCreateConfigurable(): Boolean = project.bazelExperimentalSettingsProviders.isNotEmpty()
+class BazelExperimentalProjectSettingsConfigurableProvider extends ConfigurableProvider {
+    private final Project myProject;
 
-  override fun createConfigurable(): Configurable = BazelExperimentalProjectSettingsConfigurable(project)
+    BazelExperimentalProjectSettingsConfigurableProvider(Project project) {
+        myProject = project;
+    }
+
+    public boolean canCreateConfigurable() {
+        return !BazelSettingsProvider.getBazelExperimentalSettingsProviders(myProject).isEmpty();
+    }
+
+    // consulo: not used, Consulo instantiates the @ExtensionImpl BazelExperimentalProjectSettingsConfigurable directly
+    // (canCreateConfigurable() is OptionalConfigurable.needDisplay() there)
+    @Override
+    public Configurable createConfigurable() {
+        return new BazelExperimentalProjectSettingsConfigurable(myProject);
+    }
 }

@@ -1,56 +1,89 @@
-package org.jetbrains.bazel.ui.projectTree.action
+package org.jetbrains.bazel.ui.projectTree.action;
 
-import com.intellij.execution.ExecutionBundle
-import com.intellij.execution.actions.ConfigurationContext
-import com.intellij.execution.actions.LazyRunConfigurationProducer
-import com.intellij.execution.configurations.ConfigurationFactory
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectFileIndex
-import com.intellij.openapi.util.Ref
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiDirectory
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.languages.starlark.repomapping.calculateWildcardLabel
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.config.bazelRunConfigurationFactory
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.action.ConfigurationContext;
+import consulo.execution.action.RunConfigurationProducer;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.localize.ExecutionLocalize;
+import consulo.language.psi.PsiDirectory;
+import consulo.language.psi.PsiElement;
+import consulo.module.content.ProjectFileIndex;
+import consulo.project.Project;
+import consulo.util.lang.ref.SimpleReference;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class BazelAllTestsInDirectoryRunConfigurationProducer : LazyRunConfigurationProducer<BazelRunConfiguration>() {
-  override fun isDumbAware(): Boolean = true
+import java.util.List;
 
-  override fun getConfigurationFactory(): ConfigurationFactory = bazelRunConfigurationFactory
+import static org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils.calculateWildcardLabel;
 
-  override fun setupConfigurationFromContext(
-    configuration: BazelRunConfiguration,
-    context: ConfigurationContext,
-    sourceElement: Ref<PsiElement?>,
-  ): Boolean {
-    val project = context.project
-    if (!isProjectApplicable(project)) return false
-    val selectedDirectory = getSelectedDirectory(context) ?: return false
-    if (ProjectFileIndex.getInstance(project).isExcluded(selectedDirectory)) return false
+@ExtensionImpl
+public class BazelAllTestsInDirectoryRunConfigurationProducer extends RunConfigurationProducer<BazelRunConfiguration> {
+    public BazelAllTestsInDirectoryRunConfigurationProducer() {
+        super(BazelRunConfigurationType.getBazelRunConfigurationFactory());
+    }
 
-    val testTarget = calculateWildcardLabel(context.project, selectedDirectory) ?: return false
-    configuration.updateTargets(listOf(testTarget))
-    configuration.name = ExecutionBundle.message("test.in.scope.presentable.text", selectedDirectory.name)
-    return true
-  }
+    // consulo: RunConfigurationProducer has no isDumbAware() (upstream returns true)
 
-  open fun isProjectApplicable(project: Project): Boolean =
-    project.isBazelProject
+    @Override
+    public ConfigurationFactory getConfigurationFactory() {
+        return BazelRunConfigurationType.getBazelRunConfigurationFactory();
+    }
 
-  override fun isConfigurationFromContext(
-    configuration: BazelRunConfiguration,
-    context: ConfigurationContext,
-  ): Boolean {
-    val selectedDirectory = getSelectedDirectory(context) ?: return false
-    val testTarget = calculateWildcardLabel(context.project, selectedDirectory) ?: return false
-    if (configuration.targets != listOf(testTarget)) return false
-    return configuration.name.startsWith(ExecutionBundle.message("test.in.scope.presentable.text", selectedDirectory.name))
-  }
+    @Override
+    protected boolean setupConfigurationFromContext(
+        BazelRunConfiguration configuration,
+        ConfigurationContext context,
+        SimpleReference<PsiElement> sourceElement
+    ) {
+        Project project = context.getProject();
+        if (!isProjectApplicable(project)) {
+            return false;
+        }
+        VirtualFile selectedDirectory = getSelectedDirectory(context);
+        if (selectedDirectory == null) {
+            return false;
+        }
+        if (ProjectFileIndex.getInstance(project).isExcluded(selectedDirectory)) {
+            return false;
+        }
 
-  private fun getSelectedDirectory(context: ConfigurationContext): VirtualFile? =
-    (context.psiLocation as? PsiDirectory)?.virtualFile
+        Label.ResolvedLabel testTarget = calculateWildcardLabel(context.getProject(), selectedDirectory);
+        if (testTarget == null) {
+            return false;
+        }
+        configuration.updateTargets(List.of(testTarget), null);
+        configuration.setName(ExecutionLocalize.testInScopePresentableText(selectedDirectory.getName()).get());
+        return true;
+    }
+
+    public boolean isProjectApplicable(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project);
+    }
+
+    @Override
+    public boolean isConfigurationFromContext(
+        BazelRunConfiguration configuration,
+        ConfigurationContext context
+    ) {
+        VirtualFile selectedDirectory = getSelectedDirectory(context);
+        if (selectedDirectory == null) {
+            return false;
+        }
+        Label.ResolvedLabel testTarget = calculateWildcardLabel(context.getProject(), selectedDirectory);
+        if (testTarget == null) {
+            return false;
+        }
+        if (!configuration.getTargets().equals(List.of(testTarget))) {
+            return false;
+        }
+        return configuration.getName().startsWith(ExecutionLocalize.testInScopePresentableText(selectedDirectory.getName()).get());
+    }
+
+    private @Nullable VirtualFile getSelectedDirectory(ConfigurationContext context) {
+        return context.getPsiLocation() instanceof PsiDirectory psiDirectory ? psiDirectory.getVirtualFile() : null;
+    }
 }

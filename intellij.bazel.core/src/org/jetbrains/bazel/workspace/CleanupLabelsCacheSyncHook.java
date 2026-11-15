@@ -1,11 +1,16 @@
-package org.jetbrains.bazel.workspace
+package org.jetbrains.bazel.workspace;
 
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.sync.ProjectPostSyncHook
-import org.jetbrains.bazel.sync.SyncCache
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.sync.ProjectPostSyncHook;
 
-internal class CleanupLabelsCacheSyncHook : ProjectPostSyncHook {
-  override suspend fun onPostSync(environment: ProjectPostSyncHook.ProjectPostSyncHookEnvironment) {
-    Label.cleanInternCache()
-  }
+import java.util.concurrent.CompletableFuture;
+
+@ExtensionImpl
+public class CleanupLabelsCacheSyncHook implements ProjectPostSyncHook {
+    @Override
+    public CompletableFuture<Void> onPostSync(ProjectPostSyncHook.ProjectPostSyncHookEnvironment environment) {
+        Label.cleanInternCache();
+        return CompletableFuture.completedFuture(null);
+    }
 }

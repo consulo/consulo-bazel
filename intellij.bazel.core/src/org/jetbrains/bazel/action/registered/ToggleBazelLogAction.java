@@ -1,23 +1,36 @@
-package org.jetbrains.bazel.action.registered
+package org.jetbrains.bazel.action.registered;
 
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.project.DumbAwareToggleAction
-import com.intellij.openapi.util.registry.Registry
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.isBazelProject
+import consulo.annotation.component.ActionImpl;
+import consulo.application.util.registry.Registry;
+import consulo.bazel.commons.BazelRegistryKeys;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.DumbAwareToggleAction;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
 
-internal class ToggleBazelLogAction : DumbAwareToggleAction() {
-  override fun isSelected(e: AnActionEvent): Boolean = Registry.`is`(BazelFeatureFlags.ENABLE_LOG)
+@ActionImpl(id = "Bazel.ToggleBazelLogAction")
+public class ToggleBazelLogAction extends DumbAwareToggleAction {
+    public ToggleBazelLogAction() {
+        super(BazelPluginLocalize.actionBazelTogglebazellogactionText());
+    }
 
-  override fun setSelected(e: AnActionEvent, state: Boolean) {
-    Registry.get(BazelFeatureFlags.ENABLE_LOG).setValue(state)
-  }
+    @Override
+    public boolean isSelected(AnActionEvent e) {
+        return BazelRegistryKeys.is(BazelFeatureFlags.ENABLE_LOG);
+    }
 
-  override fun update(e: AnActionEvent) {
-    super.update(e)
-    e.presentation.isEnabledAndVisible = e.project?.isBazelProject == true
-  }
+    @Override
+    public void setSelected(AnActionEvent e, boolean state) {
+        Registry.get(BazelFeatureFlags.ENABLE_LOG).setValue(state);
+    }
 
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+    @Override
+    public void update(AnActionEvent e) {
+        super.update(e);
+        Project project = e.getData(Project.KEY);
+        e.getPresentation().setEnabledAndVisible(project != null && org.jetbrains.bazel.config.project.isBazelProject(project));
+    }
+
+    // consulo: ToggleAction always updates in background (upstream ActionUpdateThread.BGT)
 }

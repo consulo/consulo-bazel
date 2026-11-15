@@ -1,154 +1,255 @@
-package org.jetbrains.bazel.ignore
+package org.jetbrains.bazel.ignore;
 
-import com.intellij.build.events.MessageEvent
-import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.diagnostic.rethrowControlFlowException
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.commons.getLocalRepositories
-import org.jetbrains.bazel.languages.starlark.repomapping.canonicalRepoNameToPath
-import org.jetbrains.bazel.progress.syncConsole
-import org.jetbrains.bazel.sync.ProjectSyncHook
-import org.jetbrains.bazel.sync.ProjectSyncHook.ProjectSyncHookEnvironment
-import org.jetbrains.bazel.sync.environment.BazelProjectInfoService
-import org.jetbrains.bazel.sync.withSubtask
-import java.nio.file.Path
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.io.path.exists
-import kotlin.io.path.readText
-import kotlin.io.path.relativeToOrNull
+import consulo.annotation.component.ExtensionImpl;
+import consulo.annotation.component.ServiceImpl;
+import consulo.build.ui.event.MessageEvent;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.lang.ControlFlowException;
+import consulo.virtualFileSystem.VirtualFile;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingProvider;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.sync.ProjectSyncHook;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class DefaultBazelIgnoreService(val project: Project): BazelIgnoreService {
-  // We are not interested in live updates since Bazel uses ignore only during sync
-  private val state = AtomicReference<State?>(null)
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 
-  override fun isIgnored(path: Path): Boolean {
-    val state = getOrUpdate() ?: return false
+@ServiceImpl
+@Singleton
+public class DefaultBazelIgnoreService implements BazelIgnoreService {
+    public static final Logger LOG = Logger.getInstance(DefaultBazelIgnoreService.class);
 
-    val absolutePath = if (path.isAbsolute) {
-      if (!path.startsWith(state.workspaceRoot))
-        return false
-      path
-    } else {
-      state.workspaceRoot.resolve(path)
+    private final Project myProject;
+
+    // We are not interested in live updates since Bazel uses ignore only during sync
+    private final AtomicReference<@Nullable State> myState = new AtomicReference<>(null);
+
+    @Inject
+    public DefaultBazelIgnoreService(Project project) {
+        myProject = project;
     }
 
-    val matchers = state.matchesFor(absolutePath) ?: return false
-    val relativePath = absolutePath.relativeToOrNull(matchers.first) ?: return false
-    return matchers.second.any { it.match(relativePath) }
-  }
-
-  private fun getOrUpdate(): State? {
-    val state = this.state.get()
-    if (state != null)
-      return state
-
-    val projectRootDir = project.service<BazelProjectInfoService>().projectRootDir ?: return null
-    val localRepos = project.canonicalRepoNameToPath.values
-    val newState = scan(Path.of(projectRootDir.path), localRepos)
-    if (this.state.compareAndSet(null, newState)) {
-      return newState
+    public Project getProject() {
+        return myProject;
     }
 
-    return this.state.get()
-  }
+    @Override
+    public boolean isIgnored(Path path) {
+        State state = getOrUpdate();
+        if (state == null) {
+            return false;
+        }
 
-  fun update (workspaceRoot: Path, repoMapping: RepoMapping): State {
-    val state = scan(workspaceRoot, repoMapping.getLocalRepositories().localRepositories.values)
-    this.state.set(state)
-    return state
-  }
+        Path absolutePath;
+        if (path.isAbsolute()) {
+            if (!path.startsWith(state.getWorkspaceRoot())) {
+                return false;
+            }
+            absolutePath = path;
+        }
+        else {
+            absolutePath = state.getWorkspaceRoot().resolve(path);
+        }
 
-  private fun scan(workspaceRoot: Path, localRepos: Collection<Path>): State {
-    val errors = ArrayList<Path>()
-    val patterns = buildMap {
-      put(workspaceRoot, scanRepoRoot(workspaceRoot, errors))
-      localRepos.forEach { localRepo ->
-        val path = workspaceRoot.resolve(localRepo)
-        put(path, scanRepoRoot(path, errors))
-      }
+        Map.Entry<Path, List<BazelIgnoreMatcher>> matchers = matchesFor(state, absolutePath);
+        if (matchers == null) {
+            return false;
+        }
+        Path relativePath = relativeToOrNull(absolutePath, matchers.getKey());
+        if (relativePath == null) {
+            return false;
+        }
+        for (BazelIgnoreMatcher it : matchers.getValue()) {
+            if (it.match(relativePath)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    return State(
-      workspaceRoot = workspaceRoot,
-      patterns = patterns,
-      errorsParsing = errors,
-    )
-  }
+    private @Nullable State getOrUpdate() {
+        State state = this.myState.get();
+        if (state != null) {
+            return state;
+        }
 
-  private fun scanRepoRoot(path: Path, errors: MutableList<Path>): List<BazelIgnoreMatcher> {
-    val matchers = ArrayList<BazelIgnoreMatcher>()
+        VirtualFile projectRootDir = myProject.getInstance(BazelProjectInfoService.class).getProjectRootDir();
+        if (projectRootDir == null) {
+            return null;
+        }
+        Collection<Path> localRepos = BazelRepoMappingProvider.getCanonicalRepoNameToPath(myProject).values();
+        State newState = scan(Path.of(projectRootDir.getPath()), localRepos);
+        if (this.myState.compareAndSet(null, newState)) {
+            return newState;
+        }
 
-    val bazelIgnore = path.resolve(Constants.BAZEL_IGNORE_FILE_NAME)
-    if (bazelIgnore.exists()) {
-      try {
-        matchers.add(BazelIgnoreMatcherFactory.fromBazelIgnoreFile(bazelIgnore.readText(Charsets.UTF_8)))
-      } catch (ex: Throwable) {
-        rethrowControlFlowException(ex)
-        errors.add(path)
-        log.error("Error scanning file $bazelIgnore", ex)
-      }
+        return this.myState.get();
     }
 
-    val repoBazel = path.resolve(Constants.REPO_BAZEL_FILE_NAME)
-    if (repoBazel.exists()) {
-      try {
-        matchers.add(BazelIgnoreMatcherFactory.fromRepoBazelFile(repoBazel.readText(Charsets.UTF_8)))
-      } catch (ex: Throwable) {
-        rethrowControlFlowException(ex)
-        errors.add(path)
-        log.error("Error scanning file $repoBazel", ex)
-      }
+    public State update(Path workspaceRoot, RepoMapping repoMapping) {
+        State state = scan(workspaceRoot, RepoMapping.getLocalRepositories(repoMapping).localRepositories().values());
+        this.myState.set(state);
+        return state;
     }
 
-    return matchers
-  }
+    private State scan(Path workspaceRoot, Collection<Path> localRepos) {
+        List<Path> errors = new ArrayList<>();
+        Map<Path, List<BazelIgnoreMatcher>> patterns = new LinkedHashMap<>();
+        patterns.put(workspaceRoot, scanRepoRoot(workspaceRoot, errors));
+        for (Path localRepo : localRepos) {
+            Path path = workspaceRoot.resolve(localRepo);
+            patterns.put(path, scanRepoRoot(path, errors));
+        }
 
-  private fun State.matchesFor(path: Path): Pair<Path, List<BazelIgnoreMatcher>>? {
-    var p: Path? = path
-    while (p != null) {
-      val machers = patterns[p]
-      if (machers != null)
-        return p to machers
-      p = p.parent
+        return new State(
+            workspaceRoot,
+            patterns,
+            errors
+        );
     }
-    return null
-  }
 
-  class State(
-    val workspaceRoot: Path,
-    val patterns: Map<Path, List<BazelIgnoreMatcher>>,
-    val errorsParsing: List<Path>,
-  )
+    private List<BazelIgnoreMatcher> scanRepoRoot(Path path, List<Path> errors) {
+        List<BazelIgnoreMatcher> matchers = new ArrayList<>();
 
-  companion object {
-    val log = logger<DefaultBazelIgnoreService>()
-  }
+        Path bazelIgnore = path.resolve(Constants.BAZEL_IGNORE_FILE_NAME);
+        if (Files.exists(bazelIgnore)) {
+            try {
+                matchers.add(BazelIgnoreMatcher.BazelIgnoreMatcherFactory.fromBazelIgnoreFile(
+                    Files.readString(bazelIgnore, StandardCharsets.UTF_8)
+                ));
+            }
+            catch (Throwable ex) {
+                rethrowControlFlowException(ex);
+                errors.add(path);
+                LOG.error("Error scanning file " + bazelIgnore, ex);
+            }
+        }
+
+        Path repoBazel = path.resolve(Constants.REPO_BAZEL_FILE_NAME);
+        if (Files.exists(repoBazel)) {
+            try {
+                matchers.add(BazelIgnoreMatcher.BazelIgnoreMatcherFactory.fromRepoBazelFile(
+                    Files.readString(repoBazel, StandardCharsets.UTF_8)
+                ));
+            }
+            catch (Throwable ex) {
+                rethrowControlFlowException(ex);
+                errors.add(path);
+                LOG.error("Error scanning file " + repoBazel, ex);
+            }
+        }
+
+        return matchers;
+    }
+
+    private static Map.@Nullable Entry<Path, List<BazelIgnoreMatcher>> matchesFor(State receiver, Path path) {
+        Path p = path;
+        while (p != null) {
+            List<BazelIgnoreMatcher> machers = receiver.getPatterns().get(p);
+            if (machers != null) {
+                return Map.entry(p, machers);
+            }
+            p = p.getParent();
+        }
+        return null;
+    }
+
+    // consulo: Kotlin Path.relativeToOrNull()
+    private static @Nullable Path relativeToOrNull(Path receiver, Path base) {
+        try {
+            return base.relativize(receiver);
+        }
+        catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    // consulo: IntelliJ rethrowControlFlowException()
+    private static void rethrowControlFlowException(Throwable ex) {
+        if (ex instanceof ControlFlowException || ex instanceof CancellationException) {
+            if (ex instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (ex instanceof Error error) {
+                throw error;
+            }
+            throw new RuntimeException(ex);
+        }
+    }
+
+    public static class State {
+        private final Path myWorkspaceRoot;
+        private final Map<Path, List<BazelIgnoreMatcher>> myPatterns;
+        private final List<Path> myErrorsParsing;
+
+        public State(
+            Path workspaceRoot,
+            Map<Path, List<BazelIgnoreMatcher>> patterns,
+            List<Path> errorsParsing
+        ) {
+            myWorkspaceRoot = workspaceRoot;
+            myPatterns = patterns;
+            myErrorsParsing = errorsParsing;
+        }
+
+        public Path getWorkspaceRoot() {
+            return myWorkspaceRoot;
+        }
+
+        public Map<Path, List<BazelIgnoreMatcher>> getPatterns() {
+            return myPatterns;
+        }
+
+        public List<Path> getErrorsParsing() {
+            return myErrorsParsing;
+        }
+    }
 }
 
-internal class UpdateBazelIgnoreSyncHook : ProjectSyncHook {
-  override suspend fun onSync(environment: ProjectSyncHookEnvironment) {
-    environment.withSubtask("Update Bazel ignore files") { taskId ->
-      val service = BazelIgnoreService.getInstance(environment.project) as? DefaultBazelIgnoreService
-      if (service != null) {
-        val state = service.update(
-          environment.server.bazelInfo.workspaceRoot,
-          environment.snapshot.repoMapping,
-        )
-        state.errorsParsing.forEach { path ->
-          environment.project.syncConsole.addDiagnosticMessage(
-            taskId,
-            path = path, line = 0, column = 0,
-            message = "Error parsing ${path.fileName}",
-            description = null,
-            severity = MessageEvent.Kind.ERROR,
-          )
-        }
-      }
+@ExtensionImpl
+class UpdateBazelIgnoreSyncHook implements ProjectSyncHook {
+    public UpdateBazelIgnoreSyncHook() {
     }
-  }
+
+    @Override
+    public CompletableFuture<Void> onSync(ProjectSyncHook.ProjectSyncHookEnvironment environment) {
+        // consulo: upstream hard-coded (not localized) subtask text
+        return environment.withSubtask(LocalizeValue.of("Update Bazel ignore files"), taskId -> {
+            DefaultBazelIgnoreService service = BazelIgnoreService.getInstance(environment.project()) instanceof DefaultBazelIgnoreService it
+                ? it
+                : null;
+            if (service != null) {
+                DefaultBazelIgnoreService.State state = service.update(
+                    environment.server().getBazelInfo().workspaceRoot(),
+                    environment.snapshot().repoMapping()
+                );
+                for (Path path : state.getErrorsParsing()) {
+                    util.getSyncConsole(environment.project()).addDiagnosticMessage(
+                        taskId,
+                        path, 0, 0,
+                        LocalizeValue.of("Error parsing " + path.getFileName()),
+                        null,
+                        MessageEvent.Kind.ERROR
+                    );
+                }
+            }
+            return CompletableFuture.completedFuture(null);
+        });
+    }
 }

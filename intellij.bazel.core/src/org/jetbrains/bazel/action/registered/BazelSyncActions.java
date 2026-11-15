@@ -1,31 +1,64 @@
-package org.jetbrains.bazel.action.registered
+package org.jetbrains.bazel.action.registered;
 
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.sync.ProjectSyncScope
-import org.jetbrains.bazel.sync.ProjectSyncService
-import org.jetbrains.bazel.sync.status.isSyncInProgress
-import org.jetbrains.bazel.ui.console.isBuildInProgress
+import consulo.annotation.component.ActionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.sync.ProjectSyncScope;
+import org.jetbrains.bazel.sync.ProjectSyncService;
+import org.jetbrains.bazel.sync.status.SyncStatusService;
 
-internal abstract class BazelSyncActionBase(text: () -> String) : SuspendableAction(text) {
-  protected abstract val scope: ProjectSyncScope
+import java.util.concurrent.CompletableFuture;
 
-  override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-    project.service<ProjectSyncService>().sync(scope)
-  }
+abstract class BazelSyncActionBase extends SuspendableAction {
+    // consulo: the icon comes from the upstream <action icon="..."> registration
+    BazelSyncActionBase(LocalizeValue text, Image icon) {
+        super(text, icon);
+    }
 
-  override fun update(project: Project, e: AnActionEvent) {
-    e.presentation.isEnabled = !project.isSyncInProgress() && !project.isBuildInProgress()
-  }
+    protected abstract ProjectSyncScope getScope();
+
+    @Override
+    protected CompletableFuture<?> actionPerformed(Project project, AnActionEvent e) {
+        return project.getInstance(ProjectSyncService.class).sync(getScope());
+    }
+
+    @Override
+    protected void update(Project project, AnActionEvent e) {
+        e.getPresentation().setEnabled(
+            !SyncStatusService.isSyncInProgress(project) && !org.jetbrains.bazel.ui.console.TaskConsole.isBuildInProgress(project)
+        );
+    }
 }
 
-internal class BuildAndResyncAction : BazelSyncActionBase({ BazelPluginBundle.message("build.and.resync.action.text") }) {
-  override val scope = ProjectSyncScope.Full(build = true, phased = false)
+@ActionImpl(id = "Bazel.BuildAndResyncAction")
+class BuildAndResyncAction extends BazelSyncActionBase {
+    private final ProjectSyncScope myScope = new ProjectSyncScope.Full(true, false);
+
+    public BuildAndResyncAction() {
+        super(BazelPluginLocalize.buildAndResyncActionText(), BazelPluginIcons.buildAndResync());
+    }
+
+    @Override
+    protected ProjectSyncScope getScope() {
+        return myScope;
+    }
 }
 
-internal class ResyncAction : BazelSyncActionBase({ BazelPluginBundle.message("resync.action.text") }) {
-  override val scope = ProjectSyncScope.Full(build = false, phased = false)
+@ActionImpl(id = "Bazel.ResyncAction")
+class ResyncAction extends BazelSyncActionBase {
+    private final ProjectSyncScope myScope = new ProjectSyncScope.Full(false, false);
+
+    public ResyncAction() {
+        super(BazelPluginLocalize.resyncActionText(), BazelPluginIcons.resync());
+    }
+
+    @Override
+    protected ProjectSyncScope getScope() {
+        return myScope;
+    }
 }

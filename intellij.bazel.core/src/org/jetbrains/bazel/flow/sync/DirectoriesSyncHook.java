@@ -1,106 +1,147 @@
-package org.jetbrains.bazel.flow.sync
+package org.jetbrains.bazel.flow.sync;
 
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.backend.workspace.storeAndGet
-import com.intellij.platform.backend.workspace.virtualFile
-import com.intellij.platform.workspace.jps.entities.ContentRootEntity
-import com.intellij.platform.workspace.storage.entities
-import com.intellij.platform.workspace.storage.impl.url.toVirtualFileUrl
-import com.intellij.platform.workspace.storage.url.VirtualFileUrl
-import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.flow.exclude.BazelSymlinkExcludeService
-import org.jetbrains.bazel.languages.projectview.index
-import org.jetbrains.bazel.sync.ProjectSyncHook
-import org.jetbrains.bazel.sync.ProjectSyncHook.ProjectSyncHookEnvironment
-import org.jetbrains.bazel.sync.withSubtask
-import org.jetbrains.bazel.workspace.indexing.IndexableContent
-import org.jetbrains.bazel.workspace.indexing.IndexableContentCollector
-import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity
-import org.jetbrains.bazel.workspacemodel.entities.BazelProjectEntitySource
-import java.nio.file.Path
+import consulo.annotation.component.ExtensionImpl;
+import consulo.localize.LocalizeValue;
+import consulo.module.Module;
+import consulo.module.content.layer.ContentEntry;
+import consulo.module.content.layer.ModifiableRootModel;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jetbrains.bazel.flow.exclude.BazelSymlinkExcludeService;
+import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
+import org.jetbrains.bazel.sync.ProjectSyncHook;
+import org.jetbrains.bazel.workspace.indexing.IndexableContent;
+import org.jetbrains.bazel.workspace.indexing.IndexableContentCollector;
+import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * This sync hook does three important things:
  * 1. Creates the WSM entity
  * 2. Supports the `index:` section, see its documentation in
- *    [org.jetbrains.bazel.languages.projectview.ProjectViewSectionProvider].
+ *    {@link org.jetbrains.bazel.languages.projectview.ProjectViewSectionProvider}.
  * 3. Loads all non-indexable files that happen to be under `directories:` (and not excluded) into the VFS,
  *    so that "Go to file by name" is quicker, see https://youtrack.jetbrains.com/issue/IJPL-207088
  */
-internal class DirectoriesSyncHook : ProjectSyncHook {
+// consulo: the IntelliJ workspace model is not used; virtual file urls are VFS url strings and the entity is project data
+// of the BazelModelBuilder
+@ExtensionImpl
+public class DirectoriesSyncHook implements ProjectSyncHook {
 
-  override suspend fun onSync(environment: ProjectSyncHookEnvironment) {
-    val project = environment.project
-    val virtualFileUrlManager = project.serviceAsync<WorkspaceModel>().getVirtualFileUrlManager()
-    val directoryRoots = environment.withSubtask("Collect project directories") {
-      computeProjectDirectories(environment, virtualFileUrlManager)
+    @Override
+    public CompletableFuture<Void> onSync(ProjectSyncHook.ProjectSyncHookEnvironment environment) {
+        Project project = environment.project();
+        return environment.withSubtask(
+            LocalizeValue.of("Collect project directories"),
+            taskId -> computeProjectDirectories(environment)
+        ).thenCompose(directoryRoots -> {
+            List<String> indexPatterns = ProjectViewExtensions.getIndex(environment.server().getProjectView());
+            return environment.withSubtask(
+                LocalizeValue.of("Collect indexable content"),
+                taskId -> CompletableFuture.completedFuture(computeIndexableContent(environment, indexPatterns, directoryRoots))
+            ).thenApply(indexableContent -> {
+                // consulo: upstream registers the whole project root as workspace content (BazelProjectDirectoriesEntity +
+                // its WorkspaceFileIndexContributor). The classic project model has content only in modules: a Bazel-owned
+                // root module with the project root as content root (excludes come from BazelProjectDirectoriesExcludePolicy)
+                VirtualFile rootDir = org.jetbrains.bazel.config.project.getRootDir(project);
+                Module rootModule = environment.diff().getOrCreateModule(rootDir.getName(), rootDir.getPath());
+                environment.diff().getRootModel(rootModule).addContentEntry(rootDir);
+
+                environment.diff().putProjectData(
+                    BazelProjectDirectoriesEntity.class,
+                    new BazelProjectDirectoriesEntity(
+                        org.jetbrains.bazel.config.project.getRootDir(project).getUrl(),
+                        new ArrayList<>(directoryRoots.included()),
+                        new ArrayList<>(directoryRoots.excluded()),
+                        indexPatterns,
+                        new ArrayList<>(indexableContent.getRecursiveRoots()),
+                        new ArrayList<>(indexableContent.getNonRecursiveRoots())
+                    )
+                );
+                return null;
+            });
+        });
     }
-    val indexPatterns = environment.server.projectView.index
-    val indexableContent = environment.withSubtask("Collect indexable content") {
-      computeIndexableContent(environment, indexPatterns, directoryRoots, virtualFileUrlManager)
+
+    private record DirectoryRoots(
+        Set<String> included,
+        Set<String> excluded
+    ) {
     }
-    environment.diff.addEntity(
-      BazelProjectDirectoriesEntity(
-        projectRoot = virtualFileUrlManager.storeAndGet(project.rootDir),
-        includedRoots = directoryRoots.included.toList(),
-        excludedRoots = directoryRoots.excluded.toList(),
-        indexPatterns = indexPatterns,
-        indexableRecursiveRoots = indexableContent.recursiveRoots.toList(),
-        indexableNonRecursiveRoots = indexableContent.nonRecursiveRoots.toList(),
-        entitySource = BazelProjectEntitySource,
-      ),
-    )
-  }
 
-  private data class DirectoryRoots(
-    val included: Set<VirtualFileUrl>,
-    val excluded: Set<VirtualFileUrl>,
-  )
+    private CompletableFuture<DirectoryRoots> computeProjectDirectories(
+        ProjectSyncHook.ProjectSyncHookEnvironment environment
+    ) {
+        return environment
+            .server()
+            .workspaceDirectories(environment.snapshot().repoMapping(), environment.taskId())
+            .thenCompose(directories -> BazelSymlinkExcludeService
+                .getInstance(environment.project())
+                .scanForBazelSymlinksToExclude(org.jetbrains.bazel.config.project.getRootDir(environment.project()).toNioPath())
+                .thenApply(symlinks -> {
+                    Set<String> symlinkExcludes = toVirtualUrlSet(symlinks);
+                    Set<String> includedRoots = toVirtualUrlSet(directories.includedDirectories());
+                    Set<String> excludedRoots = toVirtualUrlSet(directories.excludedDirectories());
+                    Set<String> allExcluded = new LinkedHashSet<>(excludedRoots);
+                    allExcluded.addAll(symlinkExcludes);
+                    return new DirectoryRoots(
+                        includedRoots,
+                        allExcluded
+                    );
+                }));
+    }
 
-  private suspend fun computeProjectDirectories(
-    environment: ProjectSyncHookEnvironment,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): DirectoryRoots {
-    val directories = environment
-      .server
-      .workspaceDirectories(environment.snapshot.repoMapping, environment.taskId)
-    val symlinkExcludes = BazelSymlinkExcludeService
-      .getInstance(environment.project)
-      .scanForBazelSymlinksToExclude(environment.project.rootDir.toNioPath())
-      .toVirtualUrlSet(virtualFileUrlManager)
-    val includedRoots = directories
-      .includedDirectories
-      .toVirtualUrlSet(virtualFileUrlManager)
-    val excludedRoots = directories
-      .excludedDirectories
-      .toVirtualUrlSet(virtualFileUrlManager)
-    return DirectoryRoots(
-      included = includedRoots,
-      excluded = excludedRoots + symlinkExcludes,
-    )
-  }
+    private IndexableContent computeIndexableContent(
+        ProjectSyncHook.ProjectSyncHookEnvironment environment,
+        List<String> indexPatterns,
+        DirectoryRoots directoryRoots
+    ) {
+        Set<VirtualFile> contentRoots = new LinkedHashSet<>();
+        // consulo: upstream collects the ContentRootEntity urls of the diff storage
+        for (ModifiableRootModel rootModel : environment.diff().getRootModels()) {
+            for (ContentEntry contentEntry : rootModel.getContentEntries()) {
+                VirtualFile file = contentEntry.getFile();
+                if (file != null) {
+                    contentRoots.add(file);
+                }
+            }
+        }
+        IndexableContentCollector collector = new IndexableContentCollector(
+            environment.project(),
+            indexPatterns,
+            toVirtualFiles(directoryRoots.included()),
+            toVirtualFiles(directoryRoots.excluded()),
+            contentRoots
+        );
+        return collector.collect();
+    }
 
-  private fun computeIndexableContent(
-    environment: ProjectSyncHookEnvironment,
-    indexPatterns: List<String>,
-    directoryRoots: DirectoryRoots,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): IndexableContent {
-    val collector = IndexableContentCollector(
-      project = environment.project,
-      indexPatterns = indexPatterns,
-      includedRoots = directoryRoots.included.mapNotNullTo(mutableSetOf(), VirtualFileUrl::virtualFile),
-      excludedRoots = directoryRoots.excluded.mapNotNullTo(mutableSetOf(), VirtualFileUrl::virtualFile),
-      contentRoots = environment.diff
-        .entities<ContentRootEntity>()
-        .mapNotNullTo(mutableSetOf()) { it.url.virtualFile },
-    )
-    return collector.collect(virtualFileUrlManager)
-  }
+    private static Set<String> toVirtualUrlSet(Collection<Path> receiver) {
+        Set<String> result = new LinkedHashSet<>();
+        for (Path path : receiver) {
+            result.add(VirtualFileUtil.pathToUrl(path.toString()));
+        }
+        return result;
+    }
 
-  private fun Collection<Path>.toVirtualUrlSet(
-    manager: VirtualFileUrlManager,
-  ): Set<VirtualFileUrl> = mapTo(mutableSetOf()) { it.toVirtualFileUrl(manager) }
+    // consulo: upstream VirtualFileUrl::virtualFile
+    private static Set<VirtualFile> toVirtualFiles(Collection<String> urls) {
+        Set<VirtualFile> result = new LinkedHashSet<>();
+        for (String url : urls) {
+            VirtualFile file = VirtualFileManager.getInstance().findFileByUrl(url);
+            if (file != null) {
+                result.add(file);
+            }
+        }
+        return result;
+    }
 }

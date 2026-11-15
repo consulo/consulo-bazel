@@ -1,48 +1,84 @@
-package org.jetbrains.bazel.languages.starlark.annotation
+package org.jetbrains.bazel.languages.starlark.annotation;
 
-import com.intellij.lang.annotation.AnnotationHolder
-import com.intellij.lang.annotation.Annotator
-import com.intellij.lang.annotation.HighlightSeverity
-import com.intellij.psi.PsiElement
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.Language;
+import consulo.language.editor.annotation.AnnotationHolder;
+import consulo.language.editor.annotation.Annotator;
+import consulo.language.editor.annotation.AnnotatorFactory;
+import consulo.language.editor.annotation.HighlightSeverity;
+import consulo.language.psi.PsiElement;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jspecify.annotations.Nullable;
 
-private const val TRIPLE_QUOTE = "\"\"\""
-private const val TRIPLE_APOSTROPHE = "\'\'\'"
+// consulo: Consulo registers annotators through AnnotatorFactory; the stateless annotator is its own factory
+@ExtensionImpl
+public class StarlarkStringAnnotator implements Annotator, AnnotatorFactory {
+    private static final String TRIPLE_QUOTE = "\"\"\"";
+    private static final String TRIPLE_APOSTROPHE = "\'\'\'";
 
-internal class StarlarkStringAnnotator : Annotator {
-  override fun annotate(element: PsiElement, holder: AnnotationHolder) {
-    if (element is StarlarkStringLiteralExpression) {
-      element.getTextWithQuotes().annotateUnterminated(element, holder)
-    }
-  }
-
-  private fun String.annotateUnterminated(element: PsiElement, holder: AnnotationHolder) =
-    when {
-      isTripleQuoteUnterminated() ->
-        holder.annotate(
-          element = element,
-          message = StarlarkBundle.message("annotator.missing.closing.triple.quote"),
-        )
-
-      isSingleQuoteUnterminated() ->
-        holder.annotate(
-          element = element,
-          message = StarlarkBundle.message("annotator.missing.closing.quote", first()),
-        )
-
-      else -> {}
+    @Override
+    public void annotate(PsiElement element, AnnotationHolder holder) {
+        if (element instanceof StarlarkStringLiteralExpression stringLiteralExpression) {
+            annotateUnterminated(stringLiteralExpression.getTextWithQuotes(), element, holder);
+        }
     }
 
-  private fun String.isTripleQuoted(): Boolean = startsWith(TRIPLE_QUOTE) || startsWith(TRIPLE_APOSTROPHE)
+    private void annotateUnterminated(String receiver, PsiElement element, AnnotationHolder holder) {
+        if (isTripleQuoteUnterminated(receiver)) {
+            annotate(
+                holder,
+                element,
+                StarlarkLocalize.annotatorMissingClosingTripleQuote()
+            );
+        }
+        else if (isSingleQuoteUnterminated(receiver)) {
+            annotate(
+                holder,
+                element,
+                StarlarkLocalize.annotatorMissingClosingQuote(receiver.charAt(0))
+            );
+        }
+    }
 
-  private fun String.isSingleQuoteUnterminated(): Boolean = length == 1 || first() != last() || hasOddNumberOfPrecedingBackslashes()
+    private boolean isTripleQuoted(String receiver) {
+        return receiver.startsWith(TRIPLE_QUOTE) || receiver.startsWith(TRIPLE_APOSTROPHE);
+    }
 
-  private fun String.isTripleQuoteUnterminated(): Boolean = isTripleQuoted() && (length < 6 || take(3) != takeLast(3))
+    private boolean isSingleQuoteUnterminated(String receiver) {
+        return receiver.length() == 1 ||
+            receiver.charAt(0) != receiver.charAt(receiver.length() - 1) ||
+            hasOddNumberOfPrecedingBackslashes(receiver);
+    }
 
-  private fun String.hasOddNumberOfPrecedingBackslashes(): Boolean = dropLast(1).takeLastWhile { it == '\\' }.length % 2 == 1
+    private boolean isTripleQuoteUnterminated(String receiver) {
+        return isTripleQuoted(receiver) &&
+            (receiver.length() < 6 || !receiver.substring(0, 3).equals(receiver.substring(receiver.length() - 3)));
+    }
 
-  private fun AnnotationHolder.annotate(element: PsiElement, message: String) {
-    newAnnotation(HighlightSeverity.ERROR, message).range(element).create()
-  }
+    private boolean hasOddNumberOfPrecedingBackslashes(String receiver) {
+        // consulo: Kotlin dropLast(1).takeLastWhile { it == '\\' }.length
+        int end = Math.max(receiver.length() - 1, 0);
+        int count = 0;
+        for (int i = end - 1; i >= 0 && receiver.charAt(i) == '\\'; i--) {
+            count++;
+        }
+        return count % 2 == 1;
+    }
+
+    private void annotate(AnnotationHolder receiver, PsiElement element, LocalizeValue message) {
+        receiver.newAnnotation(HighlightSeverity.ERROR, message).range(element).create();
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    @Override
+    public @Nullable Annotator createAnnotator() {
+        return this;
+    }
 }

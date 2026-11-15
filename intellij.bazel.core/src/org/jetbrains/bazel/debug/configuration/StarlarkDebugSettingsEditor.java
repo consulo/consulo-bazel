@@ -1,29 +1,35 @@
-package org.jetbrains.bazel.debug.configuration
+package org.jetbrains.bazel.debug.configuration;
 
-import com.intellij.openapi.options.SettingsEditor
-import com.intellij.ui.components.JBTextField
-import com.intellij.ui.dsl.builder.AlignX
-import com.intellij.ui.dsl.builder.panel
-import org.jetbrains.bazel.config.BazelPluginBundle
-import javax.swing.JComponent
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.configuration.ui.SettingsEditor;
+import consulo.ui.ex.awt.FormBuilder;
+import consulo.ui.ex.awt.JBTextField;
+import consulo.ui.ex.awtUnsafe.TargetAWT;
+import consulo.ui.Component;
+import consulo.ui.annotation.RequiredUIAccess;
 
-internal class StarlarkDebugSettingsEditor : SettingsEditor<StarlarkDebugConfiguration>() {
-  private val targetField = JBTextField()
 
-  override fun resetEditorFrom(config: StarlarkDebugConfiguration) {
-    targetField.text = config.getTarget()
-  }
+public class StarlarkDebugSettingsEditor extends SettingsEditor<StarlarkDebugConfiguration> {
+    private final JBTextField myTargetField = new JBTextField();
 
-  override fun applyEditorTo(config: StarlarkDebugConfiguration) {
-    config.setTarget(targetField.text)
-  }
+    @Override
+    protected void resetEditorFrom(StarlarkDebugConfiguration config) {
+        myTargetField.setText(config.getTarget());
+    }
 
-  override fun createEditor(): JComponent =
-    panel {
-      row(BazelPluginBundle.message("starlark.debug.config.target.label")) {
-        cell(targetField)
-          .align(AlignX.FILL)
-          .resizableColumn()
-      }
+    @Override
+    protected void applyEditorTo(StarlarkDebugConfiguration config) {
+        config.setTarget(myTargetField.getText());
+    }
+
+    // consulo: upstream createEditor() builds the row with the Kotlin UI DSL
+    @Override
+    @RequiredUIAccess
+    protected Component createUIComponent() {
+        return TargetAWT.wrap(
+            FormBuilder.createFormBuilder()
+                .addLabeledComponent(BazelPluginLocalize.starlarkDebugConfigTargetLabel().get(), myTargetField)
+                .getPanel()
+        );
     }
 }

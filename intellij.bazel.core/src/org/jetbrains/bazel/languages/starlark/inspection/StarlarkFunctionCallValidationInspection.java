@@ -1,207 +1,349 @@
-package org.jetbrains.bazel.languages.starlark.inspection
+package org.jetbrains.bazel.languages.starlark.inspection;
 
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.bazel.Environment
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkStarArgumentExpression
-import org.jetbrains.bazel.languages.starlark.utils.StarlarkCallableFunctionInfoProvider
-import org.jetbrains.bazel.languages.starlark.utils.StarlarkFunctionInfoProvider
-import org.jetbrains.bazel.languages.starlark.utils.StarlarkGlobalFunctionInfoProvider
-import org.jetbrains.bazel.languages.starlark.utils.StarlarkFuncParam
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiReference;
+import consulo.localize.LocalizeValue;
+import consulo.util.collection.ArrayUtil;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.Environment;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkNamedArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkStarArgumentExpression;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkFunctionInfoProvider;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkFunctionInfoProvider.StarlarkCallableFunctionInfoProvider;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkFunctionInfoProvider.StarlarkFuncParam;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkFunctionInfoProvider.StarlarkFunctionInfo;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkFunctionInfoProvider.StarlarkGlobalFunctionInfoProvider;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 
-@ApiStatus.Internal
-class StarlarkFunctionCallValidationInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is StarlarkFileType
-
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = CallArgumentValidationVisitor(holder)
-
-  private class CallArgumentValidationVisitor(private val holder: ProblemsHolder) : StarlarkElementVisitor() {
-    private val signatureProviders: List<StarlarkFunctionInfoProvider> = listOf(
-      StarlarkGlobalFunctionInfoProvider(),
-      StarlarkCallableFunctionInfoProvider(),
-    )
-
-    override fun visitCallExpression(node: StarlarkCallExpression) {
-      val arguments = node.getArgumentList()?.getArguments() ?: return
-      validateOrder(arguments)
-
-      val resolved = signatureProviders.firstNotNullOfOrNull { it.resolve(node) } ?: return
-      if (!validateEnvironment(node, resolved.allowedEnvironments)) return
-      validateAgainstSignature(node, arguments, resolved.params)
-      checkDependencyOverrideResolution(node)
+@ExtensionImpl
+public class StarlarkFunctionCallValidationInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof StarlarkLanguage.StarlarkFileType;
     }
 
-    private fun validateEnvironment(call: StarlarkCallExpression, allowedEnvironments: Set<Environment>?): Boolean {
-      if (allowedEnvironments == null) return true
-
-      val currentEnvironment = when (val fileName = call.containingFile.name) {
-        Constants.MODULE_BAZEL_FILE_NAME -> Environment.MODULE
-        in Constants.BUILD_FILE_NAMES -> Environment.BUILD
-        in Constants.WORKSPACE_FILE_NAMES -> Environment.BUILD
-        "REPO.bazel" -> Environment.REPO
-        "VENDOR.bazel" -> Environment.VENDOR
-        else -> if (fileName.endsWith(".bzl")) Environment.BZL else null
-      } ?: return true
-      if (currentEnvironment in allowedEnvironments) return true
-
-      holder.registerProblem(
-        call.firstChild ?: call,
-        StarlarkBundle.message(
-          "inspection.description.call.not.available.in.environment",
-          call.firstChild?.text ?: "<call>", currentEnvironment.name, allowedEnvironments.map { it.name }.sorted().joinToString(", "),
-        )
-      )
-      return false
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        return new CallArgumentValidationVisitor(holder);
     }
 
-    private fun checkDependencyOverrideResolution(call: StarlarkCallExpression) {
-      val functionName = call.firstChild?.text ?: return
-      if (functionName != "git_override" && functionName != "archive_override") return
-      val reference = call.getCalledExpression()?.reference ?: return
-      if (reference.resolve() != null) return
-      holder.registerProblem(
-        call.firstChild,
-        StarlarkBundle.message("inspection.description.call.override.missing.dep"),
-      )
-    }
+    private static class CallArgumentValidationVisitor extends StarlarkElementVisitor {
+        private final ProblemsHolder myHolder;
 
-    private fun validateOrder(arguments: Array<StarlarkArgumentElement>) {
-      var seenNamed = false
-      var seenStar = false
-      var seenKwStar = false
+        private final List<StarlarkFunctionInfoProvider> mySignatureProviders = List.of(
+            new StarlarkGlobalFunctionInfoProvider(),
+            new StarlarkCallableFunctionInfoProvider()
+        );
 
-      for (arg in arguments) {
-        when (arg) {
-          is StarlarkArgumentExpression -> {
-            if (seenNamed || seenStar || seenKwStar) holder.registerProblem(arg, StarlarkBundle.message("inspection.description.call.positional.after.keyword.or.star"))
-          }
-
-          is StarlarkNamedArgumentExpression -> {
-            if (seenKwStar) holder.registerProblem(arg, StarlarkBundle.message("inspection.description.call.argument.after.kwargs"))
-            seenNamed = true
-          }
-
-          is StarlarkStarArgumentExpression -> {
-            if (isKwStar(arg)) {
-              if (seenKwStar) holder.registerProblem(arg, StarlarkBundle.message("inspection.description.call.multiple.kwargs.unpacking"))
-              seenKwStar = true
-            } else {
-              if (seenKwStar) holder.registerProblem(arg, StarlarkBundle.message("inspection.description.call.star.after.kwargs"))
-              seenStar = true
-            }
-          }
+        CallArgumentValidationVisitor(ProblemsHolder holder) {
+            myHolder = holder;
         }
-      }
-    }
 
-    private fun validateAgainstSignature(
-      call: StarlarkCallExpression,
-      arguments: Array<StarlarkArgumentElement>,
-      params: List<StarlarkFuncParam>,
-    ) {
-      val expectedParamIter = params.filter { it.positional }.listIterator()
-      var expectedParam = expectedParamIter.nextOrNull()
-      var onlyKeywordArgsExpected = false
-      var hasUnknownPositional = false
-      var hasUnknownKeywords = false
-      var kwArgsFound = false
-
-      val matchedArguments = linkedSetOf<String>()
-      val matchedByPositional = mutableSetOf<String>()
-      val acceptsKwArgs = params.any { it.isKwArgs }
-
-      for (arg in arguments) {
-        when (arg) {
-          is StarlarkNamedArgumentExpression -> {
-            val argName = arg.name ?: continue
-            val matched = params.firstOrNull { it.name == argName }
-
-            when {
-              matched == null && !acceptsKwArgs ->
-                holder.registerProblem(
-                  arg.firstChild,
-                  StarlarkBundle.message("inspection.description.call.named.parameter.not.found", argName)
-                )
-
-              argName in matchedArguments ->
-                holder.registerProblem(
-                  arg,
-                  StarlarkBundle.message(
-                    if (argName in matchedByPositional) {
-                      "inspection.description.call.multiple.values.for.parameter"
-                    } else {
-                      "inspection.description.call.duplicate.named.argument"
-                    },
-                    argName,
-                  ),
-                )
-
-              matched != null && !matched.named ->
-                holder.registerProblem(arg, StarlarkBundle.message("inspection.description.call.unnamed.arg.with.name", argName))
-
-              else -> {
-                matchedArguments.add(argName)
-                if (matched == null) kwArgsFound = true
-              }
+        @Override
+        public void visitCallExpression(StarlarkCallExpression node) {
+            StarlarkArgumentList argumentList = node.getArgumentList();
+            if (argumentList == null) {
+                return;
             }
+            StarlarkArgumentElement[] arguments = argumentList.getArguments();
+            validateOrder(arguments);
 
-            onlyKeywordArgsExpected = true
-          }
-
-          is StarlarkArgumentExpression -> {
-            if (onlyKeywordArgsExpected) continue
-
-            if (expectedParam == null) {
-              holder.registerProblem(arg, StarlarkBundle.message("inspection.description.call.too.many.positional"))
-              continue
+            StarlarkFunctionInfo resolved = null;
+            for (StarlarkFunctionInfoProvider it : mySignatureProviders) {
+                resolved = it.resolve(node);
+                if (resolved != null) {
+                    break;
+                }
             }
-
-            if (expectedParam.name !in matchedArguments) {
-              matchedArguments.add(expectedParam.name)
-              matchedByPositional.add(expectedParam.name)
+            if (resolved == null) {
+                return;
             }
-            if (!expectedParam.isVarArgs) expectedParam = expectedParamIter.nextOrNull()
-          }
-
-          is StarlarkStarArgumentExpression -> {
-            onlyKeywordArgsExpected = true
-            if (isKwStar(arg)) hasUnknownKeywords = true else hasUnknownPositional = true
-          }
+            if (!validateEnvironment(node, resolved.allowedEnvironments())) {
+                return;
+            }
+            validateAgainstSignature(node, arguments, resolved.params());
+            checkDependencyOverrideResolution(node);
         }
-      }
 
-      val missingArguments = mutableListOf<String>()
-      for (param in params) {
-        if (!param.required) continue
-        if (param.name in matchedArguments) continue
-        if (param.isKwArgs && kwArgsFound) continue
-        if (param.positional && hasUnknownPositional) continue
-        if (param.named && hasUnknownKeywords) continue
+        private boolean validateEnvironment(StarlarkCallExpression call, @Nullable Set<Environment> allowedEnvironments) {
+            if (allowedEnvironments == null) {
+                return true;
+            }
 
-        missingArguments.add(param.name)
-      }
-      if (missingArguments.isNotEmpty()) {
-        holder.registerProblem(
-          call.firstChild, // only annotate the function name
-          StarlarkBundle.message("inspection.description.call.missing.required.argument", missingArguments.joinToString(", ")),
-        )
-      }
+            String fileName = Objects.requireNonNull(call.getContainingFile()).getName();
+            Environment currentEnvironment;
+            if (fileName.equals(Constants.MODULE_BAZEL_FILE_NAME)) {
+                currentEnvironment = Environment.MODULE;
+            }
+            else if (ArrayUtil.contains(fileName, Constants.BUILD_FILE_NAMES)) {
+                currentEnvironment = Environment.BUILD;
+            }
+            else if (ArrayUtil.contains(fileName, Constants.WORKSPACE_FILE_NAMES)) {
+                currentEnvironment = Environment.BUILD;
+            }
+            else if (fileName.equals("REPO.bazel")) {
+                currentEnvironment = Environment.REPO;
+            }
+            else if (fileName.equals("VENDOR.bazel")) {
+                currentEnvironment = Environment.VENDOR;
+            }
+            else {
+                currentEnvironment = fileName.endsWith(".bzl") ? Environment.BZL : null;
+            }
+            if (currentEnvironment == null) {
+                return true;
+            }
+            if (allowedEnvironments.contains(currentEnvironment)) {
+                return true;
+            }
+
+            PsiElement firstChild = call.getFirstChild();
+            myHolder.newProblem(
+                StarlarkLocalize.inspectionDescriptionCallNotAvailableInEnvironment(
+                    firstChild != null ? firstChild.getText() : "<call>",
+                    currentEnvironment.name(),
+                    allowedEnvironments.stream().map(it -> it.name()).sorted().collect(Collectors.joining(", "))
+                )
+            ).range(firstChild != null ? firstChild : call).create();
+            return false;
+        }
+
+        private void checkDependencyOverrideResolution(StarlarkCallExpression call) {
+            PsiElement firstChild = call.getFirstChild();
+            if (firstChild == null) {
+                return;
+            }
+            String functionName = firstChild.getText();
+            if (!functionName.equals("git_override") && !functionName.equals("archive_override")) {
+                return;
+            }
+            PsiElement calledExpression = call.getCalledExpression();
+            PsiReference reference = calledExpression == null ? null : calledExpression.getReference();
+            if (reference == null) {
+                return;
+            }
+            if (reference.resolve() != null) {
+                return;
+            }
+            myHolder.newProblem(StarlarkLocalize.inspectionDescriptionCallOverrideMissingDep())
+                .range(firstChild)
+                .create();
+        }
+
+        private void validateOrder(StarlarkArgumentElement[] arguments) {
+            boolean seenNamed = false;
+            boolean seenStar = false;
+            boolean seenKwStar = false;
+
+            for (StarlarkArgumentElement arg : arguments) {
+                if (arg instanceof StarlarkArgumentExpression) {
+                    if (seenNamed || seenStar || seenKwStar) {
+                        registerProblem(arg, StarlarkLocalize.inspectionDescriptionCallPositionalAfterKeywordOrStar());
+                    }
+                }
+                else if (arg instanceof StarlarkNamedArgumentExpression) {
+                    if (seenKwStar) {
+                        registerProblem(arg, StarlarkLocalize.inspectionDescriptionCallArgumentAfterKwargs());
+                    }
+                    seenNamed = true;
+                }
+                else if (arg instanceof StarlarkStarArgumentExpression starArg) {
+                    if (isKwStar(starArg)) {
+                        if (seenKwStar) {
+                            registerProblem(arg, StarlarkLocalize.inspectionDescriptionCallMultipleKwargsUnpacking());
+                        }
+                        seenKwStar = true;
+                    }
+                    else {
+                        if (seenKwStar) {
+                            registerProblem(arg, StarlarkLocalize.inspectionDescriptionCallStarAfterKwargs());
+                        }
+                        seenStar = true;
+                    }
+                }
+            }
+        }
+
+        private void validateAgainstSignature(
+            StarlarkCallExpression call,
+            StarlarkArgumentElement[] arguments,
+            List<StarlarkFuncParam> params
+        ) {
+            ListIterator<StarlarkFuncParam> expectedParamIter = params.stream().filter(StarlarkFuncParam::positional).toList().listIterator();
+            StarlarkFuncParam expectedParam = nextOrNull(expectedParamIter);
+            boolean onlyKeywordArgsExpected = false;
+            boolean hasUnknownPositional = false;
+            boolean hasUnknownKeywords = false;
+            boolean kwArgsFound = false;
+
+            Set<String> matchedArguments = new LinkedHashSet<>();
+            Set<String> matchedByPositional = new HashSet<>();
+            boolean acceptsKwArgs = params.stream().anyMatch(StarlarkFuncParam::isKwArgs);
+
+            for (StarlarkArgumentElement arg : arguments) {
+                if (arg instanceof StarlarkNamedArgumentExpression namedArg) {
+                    String argName = namedArg.getName();
+                    if (argName == null) {
+                        continue;
+                    }
+                    StarlarkFuncParam matched = params.stream().filter(it -> it.name().equals(argName)).findFirst().orElse(null);
+
+                    if (matched == null && !acceptsKwArgs) {
+                        registerProblem(
+                            Objects.requireNonNull(namedArg.getFirstChild()),
+                            StarlarkLocalize.inspectionDescriptionCallNamedParameterNotFound(argName)
+                        );
+                    }
+                    else if (matchedArguments.contains(argName)) {
+                        registerProblem(
+                            namedArg,
+                            matchedByPositional.contains(argName)
+                                ? StarlarkLocalize.inspectionDescriptionCallMultipleValuesForParameter(argName)
+                                : StarlarkLocalize.inspectionDescriptionCallDuplicateNamedArgument(argName)
+                        );
+                    }
+                    else if (matched != null && !matched.named()) {
+                        registerProblem(namedArg, StarlarkLocalize.inspectionDescriptionCallUnnamedArgWithName(argName));
+                    }
+                    else {
+                        matchedArguments.add(argName);
+                        if (matched == null) {
+                            kwArgsFound = true;
+                        }
+                    }
+
+                    onlyKeywordArgsExpected = true;
+                }
+                else if (arg instanceof StarlarkArgumentExpression) {
+                    if (onlyKeywordArgsExpected) {
+                        continue;
+                    }
+
+                    if (expectedParam == null) {
+                        registerProblem(arg, StarlarkLocalize.inspectionDescriptionCallTooManyPositional());
+                        continue;
+                    }
+
+                    if (!matchedArguments.contains(expectedParam.name())) {
+                        matchedArguments.add(expectedParam.name());
+                        matchedByPositional.add(expectedParam.name());
+                    }
+                    if (!expectedParam.isVarArgs()) {
+                        expectedParam = nextOrNull(expectedParamIter);
+                    }
+                }
+                else if (arg instanceof StarlarkStarArgumentExpression starArg) {
+                    onlyKeywordArgsExpected = true;
+                    if (isKwStar(starArg)) {
+                        hasUnknownKeywords = true;
+                    }
+                    else {
+                        hasUnknownPositional = true;
+                    }
+                }
+            }
+
+            List<String> missingArguments = new ArrayList<>();
+            for (StarlarkFuncParam param : params) {
+                if (!param.required()) {
+                    continue;
+                }
+                if (matchedArguments.contains(param.name())) {
+                    continue;
+                }
+                if (param.isKwArgs() && kwArgsFound) {
+                    continue;
+                }
+                if (param.positional() && hasUnknownPositional) {
+                    continue;
+                }
+                if (param.named() && hasUnknownKeywords) {
+                    continue;
+                }
+
+                missingArguments.add(param.name());
+            }
+            if (!missingArguments.isEmpty()) {
+                registerProblem(
+                    Objects.requireNonNull(call.getFirstChild()), // only annotate the function name
+                    StarlarkLocalize.inspectionDescriptionCallMissingRequiredArgument(String.join(", ", missingArguments))
+                );
+            }
+        }
+
+        private boolean isKwStar(StarlarkStarArgumentExpression arg) {
+            return arg.getText().stripLeading().startsWith("**");
+        }
+
+        private static <T> @Nullable T nextOrNull(ListIterator<T> receiver) {
+            return receiver.hasNext() ? receiver.next() : null;
+        }
+
+        // consulo: holder.registerProblem(element, message) -> ProblemsHolder.newProblem(LocalizeValue) builder
+        private void registerProblem(PsiElement element, LocalizeValue message) {
+            myHolder.newProblem(message).range(element).create();
+        }
     }
 
-    private fun isKwStar(arg: StarlarkStarArgumentExpression): Boolean = arg.text.trimStart().startsWith("**")
+    // consulo: registration attributes of <localInspection> in intellij.bazel.core.xml
+    @Override
+    public @Nullable Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 
-    private fun <T> ListIterator<T>.nextOrNull(): T? = if (hasNext()) next() else null
-  }
+    @Override
+    public String getShortName() {
+        return "StarlarkFunctionCallValidation";
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameStarlarkFunctionCallValidationCheck();
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.starlarkInspectionGroupName();
+    }
+
+    // consulo: upstream groupPath="Bazel"
+    @Override
+    public LocalizeValue[] getGroupPath() {
+        return new LocalizeValue[]{BazelPluginLocalize.bazelInspectionGroupName(), getGroupDisplayName()};
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }

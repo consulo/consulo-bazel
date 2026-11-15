@@ -1,48 +1,56 @@
-package org.jetbrains.bazel.languages.starlark.globbing
+package org.jetbrains.bazel.languages.starlark.globbing;
 
-import com.google.common.base.Splitter
+import com.google.common.base.Splitter;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Support for resolving globs.
  */
-internal object GlobPatternValidator {
-  /**
-   * Validate a single glob pattern. If it's invalid, returns an error message. Otherwise, returns
-   * null.
-   */
-  fun validate(pattern: String): String? {
-    val error = checkPatternForError(pattern)
-    if (error != null) {
-      return "Invalid glob pattern: $error"
+public final class GlobPatternValidator {
+    private GlobPatternValidator() {
     }
-    return null
-  }
 
-  private fun checkPatternForError(pattern: String): String? {
-    if (pattern.isEmpty()) {
-      return "pattern cannot be empty"
+    /**
+     * Validate a single glob pattern. If it's invalid, returns an error message. Otherwise, returns
+     * null.
+     */
+    public static @Nullable String validate(String pattern) {
+        String error = checkPatternForError(pattern);
+        if (error != null) {
+            return "Invalid glob pattern: " + error;
+        }
+        return null;
     }
-    if (pattern[0] == '/') {
-      return "pattern cannot be absolute"
+
+    private static @Nullable String checkPatternForError(String pattern) {
+        if (pattern.isEmpty()) {
+            return "pattern cannot be empty";
+        }
+        if (pattern.charAt(0) == '/') {
+            return "pattern cannot be absolute";
+        }
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            switch (c) {
+                case '(', ')', '{', '}', '[', ']' -> {
+                    return "illegal character '" + c + "'";
+                }
+                default -> {
+                }
+            }
+        }
+        Iterable<String> segments = Splitter.on('/').split(pattern);
+        for (String segment : segments) {
+            if (segment.isEmpty()) {
+                return "empty segment not permitted";
+            }
+            if (segment.equals(".") || segment.equals("..")) {
+                return "segment '" + segment + "' not permitted";
+            }
+            if (segment.contains("**") && !segment.equals("**")) {
+                return "recursive wildcard must be its own segment";
+            }
+        }
+        return null;
     }
-    for (c in pattern) {
-      when (c) {
-        '(', ')', '{', '}', '[', ']' -> return "illegal character '$c'"
-        else -> {}
-      }
-    }
-    val segments = Splitter.on('/').split(pattern)
-    for (segment in segments) {
-      if (segment.isEmpty()) {
-        return "empty segment not permitted"
-      }
-      if (segment == "." || segment == "..") {
-        return "segment '$segment' not permitted"
-      }
-      if (segment.contains("**") && segment != "**") {
-        return "recursive wildcard must be its own segment"
-      }
-    }
-    return null
-  }
 }

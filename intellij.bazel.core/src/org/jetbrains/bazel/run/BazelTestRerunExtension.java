@@ -1,39 +1,63 @@
-package org.jetbrains.bazel.run
+package org.jetbrains.bazel.run;
 
-import com.intellij.execution.testframework.AbstractTestProxy
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.HasTestFilter
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.execution.test.AbstractTestProxy;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.Test;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelTestRerunExtension {
-  fun isApplicable(configuration: BazelRunConfiguration): Boolean
+import java.util.List;
+import java.util.Objects;
 
-  fun setTestsToRerun(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): Boolean
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelTestRerunExtension {
+    boolean isApplicable(BazelRunConfiguration configuration);
 
-  fun isRerunOf(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): Boolean
+    boolean setTestsToRerun(BazelRunConfiguration configuration, List<AbstractTestProxy> tests);
 
-  companion object {
-    val ep: ExtensionPointName<BazelTestRerunExtension> = ExtensionPointName("org.jetbrains.bazel.testRerunExtension")
+    boolean isRerunOf(BazelRunConfiguration configuration, List<AbstractTestProxy> tests);
 
-    fun getInstance(configuration: BazelRunConfiguration): BazelTestRerunExtension? = ep.findFirstSafe { it.isApplicable(configuration) }
-  }
-}
+    static @Nullable BazelTestRerunExtension getInstance(BazelRunConfiguration configuration) {
+        return Application.get().getExtensionPoint(BazelTestRerunExtension.class).findFirstSafe(it -> it.isApplicable(configuration));
+    }
 
-@ApiStatus.Internal
-abstract class BazelTestFilterRerunExtension : BazelTestRerunExtension {
-  final override fun setTestsToRerun(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): Boolean {
-    val state = configuration.handler?.state ?: return false
-    (state as? HasTestFilter)?.testFilter = getTestFilter(configuration, tests) ?: return false
-    return true
-  }
+    // consulo: upstream declares this class as a top-level declaration in the same file
+    abstract class BazelTestFilterRerunExtension implements BazelTestRerunExtension {
+        @Override
+        public final boolean setTestsToRerun(BazelRunConfiguration configuration, List<AbstractTestProxy> tests) {
+            BazelRunHandler handler = configuration.getHandler();
+            if (handler == null) {
+                return false;
+            }
+            BazelRunConfigurationState<?> state = handler.getState();
+            // consulo: like Kotlin `(state as? HasTestFilter)?.testFilter = ... ?: return false`, the filter is computed only for a
+            // HasTestFilter state
+            if (state instanceof Test.HasTestFilter hasTestFilter) {
+                String testFilter = getTestFilter(configuration, tests);
+                if (testFilter == null) {
+                    return false;
+                }
+                hasTestFilter.setTestFilter(testFilter);
+            }
+            return true;
+        }
 
-  final override fun isRerunOf(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): Boolean {
-    val state = configuration.handler?.state ?: return false
-    val testFilter = getTestFilter(configuration, tests) ?: return false
-    return testFilter == (state as? HasTestFilter)?.testFilter
-  }
+        @Override
+        public final boolean isRerunOf(BazelRunConfiguration configuration, List<AbstractTestProxy> tests) {
+            BazelRunHandler handler = configuration.getHandler();
+            if (handler == null) {
+                return false;
+            }
+            BazelRunConfigurationState<?> state = handler.getState();
+            String testFilter = getTestFilter(configuration, tests);
+            if (testFilter == null) {
+                return false;
+            }
+            return Objects.equals(testFilter, state instanceof Test.HasTestFilter hasTestFilter ? hasTestFilter.getTestFilter() : null);
+        }
 
-  abstract fun getTestFilter(configuration: BazelRunConfiguration, tests: List<AbstractTestProxy>): String?
+        public abstract @Nullable String getTestFilter(BazelRunConfiguration configuration, List<AbstractTestProxy> tests);
+    }
 }

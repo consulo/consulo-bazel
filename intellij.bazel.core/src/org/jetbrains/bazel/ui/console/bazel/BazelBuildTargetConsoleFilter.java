@@ -1,53 +1,107 @@
-package org.jetbrains.bazel.ui.console
+package org.jetbrains.bazel.ui.console;
 
-import com.intellij.execution.filters.ConsoleFilterProvider
-import com.intellij.execution.filters.Filter
-import com.intellij.execution.filters.OpenFileHyperlinkInfo
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiDocumentManager
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bazel.languages.starlark.references.resolveLabel
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.document.Document;
+import consulo.execution.ui.console.ConsoleFilterProvider;
+import consulo.execution.ui.console.Filter;
+import consulo.execution.ui.console.OpenFileHyperlinkInfo;
+import consulo.language.psi.PsiDocumentManager;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelBuildTargetConsoleFilter(private val project: Project) : Filter {
-  private val highlightGroupName = "highlightGroup"
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-  // The set of characters allowed in labels is taken from https://bazel.build/concepts/labels#target-names
-  private val bazelTargetRegex =
-    """(^|\W)
-        (?<$highlightGroupName>
-        ((@|@@)([a-zA-Z0-9!%\-^_"&'()*+,;<=>?\[\]{|}~/.\#]*))? #@ or @@ with potential external repo names
-        //([a-zA-Z0-9!%\-@^_"&'()*+,;<=>?\[\]{|}~/.\#]*):      #path
-        ([a-zA-Z0-9!%\-@^_"&'()*+,;<=>?\[\]{|}~/.\#]+)         #target
-        )
-    """.trimMargin()
-      .toRegex(setOf(RegexOption.COMMENTS, RegexOption.MULTILINE))
+public class BazelBuildTargetConsoleFilter implements Filter {
+    private final Project myProject;
 
-  override fun applyFilter(line: String, entireLength: Int): Filter.Result? {
-    val results = bazelTargetRegex.findAll(line).mapNotNull { it.toFilterResultOrNull(line, entireLength) }
-    return Filter.Result(results.toList())
-  }
+    private final String myHighlightGroupName = "highlightGroup";
 
-  private fun MatchResult.toFilterResultOrNull(line: String, entireLength: Int): Filter.Result? {
-    val highlightGroup = groups[highlightGroupName] ?: return null
-    val label = Label.parseOrNull(highlightGroup.value) as? ResolvedLabel ?: return null
-    val psi = resolveLabel(project, label) ?: return null
-    val containingFile = psi.containingFile ?: return null
-    val document = PsiDocumentManager.getInstance(project).getDocument(containingFile) ?: return null
-    val textOffset = psi.textOffset
-    val documentLine = document.getLineNumber(textOffset)
-    val documentColumn = textOffset - document.getLineStartOffset(documentLine)
-    val hyperLinkInfo = OpenFileHyperlinkInfo(project, containingFile.virtualFile ?: return null, documentLine, documentColumn)
-    val highlightStartOffset = entireLength - line.length + highlightGroup.range.first
-    val highlightEndOffset = entireLength - line.length + highlightGroup.range.last + 1
-    return Filter.Result(highlightStartOffset, highlightEndOffset, hyperLinkInfo)
-  }
+    // The set of characters allowed in labels is taken from https://bazel.build/concepts/labels#target-names
+    // consulo: Kotlin raw string with $highlightGroupName interpolation -> text block (backslashes doubled) with replace();
+    // trimMargin() only drops the trailing blank line here
+    private final Pattern myBazelTargetRegex =
+        Pattern.compile(
+            """
+                (^|\\W)
+                        (?<$highlightGroupName>
+                        ((@|@@)([a-zA-Z0-9!%\\-^_"&'()*+,;<=>?\\[\\]{|}~/.\\#]*))? #@ or @@ with potential external repo names
+                        //([a-zA-Z0-9!%\\-@^_"&'()*+,;<=>?\\[\\]{|}~/.\\#]*):      #path
+                        ([a-zA-Z0-9!%\\-@^_"&'()*+,;<=>?\\[\\]{|}~/.\\#]+)         #target
+                        )""".replace("$highlightGroupName", myHighlightGroupName),
+            Pattern.COMMENTS | Pattern.MULTILINE
+        );
+
+    public BazelBuildTargetConsoleFilter(Project project) {
+        myProject = project;
+    }
+
+    @Override
+    @RequiredReadAction
+    public @Nullable Result applyFilter(String line, int entireLength) {
+        List<ResultItem> results = new ArrayList<>();
+        Matcher matcher = myBazelTargetRegex.matcher(line);
+        while (matcher.find()) {
+            Result result = toFilterResultOrNull(matcher, line, entireLength);
+            if (result != null) {
+                results.add(result);
+            }
+        }
+        return new Result(results);
+    }
+
+    @RequiredReadAction
+    private @Nullable Result toFilterResultOrNull(Matcher match, String line, int entireLength) {
+        String highlightGroup = match.group(myHighlightGroupName);
+        if (highlightGroup == null) {
+            return null;
+        }
+        if (!(Label.parseOrNull(highlightGroup) instanceof Label.ResolvedLabel label)) {
+            return null;
+        }
+        PsiElement psi = LabelResolveUtils.resolveLabel(myProject, label);
+        if (psi == null) {
+            return null;
+        }
+        PsiFile containingFile = psi.getContainingFile();
+        if (containingFile == null) {
+            return null;
+        }
+        Document document = PsiDocumentManager.getInstance(myProject).getDocument(containingFile);
+        if (document == null) {
+            return null;
+        }
+        int textOffset = psi.getTextOffset();
+        int documentLine = document.getLineNumber(textOffset);
+        int documentColumn = textOffset - document.getLineStartOffset(documentLine);
+        VirtualFile virtualFile = containingFile.getVirtualFile();
+        if (virtualFile == null) {
+            return null;
+        }
+        OpenFileHyperlinkInfo hyperLinkInfo = new OpenFileHyperlinkInfo(myProject, virtualFile, documentLine, documentColumn);
+        int highlightStartOffset = entireLength - line.length() + match.start(myHighlightGroupName);
+        int highlightEndOffset = entireLength - line.length() + match.end(myHighlightGroupName);
+        return new Result(highlightStartOffset, highlightEndOffset, hyperLinkInfo);
+    }
 }
 
-internal class BazelBuildTargetConsoleFilterProvider : ConsoleFilterProvider {
-  override fun getDefaultFilters(project: Project): Array<out Filter> =
-    if (project.isBazelProject) arrayOf(BazelBuildTargetConsoleFilter(project)) else emptyArray()
+@ExtensionImpl
+class BazelBuildTargetConsoleFilterProvider implements ConsoleFilterProvider {
+    public BazelBuildTargetConsoleFilterProvider() {
+    }
+
+    @Override
+    public Filter[] getDefaultFilters(Project project) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project)
+            ? new Filter[]{new BazelBuildTargetConsoleFilter(project)}
+            : Filter.EMPTY_ARRAY;
+    }
 }

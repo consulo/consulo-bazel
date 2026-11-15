@@ -13,80 +13,113 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.workspace
+package org.jetbrains.bazel.workspace;
 
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.bazel.commons.WorkspacePath
-import java.io.File
-import java.nio.file.Path
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.commons.WorkspacePath;
+import org.jspecify.annotations.Nullable;
 
-/** Represents a workspace root  */
-internal data class WorkspaceRoot(val directory: Path) {
-  constructor(directory: File) : this(directory.toPath())
+import java.io.File;
+import java.nio.file.Path;
 
-  fun fileForPath(workspacePath: WorkspacePath): Path = directory.resolve(workspacePath.relativePath())
-
-  fun directory(): Path = directory
-
-  fun absolutePathFor(workspaceRelativePath: String): Path? = directory.resolve(workspaceRelativePath)
-
-  fun path(): Path = directory
-
-  fun workspacePathFor(file: Path): WorkspacePath = workspacePathFor(file.toString())
-
-  fun workspacePathFor(file: VirtualFile): WorkspacePath = workspacePathFor(file.path)
-
-  fun relativize(file: VirtualFile): Path = workspacePathFor(file).asPath()
-
-  fun tryRelativize(file: VirtualFile): Path? {
-    if (!isInWorkspace(file)) {
-      return null
+/**
+ * Represents a workspace root
+ */
+public record WorkspaceRoot(Path directory) {
+    public WorkspaceRoot(File directory) {
+        this(directory.toPath());
     }
 
-    return relativize(file)
-  }
-
-  private fun workspacePathFor(path: String): WorkspacePath {
-    require(isInWorkspace(path)) { String.format("File '%s' is not under workspace %s", path, directory) }
-    val dirPathStr = directory.toString()
-    if (dirPathStr.length == path.length) {
-      return WorkspacePath("")
+    public Path fileForPath(WorkspacePath workspacePath) {
+        return directory.resolve(workspacePath.relativePath());
     }
-    return WorkspacePath(path.substring(dirPathStr.length + 1))
-  }
 
-  /**
-   * Returns the WorkspacePath for the given absolute file, if it's a child of this WorkspaceRoot
-   * and a valid WorkspacePath. Otherwise returns null.
-   */
-  fun workspacePathForSafe(absoluteFile: Path): WorkspacePath? = workspacePathForSafe(absoluteFile.toString())
+    // consulo: upstream fun directory(): Path is the record accessor
 
-  fun workspacePathForSafe(absoluteFile: File): WorkspacePath? = workspacePathForSafe(absoluteFile.toPath())
-
-  /**
-   * Returns the WorkspacePath for the given virtual file, if it's a child of this WorkspaceRoot and
-   * a valid WorkspacePath. Otherwise returns null.
-   */
-  fun workspacePathForSafe(file: VirtualFile): WorkspacePath? = workspacePathForSafe(file.path)
-
-  private fun workspacePathForSafe(path: String): WorkspacePath? {
-    if (!isInWorkspace(path)) {
-      return null
+    public @Nullable Path absolutePathFor(String workspaceRelativePath) {
+        return directory.resolve(workspaceRelativePath);
     }
-    val dirPathStr = directory.toString()
-    if (dirPathStr.length == path.length) {
-      return WorkspacePath("")
+
+    public Path path() {
+        return directory;
     }
-    return WorkspacePath.createIfValid(path.substring(dirPathStr.length + 1))
-  }
 
-  fun isInWorkspace(file: Path): Boolean = file.startsWith(directory)
+    public WorkspacePath workspacePathFor(Path file) {
+        return workspacePathFor(file.toString());
+    }
 
-  fun isInWorkspace(file: File): Boolean = isInWorkspace(file.toPath())
+    public WorkspacePath workspacePathFor(VirtualFile file) {
+        return workspacePathFor(file.getPath());
+    }
 
-  fun isInWorkspace(file: VirtualFile): Boolean = isInWorkspace(file.path)
+    public Path relativize(VirtualFile file) {
+        return workspacePathFor(file).asPath();
+    }
 
-  private fun isInWorkspace(path: String): Boolean =
-    com.intellij.openapi.util.io.FileUtil
-      .isAncestor(directory.toString(), path, false)
+    public @Nullable Path tryRelativize(VirtualFile file) {
+        if (!isInWorkspace(file)) {
+            return null;
+        }
+
+        return relativize(file);
+    }
+
+    private WorkspacePath workspacePathFor(String path) {
+        if (!isInWorkspace(path)) {
+            throw new IllegalArgumentException(String.format("File '%s' is not under workspace %s", path, directory));
+        }
+        String dirPathStr = directory.toString();
+        if (dirPathStr.length() == path.length()) {
+            return new WorkspacePath("");
+        }
+        return new WorkspacePath(path.substring(dirPathStr.length() + 1));
+    }
+
+    /**
+     * Returns the WorkspacePath for the given absolute file, if it's a child of this WorkspaceRoot
+     * and a valid WorkspacePath. Otherwise returns null.
+     */
+    public @Nullable WorkspacePath workspacePathForSafe(Path absoluteFile) {
+        return workspacePathForSafe(absoluteFile.toString());
+    }
+
+    public @Nullable WorkspacePath workspacePathForSafe(File absoluteFile) {
+        return workspacePathForSafe(absoluteFile.toPath());
+    }
+
+    /**
+     * Returns the WorkspacePath for the given virtual file, if it's a child of this WorkspaceRoot and
+     * a valid WorkspacePath. Otherwise returns null.
+     */
+    public @Nullable WorkspacePath workspacePathForSafe(VirtualFile file) {
+        return workspacePathForSafe(file.getPath());
+    }
+
+    private @Nullable WorkspacePath workspacePathForSafe(String path) {
+        if (!isInWorkspace(path)) {
+            return null;
+        }
+        String dirPathStr = directory.toString();
+        if (dirPathStr.length() == path.length()) {
+            return new WorkspacePath("");
+        }
+        return WorkspacePath.createIfValid(path.substring(dirPathStr.length() + 1));
+    }
+
+    public boolean isInWorkspace(Path file) {
+        return file.startsWith(directory);
+    }
+
+    public boolean isInWorkspace(File file) {
+        return isInWorkspace(file.toPath());
+    }
+
+    public boolean isInWorkspace(VirtualFile file) {
+        return isInWorkspace(file.getPath());
+    }
+
+    private boolean isInWorkspace(String path) {
+        return consulo.util.io.FileUtil
+            .isAncestor(directory.toString(), path, false);
+    }
 }

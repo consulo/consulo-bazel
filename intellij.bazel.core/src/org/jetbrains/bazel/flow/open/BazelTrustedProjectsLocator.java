@@ -1,20 +1,31 @@
-package org.jetbrains.bazel.flow.open
+package org.jetbrains.bazel.flow.open;
 
-import com.intellij.ide.trustedProjects.TrustedProjectsLocator
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.toNioPathOrNull
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.config.rootDir
-import java.nio.file.Path
+import consulo.project.Project;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelTrustedProjectsLocator : TrustedProjectsLocator {
-  override fun getProjectRoots(project: Project): List<Path> {
-    if (!project.isBazelProject) return emptyList()
-    return listOfNotNull(project.rootDir.toNioPathOrNull())
-  }
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
-  override fun getProjectRoots(projectRoot: Path, project: Project?): List<Path> {
-    // 'projectRoot' despite its name, may be a file when bazel plugin opens MODULE.bazel, *.bazelproject, etc.
-    return listOfNotNull(findProjectFolderFromFile(projectRoot))
-  }
+// TODO consulo: TrustedProjectsLocator (trusted projects API) is missing in Consulo; the class is not registered
+public class BazelTrustedProjectsLocator {
+    public List<Path> getProjectRoots(Project project) {
+        if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            return List.of();
+        }
+        List<Path> result = new ArrayList<>();
+        try {
+            result.add(org.jetbrains.bazel.config.project.getRootDir(project).toNioPath());
+        }
+        catch (UnsupportedOperationException ignored) {
+            // consulo: upstream toNioPathOrNull()
+        }
+        return result;
+    }
+
+    public List<Path> getProjectRoots(Path projectRoot, @Nullable Project project) {
+        // 'projectRoot' despite its name, may be a file when bazel plugin opens MODULE.bazel, *.bazelproject, etc.
+        Path projectFolder = utils.findProjectFolderFromFile(projectRoot);
+        return projectFolder == null ? List.of() : List.of(projectFolder);
+    }
 }

@@ -1,19 +1,18 @@
-package org.jetbrains.bazel.run.config
+package org.jetbrains.bazel.run.config;
 
-import com.intellij.execution.ui.SettingsEditorFragment
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.bazel.execution.ui.SettingsEditorFragment;
 
-@ApiStatus.Internal
-interface BazelRunConfigurationEditorCustomizer {
+import java.util.List;
 
-  fun fragmentsCreated(configuration: BazelRunConfiguration, fragments: List<SettingsEditorFragment<BazelRunConfiguration, *>>)
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelRunConfigurationEditorCustomizer {
+
+    void fragmentsCreated(BazelRunConfiguration configuration, List<SettingsEditorFragment<BazelRunConfiguration, ?>> fragments);
 
 
-  fun fragmentsReset(configuration: BazelRunConfiguration, fragments: List<SettingsEditorFragment<BazelRunConfiguration, *>>)
+    void fragmentsReset(BazelRunConfiguration configuration, List<SettingsEditorFragment<BazelRunConfiguration, ?>> fragments);
 
-  companion object {
-    internal val EP_NAME: ExtensionPointName<BazelRunConfigurationEditorCustomizer> =
-      ExtensionPointName("org.jetbrains.bazel.runConfigurationEditorCustomizer")
-  }
+    // consulo: upstream EP_NAME is replaced by Application.get().getExtensionPoint(BazelRunConfigurationEditorCustomizer.class)
 }

@@ -1,141 +1,187 @@
-package org.jetbrains.bazel.languages.bazelrc.annotation
+package org.jetbrains.bazel.languages.bazelrc.annotation;
 
-import com.intellij.lang.annotation.AnnotationHolder
-import com.intellij.lang.annotation.Annotator
-import com.intellij.lang.annotation.HighlightSeverity
-import com.intellij.model.psi.PsiSymbolReference
-import com.intellij.model.psi.PsiSymbolReferenceService
-import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.util.parentOfType
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes
-import org.jetbrains.bazel.languages.bazelrc.flags.BazelFlagSymbol
-import org.jetbrains.bazel.languages.bazelrc.flags.Flag
-import org.jetbrains.bazel.languages.bazelrc.flags.OptionEffectTag
-import org.jetbrains.bazel.languages.bazelrc.flags.OptionMetadataTag
-import org.jetbrains.bazel.languages.bazelrc.highlighting.BazelrcHighlightingColors
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFlag
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcLine
-import org.jetbrains.bazel.languages.bazelrc.quickfix.DeleteFlagUseFix
-import org.jetbrains.bazel.languages.bazelrc.quickfix.RenameFlagNameFix
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.documentation.BazelDocumentationElement;
+import consulo.language.Language;
+import consulo.language.editor.annotation.AnnotationHolder;
+import consulo.language.editor.annotation.Annotator;
+import consulo.language.editor.annotation.AnnotatorFactory;
+import consulo.language.editor.annotation.HighlightSeverity;
+import consulo.language.pattern.PsiElementPattern;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage;
+import org.jetbrains.bazel.languages.bazelrc.documentation.BazelFlagDocumentationTarget;
+import org.jetbrains.bazel.languages.bazelrc.elements.BazelrcTokenTypes;
+import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
+import org.jetbrains.bazel.languages.bazelrc.flags.OptionEffectTag;
+import org.jetbrains.bazel.languages.bazelrc.flags.OptionMetadataTag;
+import org.jetbrains.bazel.languages.bazelrc.highlighting.BazelrcHighlightingColors;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFlag;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcLine;
+import org.jetbrains.bazel.languages.bazelrc.quickfix.DeleteFlagUseFix;
+import org.jetbrains.bazel.languages.bazelrc.quickfix.RenameFlagNameFix;
+import org.jspecify.annotations.Nullable;
 
-internal val flagTokenPattern =
-  psiElement(BazelrcTokenTypes.FLAG)
-    .withParents(
-      BazelrcFlag::class.java,
-      BazelrcLine::class.java,
-    )!!
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.regex.Pattern;
 
-private val labelFlagRe = Regex("^(--|--(?:no)?[@/].*)$")
+import static consulo.language.pattern.PlatformPatterns.psiElement;
 
-@Suppress("UnstableApiUsage")
-internal class BazelrcFlagAnnotator : Annotator {
-  val symbolReferenceService = PsiSymbolReferenceService.getService()
+// consulo: Consulo registers annotators through AnnotatorFactory; the stateless annotator is its own factory
+@ExtensionImpl
+class BazelrcFlagAnnotator implements Annotator, AnnotatorFactory {
+    // consulo: upstream top-level declarations of BazelrcFlagAnnotator.kt are static members of this class
+    @SuppressWarnings("unchecked")
+    public static final PsiElementPattern.Capture<PsiElement> flagTokenPattern =
+        psiElement(BazelrcTokenTypes.FLAG)
+            .withParents(
+                BazelrcFlag.class,
+                BazelrcLine.class
+            );
 
-  override fun annotate(element: PsiElement, holder: AnnotationHolder) {
-    if (!flagTokenPattern.accepts(element) || isLabel(element)) {
-      return
+    private static final Pattern LABEL_FLAG_RE = Pattern.compile("^(--|--(?:no)?[@/].*)$");
+
+    public BazelrcFlagAnnotator() {
     }
 
-    val flag =
-      (element.parent as? BazelrcFlag)
-        ?.let(symbolReferenceService::getReferences)
-        ?.flatMap(PsiSymbolReference::resolveReference)
-        ?.firstOrNull()
-        ?.let { it as? BazelFlagSymbol }
-        ?.flag
+    // consulo: upstream field symbolReferenceService (PsiSymbolReferenceService) is dropped, see annotate()
 
-    if (flag == null) {
-      holder
-        .newAnnotation(HighlightSeverity.WARNING, BazelPluginBundle.message("annotation.bazelrc.unknown.flag", element.text))
-        .range(element.textRange)
-        .textAttributes(BazelrcHighlightingColors.UNKNOWN_FLAG)
-        .create()
-      return
+    @Override
+    @RequiredReadAction
+    public void annotate(PsiElement element, AnnotationHolder holder) {
+        if (!flagTokenPattern.accepts(element) || isLabel(element)) {
+            return;
+        }
+
+        // consulo: PsiSymbolReferenceService.getReferences(flag).flatMap(resolveReference) -> classic getReferences()/resolve():
+        // flag name references resolve to a BazelDocumentationElement whose target carries the BazelFlagSymbol
+        Flag flag = null;
+        if (element.getParent() instanceof BazelrcFlag bazelrcFlag) {
+            PsiElement resolved =
+                Arrays.stream(bazelrcFlag.getReferences())
+                    .map(PsiReference::resolve)
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElse(null);
+            if (resolved instanceof BazelDocumentationElement documentationElement &&
+                documentationElement.getTarget() instanceof BazelFlagDocumentationTarget target) {
+                flag = target.getSymbolPtr().getFlag();
+            }
+        }
+
+        if (flag == null) {
+            holder
+                .newAnnotation(HighlightSeverity.WARNING, BazelPluginLocalize.annotationBazelrcUnknownFlag(element.getText()))
+                .range(element.getTextRange())
+                .textAttributes(BazelrcHighlightingColors.UNKNOWN_FLAG)
+                .create();
+            return;
+        }
+
+        if (isHidden(flag)) {
+            holder
+                .newAnnotation(HighlightSeverity.INFORMATION, BazelPluginLocalize.annotationBazelrcUndocumentedFlag(element.getText()))
+                .range(element.getTextRange())
+                .textAttributes(BazelrcHighlightingColors.UNKNOWN_FLAG)
+                .create();
+        }
+        else if (isNoOp(flag)) {
+            holder
+                .newAnnotation(HighlightSeverity.INFORMATION, BazelPluginLocalize.annotationBazelrcIdleFlag(element.getText()))
+                .range(element.getTextRange())
+                .textAttributes(BazelrcHighlightingColors.NOOP_FLAG)
+                .withFix(new DeleteFlagUseFix(element, flag))
+                .create();
+        }
+        else if (isDeprecated(flag, element)) {
+            holder
+                .newAnnotation(HighlightSeverity.WARNING, BazelPluginLocalize.annotationBazelrcDeprecatedFlag(element.getText()))
+                .range(element.getTextRange())
+                .textAttributes(BazelrcHighlightingColors.DEPRECATED_FLAG)
+                .create();
+        }
+        else if (isOld(flag, element.getText())) {
+            holder
+                .newAnnotation(HighlightSeverity.INFORMATION, oldAnnotationMessage(flag, element.getText()))
+                .range(element.getTextRange())
+                .textAttributes(BazelrcHighlightingColors.DEPRECATED_FLAG)
+                .withFix(new RenameFlagNameFix(element, flag))
+                .create();
+        }
+        else if (isNotApplicable(flag, element)) {
+            holder
+                .newAnnotation(
+                    HighlightSeverity.INFORMATION,
+                    BazelPluginLocalize.annotationBazelrcFlagNotApplicable(
+                        element.getText(),
+                        Objects.requireNonNull(PsiTreeUtil.getParentOfType(element, BazelrcLine.class, true)).getCommand()
+                    )
+                ).range(element.getTextRange())
+                .textAttributes(BazelrcHighlightingColors.DEPRECATED_FLAG)
+                .create();
+        }
     }
 
-    when {
-      isHidden(flag) ->
-        holder
-          .newAnnotation(HighlightSeverity.INFORMATION, BazelPluginBundle.message("annotation.bazelrc.undocumented.flag", element.text))
-          .range(element.textRange)
-          .textAttributes(BazelrcHighlightingColors.UNKNOWN_FLAG)
-          .create()
-
-      isNoOp(flag) ->
-        holder
-          .newAnnotation(HighlightSeverity.INFORMATION, BazelPluginBundle.message("annotation.bazelrc.idle.flag", element.text))
-          .range(element.textRange)
-          .textAttributes(BazelrcHighlightingColors.NOOP_FLAG)
-          .withFix(DeleteFlagUseFix(element, flag))
-          .create()
-
-      isDeprecated(flag, element) ->
-        holder
-          .newAnnotation(HighlightSeverity.WARNING, BazelPluginBundle.message("annotation.bazelrc.deprecated.flag", element.text))
-          .range(element.textRange)
-          .textAttributes(BazelrcHighlightingColors.DEPRECATED_FLAG)
-          .create()
-
-      isOld(flag, element.text) ->
-        holder
-          .newAnnotation(HighlightSeverity.INFORMATION, oldAnnotationMessage(flag, element.text))
-          .range(element.textRange)
-          .textAttributes(BazelrcHighlightingColors.DEPRECATED_FLAG)
-          .withFix(RenameFlagNameFix(element, flag))
-          .create()
-
-      isNotApplicable(flag, element) ->
-        holder
-          .newAnnotation(
-            HighlightSeverity.INFORMATION,
-            BazelPluginBundle.message(
-              "annotation.bazelrc.flag.not.applicable",
-              element.text,
-              element.parentOfType<BazelrcLine>(false)!!.command,
-            ),
-          ).range(element.textRange)
-          .textAttributes(BazelrcHighlightingColors.DEPRECATED_FLAG)
-          .create()
-
-      else -> {}
-    }
-  }
-
-  private fun oldAnnotationMessage(flag: Flag, flagText: String) =
-    when {
-      flagText.startsWith("--no") -> "--no"
-      else -> "--"
-    }.let {
-      "'$flagText' is deprecated. use '$it${flag.option.name}' instead."
+    // consulo: upstream builds a plain (not bundled) String message
+    private LocalizeValue oldAnnotationMessage(Flag flag, String flagText) {
+        String it = flagText.startsWith("--no") ? "--no" : "--";
+        return LocalizeValue.of("'" + flagText + "' is deprecated. use '" + it + flag.getOption().name() + "' instead.");
     }
 
-  private fun isLabel(e: PsiElement) = labelFlagRe.matches(e.text)
-
-  private fun isHidden(flag: Flag) = flag.option.metadataTags.contains(OptionMetadataTag.HIDDEN)
-
-  private fun isDeprecated(flag: Flag, element: PsiElement) =
-    when (flag.name) {
-      "watchfs" -> PsiTreeUtil.getParentOfType(element, false, BazelrcLine::class.java)?.command == "startup"
-
-      else -> flag.option.metadataTags.contains(OptionMetadataTag.DEPRECATED)
+    @RequiredReadAction
+    private boolean isLabel(PsiElement e) {
+        return LABEL_FLAG_RE.matcher(e.getText()).matches();
     }
 
-  private fun isNoOp(flag: Flag) = flag.option.effectTags.contains(OptionEffectTag.NO_OP)
-
-  private fun isOld(flag: Flag, name: String) =
-    when (flag) {
-      is Flag.Boolean, is Flag.TriState ->
-        name == "--${flag.option.oldName}" || name == "--no${flag.option.oldName}"
-
-      else -> "--${flag.option.oldName}" == name
+    private boolean isHidden(Flag flag) {
+        return Arrays.asList(flag.getOption().metadataTags()).contains(OptionMetadataTag.HIDDEN);
     }
 
-  private fun isNotApplicable(flag: Flag, element: PsiElement) =
-    PsiTreeUtil
-      .getParentOfType(element, true, BazelrcLine::class.java)
-      ?.command
-      ?.let { it != "common" && !flag.option.commands.contains(it) } ?: false
+    private boolean isDeprecated(Flag flag, PsiElement element) {
+        if (flag.getName().equals("watchfs")) {
+            BazelrcLine line = PsiTreeUtil.getParentOfType(element, BazelrcLine.class, false);
+            return line != null && line.getCommand().equals("startup");
+        }
+        else {
+            return Arrays.asList(flag.getOption().metadataTags()).contains(OptionMetadataTag.DEPRECATED);
+        }
+    }
+
+    private boolean isNoOp(Flag flag) {
+        return Arrays.asList(flag.getOption().effectTags()).contains(OptionEffectTag.NO_OP);
+    }
+
+    private boolean isOld(Flag flag, String name) {
+        if (flag instanceof Flag.Boolean || flag instanceof Flag.TriState) {
+            return name.equals("--" + flag.getOption().oldName()) || name.equals("--no" + flag.getOption().oldName());
+        }
+        else {
+            return ("--" + flag.getOption().oldName()).equals(name);
+        }
+    }
+
+    private boolean isNotApplicable(Flag flag, PsiElement element) {
+        BazelrcLine line = PsiTreeUtil.getParentOfType(element, BazelrcLine.class, true);
+        if (line == null) {
+            return false;
+        }
+        String it = line.getCommand();
+        return !it.equals("common") && !Arrays.asList(flag.getOption().commands()).contains(it);
+    }
+
+    @Override
+    public Language getLanguage() {
+        return BazelrcLanguage.INSTANCE;
+    }
+
+    @Override
+    public @Nullable Annotator createAnnotator() {
+        return this;
+    }
 }

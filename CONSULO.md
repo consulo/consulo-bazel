@@ -53,6 +53,9 @@ git merge-base HEAD upstream/main
   `com.google.protobuf`; the full runtime also runs lite code). Bundling our own copy is impossible: both are
   automatic modules named `com.google.protobuf`. All modules use `protobuf-java` with `provided` scope, and
   `consulo-aspect-sdk` overrides the platform's `liteOnly=true` for its generated code.
+- **gRPC comes from the platform too.** The platform ships `grpc-api`, `grpc-stub`, `grpc-protobuf` (+ `-lite`) and
+  `proto-google-common-protos` (managed by `arch.managment`, `${grpc.version}`); all of them are `provided` here, the
+  plugin bundles none. Until the published `arch.managment` has `${grpc.version}`, the poms keep explicit versions (TODO).
 - The plugin packaging (`maven-consulo-plugin`) bundles **direct** dependencies of `consulo-plugin/pom.xml` only:
   every bundled library must be listed there.
 - The Maven build cache ignores plugin-configuration-only changes in a pom; touch an input file of the module to
@@ -166,6 +169,38 @@ by hand.
 - The generated workspace entity code (`intellij.bazel.backend/gen`) is deleted.
 - `BazelWorkspaceImporter.import` is `doImport` (`import` is a Java keyword).
 
+### Core: project opening, build and platform gaps
+
+- **Opening a Bazel project.** IntelliJ's `ProjectOpenProcessor` is internal in Consulo, so
+  `flow/open/BazelProjectOpenProcessor` is a `ModuleImportProvider`: opening a Bazel workspace goes through Consulo's
+  import flow, and `process(...)` records the Bazel store descriptor and runs the upstream open callback after the
+  project is opened. Upstream marks a Bazel project with its project store (`ProjectStorePathCustomizer` ->
+  `BazelProjectStoreDescriptor`); Consulo keeps project files in `.consulo`, so `BazelProjectStoreDescriptor` is a plain
+  class persisted by the Consulo-only `consulo.bazel.core.BazelProjectStoreService` (`bazel.xml`), and
+  `BazelProjectStorePathCustomizer` only computes it. `project.isBazelProject` = a descriptor is stored.
+- `closeAndReopenAsBazelProject` stores the descriptor and calls `ProjectManager.reloadProject` (no `OpenProjectTask`).
+- Not registered (no Consulo API), the classes are kept and marked `TODO consulo`: `BazelUnlinkedProjectAware`
+  (`ExternalSystemUnlinkedProjectAware`), `BazelTrustedProjectsLocator` (trusted projects), `CounterPlatformProjectConfigurator`
+  (`DirectoryProjectConfigurator`), and the workspace-model `registerProjectRoot` call in
+  `OpenBazelProjectAndSyncStartupActivity` (`InitProjectActivity` -> first `PostStartupActivity`).
+- **Build.** IntelliJ's `ProjectTaskRunner` does not exist: `buildTask/BazelProjectTaskRunner` is a Consulo
+  `CompilerRunner` that builds the targets of the affected modules; `ProjectTaskContext` is the `CompileContext`.
+- `ModuleEntity` in core APIs (`ModuleTargetService`, `TargetsToBuildProvider`) is the classic `Module`; indexes over the
+  entity storage are `CachedValue`s that depend on `ProjectRootManager`.
+- Startup resync: upstream resyncs when the workspace model was not loaded from its cache; here, when the in-memory
+  Bazel project data (`BazelProjectDirectoriesEntity`) is missing, i.e. after every restart until that data is persisted.
+- Documentation: the Consulo-only bridge `consulo.bazel.documentation` also has `DocumentationSymbol`,
+  `PsiDocumentationTargetProvider`, `DocumentationLinkHandler` and `LinkResolveResult`; references to symbols resolve
+  to `BazelDocumentationElement`. One `BazelDocumentationProviderBase` subclass per language
+  (`consulo.bazel.core.{Starlark,Bazelrc,BazelQuery,BazelQueryFlags}DocumentationProvider`).
+- Notification groups: `consulo.bazel.core.BazelNotificationGroupContributor`. Icons: `consulo.bazel.core.BazelPluginIconGroup`
+  (copied from `intellij.bazel.resource/resources/icons`), wrapped by upstream `BazelPluginIcons`.
+- Run configuration fragments (`SettingsEditorFragment`, `RunConfigurationFragmentedEditor`, ...) do not exist in Consulo:
+  a minimal Consulo-only bridge with the same names lives in `consulo.bazel.execution.ui`.
+- Kotlin UI DSL panels are rebuilt with Swing and `FormBuilder`, keeping row order and bindings.
+- The new IntelliJ Search Everywhere API (`SeLabelProvider*`, split mode only) is deleted; the legacy contributor is ported.
+- `multiverse/` (IntelliJ code insight contexts) is deleted.
+
 ### Files we never port
 
 Some upstream code depends on APIs that Consulo does not have (for example CLion's closed-source
@@ -243,7 +278,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `intellij.bazel.commons` | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.projectview` (needs commons) | `consulo.bazel.base` | converted, builds |
 | `intellij.bazel.backend` (runner, BEP, query, sync) | `consulo.bazel.base` | converted, builds (project model on the classic API) |
-| `intellij.bazel.core` | `consulo.bazel.base` | not started |
+| `intellij.bazel.core`, `intellij.bazel.bazelisk` | `consulo.bazel.base` | converted, builds, sync tested (C++ project) |
 | `java/*`, `kotlin/*` | `bazel` module in consulo-java / consulo-kotlin | not started |
 | `golang/*` | `bazel` module in consulo-google-go | not started |
 | `python/*` | `bazel` module in consulo-python | not started |
@@ -275,6 +310,18 @@ classes under other names, the Java file is renamed. Upstream diffs of the left 
 | `intellij.bazel.commons/.../commons/LanguageClass.kt` (the `LanguageClassService` part) | `LanguageClass.java` + `LanguageClassService.java` |
 | `intellij.bazel.commons/.../sync/workspace/snapshot/WorkspaceSnapshot.kt` | `WorkspaceTargetKey.java`, `WorkspaceAspectIds.java`, `WorkspaceConfigurationId.java`, `WorkspaceConfiguration.java`, `WorkspaceConfigurationSummary.java`, `WorkspaceConfigurationFragment.java` |
 | `intellij.bazel.backend/.../sync/workspace/snapshot/InMemoryFileToTargetMap.kt` (the `FileToTargetMap` interface) | `InMemoryFileToTargetMap.java` + `FileToTargetMap.java` |
+| `intellij.bazel.core/.../buildTask/BazelProjectTaskRunner.kt` | `BazelProjectTaskRunner.java`, `AdditionalProjectTaskRunnerProvider.java`, `AdditionalProjectTask.java`, `TargetsToBuildProvider.java`, `DefaultTargetsToBuildProvider.java` |
+| `intellij.bazel.core/.../ui/projectTree/BazelTreeStructureController.kt` (the `BazelTreeNodeType` enum) | `BazelTreeStructureController.java` + `BazelTreeNodeType.java` |
+| `intellij.bazel.core/.../languages/starlark/bazel/BazelGlobalFunctions.kt` (the extension point) | `BazelGlobalFunctions.java` + `StarlarkGlobalFunctionProvider.java` |
+| `intellij.bazel.core/.../run/state/GenericRunState.kt` | `GenericRunState.java`, `AbstractGenericRunState.java`, `GenericRunConfigurationState.java` |
+| `intellij.bazel.core/.../run/state/GenericTestState.kt` | `GenericTestState.java`, `AbstractGenericTestState.java` |
+| `intellij.bazel.core/.../startup/BazelStartupActivityTracker.kt` (the service) | `BazelStartupActivityTracker.java` + `BspConfigurationTrackerService.java` |
+| `intellij.bazel.core/.../sync/action/ResyncFilesAction.kt` (`XmlRegistered`) | `ResyncFilesAction.java` + `ResyncFilesActionXmlRegistered.java` |
+| `intellij.bazel.core/.../ui/settings/BazelApplicationSettingsPanel.kt` | `BazelApplicationSettingsPanel.java`, `BazelApplicationSettings.java`, `BazelApplicationSettingsService.java` |
+| `intellij.bazel.core/.../ui/status/BazelFileStatusDecorator.kt` (the refresher service) | `BazelFileStatusDecorator.java` + `BazelFileStatusRefresher.java` |
+| `intellij.bazel.core/.../ui/widgets/BazelJumpToBuildFileAction.kt` (`XmlRegistered`) | `BazelJumpToBuildFileAction.java` + `BazelJumpToBuildFileActionXmlRegistered.java` |
+| `intellij.bazel.core/.../ui/widgets/LabelSearchEverywhereContributor.kt` (`Factory`) | `LabelSearchEverywhereContributor.java` + `LabelSearchEverywhereContributorFactory.java` |
+| `intellij.bazel.core/.../workspace/fileEvents/BazelFileEventProcessor.kt` | `BazelFileEventProcessor.java`, `BazelFileEventProcessorResult.java`, `DefaultBazelFileEventProcessor.java` |
 
 `KnownFlags.kt` is generated upstream and was converted mechanically: re-run the conversion when it changes
 (fields named after Java keywords - `long`, `null`, `short` - get a trailing underscore).

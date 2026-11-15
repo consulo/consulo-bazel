@@ -1,32 +1,68 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.util.Processor
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue
+import consulo.application.util.function.Processor;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkStringLoadValue;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkResolveProcessor(
-  val result: MutableList<StarlarkElement>,
-  private val referenceElement: StarlarkElement,
-  private val nameToResolve: String?,
-) :
-  Processor<StarlarkElement> {
-  override fun process(currentElement: StarlarkElement): Boolean =
-    when {
-      currentElement == referenceElement -> true
-      currentElement.isTargetElement() -> !result.add(currentElement)
-      currentElement.isLoadTargetElement() -> addLoadTarget(currentElement as StarlarkStringLoadValue)
-      else -> true
+import java.util.List;
+import java.util.Objects;
+
+public class StarlarkResolveProcessor implements Processor<StarlarkElement> {
+    private final List<StarlarkElement> myResult;
+    private final StarlarkElement myReferenceElement;
+    private final @Nullable String myNameToResolve;
+
+    public StarlarkResolveProcessor(
+        List<StarlarkElement> result,
+        StarlarkElement referenceElement,
+        @Nullable String nameToResolve
+    ) {
+        myResult = result;
+        myReferenceElement = referenceElement;
+        myNameToResolve = nameToResolve;
     }
 
-  private fun StarlarkElement.isTargetElement(): Boolean =
-    this is StarlarkNamedElement && nameToResolve == this.name
+    public List<StarlarkElement> getResult() {
+        return myResult;
+    }
 
-  private fun StarlarkElement.isLoadTargetElement(): Boolean =
-    this is StarlarkStringLoadValue && nameToResolve == this.getLoadValueExpressionContent()
+    @Override
+    public boolean process(StarlarkElement currentElement) {
+        if (currentElement.equals(myReferenceElement)) {
+            return true;
+        }
+        else if (isTargetElement(currentElement)) {
+            return !myResult.add(currentElement);
+        }
+        else if (isLoadTargetElement(currentElement)) {
+            return addLoadTarget((StarlarkStringLoadValue) currentElement);
+        }
+        else {
+            return true;
+        }
+    }
 
-  private fun addLoadTarget(element: StarlarkStringLoadValue): Boolean {
-    val resolved = element.getLoadValueExpression()?.reference?.resolve() as? StarlarkNamedElement ?: return true
-    return !result.add(resolved)
-  }
+    private boolean isTargetElement(StarlarkElement receiver) {
+        return receiver instanceof StarlarkNamedElement && Objects.equals(myNameToResolve, receiver.getName());
+    }
+
+    private boolean isLoadTargetElement(StarlarkElement receiver) {
+        return receiver instanceof StarlarkStringLoadValue loadValue
+            && Objects.equals(myNameToResolve, loadValue.getLoadValueExpressionContent());
+    }
+
+    private boolean addLoadTarget(StarlarkStringLoadValue element) {
+        StarlarkStringLiteralExpression loadValueExpression = element.getLoadValueExpression();
+        PsiReference reference = loadValueExpression == null ? null : loadValueExpression.getReference();
+        PsiElement resolved = reference == null ? null : reference.resolve();
+        if (!(resolved instanceof StarlarkNamedElement namedElement)) {
+            return true;
+        }
+        return !myResult.add(namedElement);
+    }
 }

@@ -1,141 +1,188 @@
-package org.jetbrains.bazel.debug.connector
+package org.jetbrains.bazel.debug.connector;
 
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.xdebugger.XDebugSession
-import com.intellij.xdebugger.breakpoints.XLineBreakpoint
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.debug.platform.StarlarkBreakpointHandler.Companion.absolutePath
-import org.jetbrains.bazel.debug.platform.StarlarkBreakpointProperties
-import java.io.IOException
-import java.util.concurrent.CancellationException
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicLong
-import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos as SDP
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.Breakpoint;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.ContinueExecutionRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.DebugEvent;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.DebugRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.EvaluateRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.EvaluateResponse;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.GetChildrenRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.GetChildrenResponse;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.ListFramesRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.ListFramesResponse;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.Location;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.PauseThreadRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.SetBreakpointsRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.StartDebuggingRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.Stepping;
+import consulo.execution.debug.XDebugSession;
+import consulo.execution.debug.breakpoint.XLineBreakpoint;
+import consulo.logging.Logger;
+import org.jetbrains.bazel.debug.platform.StarlarkBreakpointHandler;
+import org.jetbrains.bazel.debug.platform.StarlarkBreakpointProperties;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("TooManyFunctions") // it serves as the main debug message dispatcher, it needs these methods
-@ApiStatus.Internal
-class StarlarkDebugMessenger(private val connector: StarlarkSocketConnector, private val session: XDebugSession) : AutoCloseable {
-  private val subscriptions = mutableMapOf<Long, CompletableFuture<SDP.DebugEvent>>()
-  private val seq = AtomicLong(1L)
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
-  /** This function needs to be safe to call multiple times */
-  override fun close() {
-    connector.close()
-    session.stop()
-  }
+// it serves as the main debug message dispatcher, it needs these methods
+public class StarlarkDebugMessenger implements AutoCloseable {
+    private final StarlarkSocketConnector myConnector;
+    private final XDebugSession mySession;
+    private final Map<Long, CompletableFuture<DebugEvent>> mySubscriptions = new HashMap<>();
+    private final AtomicLong mySeq = new AtomicLong(1L);
 
-  @Throws(IOException::class)
-  fun readEventAndHandle(handler: ThreadAwareEventHandler) {
-    val event = connector.read()
-    val waitingForResponse = subscriptions[event.sequenceNumber]
-    waitingForResponse?.complete(event) ?: handler.reactTo(event)
-  }
-
-  private fun debugRequestTemplate(): SDP.DebugRequest.Builder = SDP.DebugRequest.newBuilder().setSequenceNumber(seq.getAndIncrement())
-
-  fun setBreakpoints(breakpoints: List<XLineBreakpoint<StarlarkBreakpointProperties>>) {
-    val request =
-      breakpoints
-        .map { createSDPBreakpoint(it) }
-        .let {
-          SDP.SetBreakpointsRequest.newBuilder().addAllBreakpoint(it)
-        }
-    debugRequestTemplate().setSetBreakpoints(request).send()
-  }
-
-  fun listFrames(threadId: Long): CompletableFuture<SDP.ListFramesResponse?> {
-    val request =
-      SDP.ListFramesRequest
-        .newBuilder()
-        .setThreadId(threadId)
-    return debugRequestTemplate().setListFrames(request).sendAndSubscribe { it.listFrames }
-  }
-
-  fun getChildren(threadId: Long, valueId: Long): CompletableFuture<SDP.GetChildrenResponse?> {
-    val request =
-      SDP.GetChildrenRequest
-        .newBuilder()
-        .setThreadId(threadId)
-        .setValueId(valueId)
-    return debugRequestTemplate().setGetChildren(request).sendAndSubscribe { it.getChildren }
-  }
-
-  fun evaluate(threadId: Long, expression: String): CompletableFuture<SDP.EvaluateResponse?> {
-    val request =
-      SDP.EvaluateRequest
-        .newBuilder()
-        .setThreadId(threadId)
-        .setStatement(expression)
-    return debugRequestTemplate().setEvaluate(request).sendAndSubscribe { it.evaluate }
-  }
-
-  private fun createSDPBreakpoint(breakpoint: XLineBreakpoint<StarlarkBreakpointProperties>): SDP.Breakpoint {
-    val path = breakpoint.absolutePath()
-    val line = breakpoint.line + 1 // XLineBreakpoints' lines are 0-indexed; we want 1-indexed
-    val location =
-      SDP.Location
-        .newBuilder()
-        .setPath(path)
-        .setLineNumber(line)
-    return SDP.Breakpoint
-      .newBuilder()
-      .setLocation(location)
-      .build()
-  }
-
-  fun pauseAllThreads() {
-    val request =
-      SDP.PauseThreadRequest
-        .newBuilder()
-        .setThreadId(0)
-    debugRequestTemplate().setPauseThread(request).send()
-  }
-
-  fun resumeAllThreads() {
-    resumeThread(0)
-  }
-
-  fun resumeThread(threadId: Long, stepping: SDP.Stepping = SDP.Stepping.NONE) {
-    val request =
-      SDP.ContinueExecutionRequest
-        .newBuilder()
-        .setThreadId(threadId)
-        .setStepping(stepping)
-    debugRequestTemplate().setContinueExecution(request).send()
-  }
-
-  fun startDebugging() {
-    val request = SDP.StartDebuggingRequest.newBuilder()
-    debugRequestTemplate().setStartDebugging(request).send()
-  }
-
-  private fun SDP.DebugRequest.Builder.send() {
-    try {
-      connector.write(this.build())
-    } catch (e: Exception) {
-      if (e !is IOException && e !is CancellationException) {
-        log.error(e) // other exceptions are not expected
-      }
-      close()
+    public StarlarkDebugMessenger(StarlarkSocketConnector connector, XDebugSession session) {
+        myConnector = connector;
+        mySession = session;
     }
-    // closing this Messenger is not done in finally{}, because we don't want to do it if no exception occurred
-  }
 
-  private fun <ResponseT> SDP.DebugRequest.Builder.sendAndSubscribe(
-    responseExtractor: (SDP.DebugEvent) -> ResponseT?,
-  ): CompletableFuture<ResponseT?> {
-    val responseFuture = ResponseFuture(responseExtractor)
-    subscriptions[this.sequenceNumber] = responseFuture
-    this.send()
-    return responseFuture.typedResponseFuture
-  }
+    /**
+     * This function needs to be safe to call multiple times
+     */
+    @Override
+    public void close() {
+        myConnector.close();
+        mySession.stop();
+    }
 
-  private class ResponseFuture<ResponseT>(private val responseExtractor: (SDP.DebugEvent) -> ResponseT?) :
-    CompletableFuture<SDP.DebugEvent>() {
-    val typedResponseFuture: CompletableFuture<ResponseT?> = this.thenApply { responseExtractor(it) }
-  }
+    public void readEventAndHandle(ThreadAwareEventHandler handler) throws IOException {
+        DebugEvent event = myConnector.read();
+        CompletableFuture<DebugEvent> waitingForResponse = mySubscriptions.get(event.getSequenceNumber());
+        if (waitingForResponse != null) {
+            waitingForResponse.complete(event);
+        }
+        else {
+            handler.reactTo(event);
+        }
+    }
 
-  private companion object {
-    private val log = logger<StarlarkDebugMessenger>()
-  }
+    private DebugRequest.Builder debugRequestTemplate() {
+        return DebugRequest.newBuilder().setSequenceNumber(mySeq.getAndIncrement());
+    }
+
+    public void setBreakpoints(List<XLineBreakpoint<StarlarkBreakpointProperties>> breakpoints) {
+        SetBreakpointsRequest.Builder request =
+            SetBreakpointsRequest.newBuilder().addAllBreakpoint(
+                breakpoints
+                    .stream()
+                    .map(this::createSDPBreakpoint)
+                    .toList()
+            );
+        send(debugRequestTemplate().setSetBreakpoints(request));
+    }
+
+    public CompletableFuture<@Nullable ListFramesResponse> listFrames(long threadId) {
+        ListFramesRequest.Builder request =
+            ListFramesRequest
+                .newBuilder()
+                .setThreadId(threadId);
+        return sendAndSubscribe(debugRequestTemplate().setListFrames(request), DebugEvent::getListFrames);
+    }
+
+    public CompletableFuture<@Nullable GetChildrenResponse> getChildren(long threadId, long valueId) {
+        GetChildrenRequest.Builder request =
+            GetChildrenRequest
+                .newBuilder()
+                .setThreadId(threadId)
+                .setValueId(valueId);
+        return sendAndSubscribe(debugRequestTemplate().setGetChildren(request), DebugEvent::getGetChildren);
+    }
+
+    public CompletableFuture<@Nullable EvaluateResponse> evaluate(long threadId, String expression) {
+        EvaluateRequest.Builder request =
+            EvaluateRequest
+                .newBuilder()
+                .setThreadId(threadId)
+                .setStatement(expression);
+        return sendAndSubscribe(debugRequestTemplate().setEvaluate(request), DebugEvent::getEvaluate);
+    }
+
+    private Breakpoint createSDPBreakpoint(XLineBreakpoint<StarlarkBreakpointProperties> breakpoint) {
+        String path = StarlarkBreakpointHandler.absolutePath(breakpoint);
+        int line = breakpoint.getLine() + 1; // XLineBreakpoints' lines are 0-indexed; we want 1-indexed
+        Location.Builder location =
+            Location
+                .newBuilder()
+                .setPath(path)
+                .setLineNumber(line);
+        return Breakpoint
+            .newBuilder()
+            .setLocation(location)
+            .build();
+    }
+
+    public void pauseAllThreads() {
+        PauseThreadRequest.Builder request =
+            PauseThreadRequest
+                .newBuilder()
+                .setThreadId(0);
+        send(debugRequestTemplate().setPauseThread(request));
+    }
+
+    public void resumeAllThreads() {
+        resumeThread(0);
+    }
+
+    // consulo: overload for the upstream default argument (stepping = Stepping.NONE)
+    public void resumeThread(long threadId) {
+        resumeThread(threadId, Stepping.NONE);
+    }
+
+    public void resumeThread(long threadId, Stepping stepping) {
+        ContinueExecutionRequest.Builder request =
+            ContinueExecutionRequest
+                .newBuilder()
+                .setThreadId(threadId)
+                .setStepping(stepping);
+        send(debugRequestTemplate().setContinueExecution(request));
+    }
+
+    public void startDebugging() {
+        StartDebuggingRequest.Builder request = StartDebuggingRequest.newBuilder();
+        send(debugRequestTemplate().setStartDebugging(request));
+    }
+
+    private void send(DebugRequest.Builder receiver) {
+        try {
+            myConnector.write(receiver.build());
+        }
+        catch (Exception e) {
+            if (!(e instanceof IOException) && !(e instanceof CancellationException)) {
+                LOG.error(e); // other exceptions are not expected
+            }
+            close();
+        }
+        // closing this Messenger is not done in finally{}, because we don't want to do it if no exception occurred
+    }
+
+    private <ResponseT extends @Nullable Object> CompletableFuture<ResponseT> sendAndSubscribe(
+        DebugRequest.Builder receiver,
+        Function<DebugEvent, ResponseT> responseExtractor
+    ) {
+        ResponseFuture<ResponseT> responseFuture = new ResponseFuture<>(responseExtractor);
+        mySubscriptions.put(receiver.getSequenceNumber(), responseFuture);
+        send(receiver);
+        return responseFuture.getTypedResponseFuture();
+    }
+
+    private static class ResponseFuture<ResponseT extends @Nullable Object> extends CompletableFuture<DebugEvent> {
+        private final CompletableFuture<ResponseT> myTypedResponseFuture;
+
+        ResponseFuture(Function<DebugEvent, ResponseT> responseExtractor) {
+            myTypedResponseFuture = this.thenApply(responseExtractor);
+        }
+
+        CompletableFuture<ResponseT> getTypedResponseFuture() {
+            return myTypedResponseFuture;
+        }
+    }
+
+    private static final Logger LOG = Logger.getInstance(StarlarkDebugMessenger.class);
 }

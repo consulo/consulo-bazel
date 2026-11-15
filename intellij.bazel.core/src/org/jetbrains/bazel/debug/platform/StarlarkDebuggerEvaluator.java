@@ -1,47 +1,80 @@
-package org.jetbrains.bazel.debug.platform
+package org.jetbrains.bazel.debug.platform;
 
-import com.intellij.xdebugger.XSourcePosition
-import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.debug.connector.StarlarkDebugMessenger
-import org.jetbrains.bazel.debug.connector.StarlarkValueComputer
-import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos as SDP
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.EvaluateResponse;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.debug.XSourcePosition;
+import consulo.execution.debug.evaluation.XDebuggerEvaluator;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.debug.connector.StarlarkDebugMessenger;
+import org.jetbrains.bazel.debug.connector.StarlarkValueComputer;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkDebuggerEvaluator(
-  private val threadId: Long,
-  private val valueComputer: StarlarkValueComputer,
-  private val messenger: StarlarkDebugMessenger,
-) : XDebuggerEvaluator() {
-  override fun evaluate(
-    expression: String,
-    callback: XEvaluationCallback,
-    sourcePosition: XSourcePosition?,
-  ) {
-    messenger
-      .evaluate(threadId, expression)
-      .thenAccept { it.callBack(callback) }
-  }
+public class StarlarkDebuggerEvaluator extends XDebuggerEvaluator {
+    private final long myThreadId;
+    private final StarlarkValueComputer myValueComputer;
+    private final StarlarkDebugMessenger myMessenger;
 
-  private fun SDP.EvaluateResponse?.callBack(callback: XEvaluationCallback) {
-    this
-      ?.result
-      ?.let { StarlarkValue.fromProto(it, threadId, valueComputer) }
-      ?.also { callback.evaluated(it) }
-      ?: callback.errorOccurred(BazelPluginBundle.message("starlark.debug.value.obtain.failed"))
-  }
-
-  /** Always resolves to an error with given message */
-  class ErrorEvaluator(private val message: String) : XDebuggerEvaluator() {
-    override fun evaluate(
-      expression: String,
-      callback: XEvaluationCallback,
-      sourcePosition: XSourcePosition?,
+    public StarlarkDebuggerEvaluator(
+        long threadId,
+        StarlarkValueComputer valueComputer,
+        StarlarkDebugMessenger messenger
     ) {
-      callback.errorOccurred(message)
+        myThreadId = threadId;
+        myValueComputer = valueComputer;
+        myMessenger = messenger;
     }
-  }
 
-  class Provider(private val valueComputer: StarlarkValueComputer, private val messenger: StarlarkDebugMessenger) {
-    fun obtain(threadId: Long): XDebuggerEvaluator = StarlarkDebuggerEvaluator(threadId, valueComputer, messenger)
-  }
+    @Override
+    public void evaluate(
+        String expression,
+        XEvaluationCallback callback,
+        @Nullable XSourcePosition sourcePosition
+    ) {
+        myMessenger
+            .evaluate(myThreadId, expression)
+            .thenAccept(it -> callBack(it, callback));
+    }
+
+    private void callBack(@Nullable EvaluateResponse receiver, XEvaluationCallback callback) {
+        if (receiver != null) {
+            callback.evaluated(StarlarkValue.fromProto(receiver.getResult(), myThreadId, myValueComputer));
+        }
+        else {
+            callback.errorOccurred(BazelPluginLocalize.starlarkDebugValueObtainFailed());
+        }
+    }
+
+    /**
+     * Always resolves to an error with given message
+     */
+    public static class ErrorEvaluator extends XDebuggerEvaluator {
+        private final LocalizeValue myMessage;
+
+        public ErrorEvaluator(LocalizeValue message) {
+            myMessage = message;
+        }
+
+        @Override
+        public void evaluate(
+            String expression,
+            XEvaluationCallback callback,
+            @Nullable XSourcePosition sourcePosition
+        ) {
+            callback.errorOccurred(myMessage);
+        }
+    }
+
+    public static class Provider {
+        private final StarlarkValueComputer myValueComputer;
+        private final StarlarkDebugMessenger myMessenger;
+
+        public Provider(StarlarkValueComputer valueComputer, StarlarkDebugMessenger messenger) {
+            myValueComputer = valueComputer;
+            myMessenger = messenger;
+        }
+
+        public XDebuggerEvaluator obtain(long threadId) {
+            return new StarlarkDebuggerEvaluator(threadId, myValueComputer, myMessenger);
+        }
+    }
 }

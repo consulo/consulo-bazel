@@ -1,41 +1,54 @@
-package org.jetbrains.bazel.debug.platform
+package org.jetbrains.bazel.debug.platform;
 
-import com.intellij.xdebugger.breakpoints.XBreakpointHandler
-import com.intellij.xdebugger.breakpoints.XLineBreakpoint
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.debug.connector.StarlarkDebugMessenger
+import consulo.execution.debug.breakpoint.XBreakpointHandler;
+import consulo.execution.debug.breakpoint.XLineBreakpoint;
+import org.jetbrains.bazel.debug.connector.StarlarkDebugMessenger;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkBreakpointHandler(private val messenger: StarlarkDebugMessenger) :
-  XBreakpointHandler<StarlarkBreakpoint>(StarlarkBreakpointType::class.java) {
-  private val current = mutableSetOf<StarlarkBreakpoint>()
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
-  override fun registerBreakpoint(breakpoint: StarlarkBreakpoint) {
-    synchronized(this) {
-      current.add(breakpoint)
-      flushBreakpoints()
-    }
-  }
+// consulo: upstream typealias StarlarkBreakpoint = XLineBreakpoint<StarlarkBreakpointProperties>
+public class StarlarkBreakpointHandler extends XBreakpointHandler<XLineBreakpoint<StarlarkBreakpointProperties>> {
+    private final StarlarkDebugMessenger myMessenger;
+    private final Set<XLineBreakpoint<StarlarkBreakpointProperties>> myCurrent = new LinkedHashSet<>();
 
-  override fun unregisterBreakpoint(breakpoint: StarlarkBreakpoint, temporary: Boolean) {
-    synchronized(this) {
-      current.remove(breakpoint)
-      flushBreakpoints()
-    }
-  }
-
-  private fun flushBreakpoints() {
-    messenger.setBreakpoints(current.toList())
-  }
-
-  fun getBreakpointByPathAndLine(path: String, line: Int): StarlarkBreakpoint? =
-    current.firstOrNull {
-      it.absolutePath() == path && it.line == line - 1 // turning 1-indexed back to 0-indexed
+    public StarlarkBreakpointHandler(StarlarkDebugMessenger messenger) {
+        super(StarlarkBreakpointType.class);
+        myMessenger = messenger;
     }
 
-  companion object {
-    fun XLineBreakpoint<*>.absolutePath(): String = fileUrl.replace("file://", "")
-  }
+    @Override
+    public void registerBreakpoint(XLineBreakpoint<StarlarkBreakpointProperties> breakpoint) {
+        synchronized (this) {
+            myCurrent.add(breakpoint);
+            flushBreakpoints();
+        }
+    }
+
+    @Override
+    public void unregisterBreakpoint(XLineBreakpoint<StarlarkBreakpointProperties> breakpoint, boolean temporary) {
+        synchronized (this) {
+            myCurrent.remove(breakpoint);
+            flushBreakpoints();
+        }
+    }
+
+    private void flushBreakpoints() {
+        myMessenger.setBreakpoints(new ArrayList<>(myCurrent));
+    }
+
+    public @Nullable XLineBreakpoint<StarlarkBreakpointProperties> getBreakpointByPathAndLine(String path, int line) {
+        for (XLineBreakpoint<StarlarkBreakpointProperties> it : myCurrent) {
+            if (absolutePath(it).equals(path) && it.getLine() == line - 1) { // turning 1-indexed back to 0-indexed
+                return it;
+            }
+        }
+        return null;
+    }
+
+    public static String absolutePath(XLineBreakpoint<?> receiver) {
+        return receiver.getFileUrl().replace("file://", "");
+    }
 }
-
-private typealias StarlarkBreakpoint = XLineBreakpoint<StarlarkBreakpointProperties>

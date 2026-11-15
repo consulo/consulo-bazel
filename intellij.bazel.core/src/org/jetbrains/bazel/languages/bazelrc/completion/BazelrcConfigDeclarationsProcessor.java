@@ -1,45 +1,98 @@
-package org.jetbrains.bazel.languages.bazelrc.completion
+package org.jetbrains.bazel.languages.bazelrc.completion;
 
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.util.Processor
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcElement
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFile
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcImport
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcLine
+import consulo.annotation.access.RequiredReadAction;
+import consulo.application.util.function.Processor;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiReference;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcElement;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFile;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcImport;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcLine;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelrcConfigDeclarationsProcessor(private val inputElement: BazelrcLine) : Processor<BazelrcElement> {
-  var seenFiles = mutableSetOf<VirtualFile>()
-  var results = mutableMapOf<String, BazelrcFile>()
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 
-  override fun process(currentElement: BazelrcElement): Boolean {
-    if (currentElement == inputElement) return true
-    processElement(currentElement)
-    return true
-  }
+class BazelrcConfigDeclarationsProcessor implements Processor<BazelrcElement> {
+    private final BazelrcLine myInputElement;
+    private Set<VirtualFile> mySeenFiles = new LinkedHashSet<>();
+    private Map<String, BazelrcFile> myResults = new LinkedHashMap<>();
 
-  fun processFile(file: BazelrcFile?) {
-    file?.virtualFile?.apply {
-      if (seenFiles.add(this)) {
-        file.imports.map(::processElement)
-        file.lines.map(::processElement)
-      }
-    }
-  }
-
-  fun processElement(current: BazelrcElement) =
-    when (current) {
-      is BazelrcLine -> processLine(current)
-      is BazelrcImport -> processImport(current)
-      else -> {}
+    BazelrcConfigDeclarationsProcessor(BazelrcLine inputElement) {
+        myInputElement = inputElement;
     }
 
-  private fun processLine(line: BazelrcLine) {
-    (line.containingFile as? BazelrcFile)?.apply {
-      line.config?.let { results[it] = this }
+    public Set<VirtualFile> getSeenFiles() {
+        return mySeenFiles;
     }
-  }
 
-  private fun processImport(element: BazelrcImport) {
-    processFile(element.reference?.resolve() as? BazelrcFile)
-  }
+    public void setSeenFiles(Set<VirtualFile> seenFiles) {
+        mySeenFiles = seenFiles;
+    }
+
+    public Map<String, BazelrcFile> getResults() {
+        return myResults;
+    }
+
+    public void setResults(Map<String, BazelrcFile> results) {
+        myResults = results;
+    }
+
+    @Override
+    @RequiredReadAction
+    public boolean process(BazelrcElement currentElement) {
+        if (currentElement.equals(myInputElement)) {
+            return true;
+        }
+        processElement(currentElement);
+        return true;
+    }
+
+    @RequiredReadAction
+    public void processFile(@Nullable BazelrcFile file) {
+        if (file == null) {
+            return;
+        }
+        VirtualFile virtualFile = file.getVirtualFile();
+        if (virtualFile != null) {
+            if (mySeenFiles.add(virtualFile)) {
+                for (BazelrcImport it : file.getImports()) {
+                    processElement(it);
+                }
+                for (BazelrcLine it : file.getLines()) {
+                    processElement(it);
+                }
+            }
+        }
+    }
+
+    @RequiredReadAction
+    public void processElement(BazelrcElement current) {
+        if (current instanceof BazelrcLine line) {
+            processLine(line);
+        }
+        else if (current instanceof BazelrcImport bazelrcImport) {
+            processImport(bazelrcImport);
+        }
+    }
+
+    @RequiredReadAction
+    private void processLine(BazelrcLine line) {
+        PsiFile containingFile = line.getContainingFile();
+        if (containingFile instanceof BazelrcFile file) {
+            String config = line.getConfig();
+            if (config != null) {
+                myResults.put(config, file);
+            }
+        }
+    }
+
+    @RequiredReadAction
+    private void processImport(BazelrcImport element) {
+        PsiReference reference = element.getReference();
+        processFile(reference != null && reference.resolve() instanceof BazelrcFile file ? file : null);
+    }
 }

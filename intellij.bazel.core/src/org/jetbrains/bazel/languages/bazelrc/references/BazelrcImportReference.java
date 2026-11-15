@@ -1,56 +1,113 @@
-package org.jetbrains.bazel.languages.bazelrc.references
+package org.jetbrains.bazel.languages.bazelrc.references;
 
-import com.intellij.openapi.util.Condition
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElementResolveResult
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiFileSystemItem
-import com.intellij.psi.ResolveResult
-import com.intellij.psi.impl.source.resolve.reference.impl.providers.FileReference
-import com.intellij.psi.impl.source.resolve.reference.impl.providers.FileReferenceSet
-import com.intellij.psi.util.PsiUtilCore
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.languages.bazelrc.BazelrcFileType
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcImport
+import consulo.annotation.access.RequiredReadAction;
+import consulo.document.util.TextRange;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementResolveResult;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiFileSystemItem;
+import consulo.language.psi.PsiUtilCore;
+import consulo.language.psi.ResolveResult;
+import consulo.language.psi.path.FileReference;
+import consulo.language.psi.path.FileReferenceSet;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.fileType.FileType;
+import org.jetbrains.bazel.languages.bazelrc.BazelrcLanguage.BazelrcFileType;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcImport;
 
-internal class BazelrcImportReference(
-  referenceSet: FileReferenceSet,
-  range: TextRange,
-  index: Int,
-  text: String,
-) : FileReference(referenceSet, range, index, text) {
-  override fun innerResolve(caseSensitive: Boolean, containingFile: PsiFile): Array<out ResolveResult?> =
-    when {
-      text == "%workspace%" && index == 0 ->
-        arrayOf(PsiUtilCore.findFileSystemItem(element.project, element.project.rootDir)).filterNotNull()
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Predicate;
 
-      else -> {
-        val virtualFiles = contexts.mapNotNull { it.virtualFile?.findChild(text) }
-        virtualFiles.mapNotNull { PsiUtilCore.findFileSystemItem(element.project, it) }
-      }
-    }.let(PsiElementResolveResult::createResults)
+import static org.jetbrains.bazel.config.project.getRootDir;
+
+class BazelrcImportReference extends FileReference {
+    BazelrcImportReference(
+        FileReferenceSet referenceSet,
+        TextRange range,
+        int index,
+        String text
+    ) {
+        super(referenceSet, range, index, text);
+    }
+
+    @Override
+    protected ResolveResult[] innerResolve(boolean caseSensitive, PsiFile containingFile) {
+        List<PsiElement> results = new ArrayList<>();
+        Project project = getElement().getProject();
+        if (getText().equals("%workspace%") && getIndex() == 0) {
+            PsiFileSystemItem item = PsiUtilCore.findFileSystemItem(project, getRootDir(project));
+            if (item != null) {
+                results.add(item);
+            }
+        }
+        else {
+            List<VirtualFile> virtualFiles = new ArrayList<>();
+            for (PsiFileSystemItem it : getContexts()) {
+                VirtualFile virtualFile = it.getVirtualFile();
+                VirtualFile child = virtualFile != null ? virtualFile.findChild(getText()) : null;
+                if (child != null) {
+                    virtualFiles.add(child);
+                }
+            }
+            for (VirtualFile it : virtualFiles) {
+                PsiFileSystemItem item = PsiUtilCore.findFileSystemItem(project, it);
+                if (item != null) {
+                    results.add(item);
+                }
+            }
+        }
+        return PsiElementResolveResult.createResults(results);
+    }
 }
 
-internal class BazelrcImportFileReferenceSet(importSpec: BazelrcImport) :
-  FileReferenceSet(
-    importSpec.getImportPath()?.text ?: "",
-    importSpec,
-    importSpec.getImportPath()?.startOffsetInParent ?: 0,
-    null,
-    true,
-    true,
-    arrayOf(BazelrcFileType),
-  ) {
-  override fun createFileReference(
-    range: TextRange,
-    index: Int,
-    text: String,
-  ): FileReference? = BazelrcImportReference(this, range, index, text)
+class BazelrcImportFileReferenceSet extends FileReferenceSet {
+    @RequiredReadAction
+    BazelrcImportFileReferenceSet(BazelrcImport importSpec) {
+        super(
+            importPathText(importSpec),
+            importSpec,
+            importPathStartOffsetInParent(importSpec),
+            null,
+            true,
+            true,
+            new FileType[]{BazelrcFileType.INSTANCE}
+        );
+    }
 
-  override fun computeDefaultContexts(): Collection<PsiFileSystemItem?> = listOf(element.containingFile.originalFile.parent)
+    @RequiredReadAction
+    private static String importPathText(BazelrcImport importSpec) {
+        PsiElement importPath = importSpec.getImportPath();
+        return importPath != null ? importPath.getText() : "";
+    }
 
-  override fun getReferenceCompletionFilter(): Condition<PsiFileSystemItem>? =
-    Condition {
-      (it.isDirectory && !it.name.startsWith(".")) || it.name.endsWith(".bazelrc")
+    @RequiredReadAction
+    private static int importPathStartOffsetInParent(BazelrcImport importSpec) {
+        PsiElement importPath = importSpec.getImportPath();
+        return importPath != null ? importPath.getStartOffsetInParent() : 0;
+    }
+
+    @Override
+    public FileReference createFileReference(
+        TextRange range,
+        int index,
+        String text
+    ) {
+        return new BazelrcImportReference(this, range, index, text);
+    }
+
+    // consulo: Kotlin listOf(nullable) keeps a null parent
+    @Override
+    public Collection<PsiFileSystemItem> computeDefaultContexts() {
+        return Collections.singletonList(Objects.requireNonNull(getElement().getContainingFile()).getOriginalFile().getParent());
+    }
+
+    @Override
+    public Predicate<PsiFileSystemItem> getReferenceCompletionFilter() {
+        return it -> (it.isDirectory() && !it.getName().startsWith(".")) || it.getName().endsWith(".bazelrc");
     }
 }

@@ -1,33 +1,52 @@
-package org.jetbrains.bazel.action.registered
+package org.jetbrains.bazel.action.registered;
 
-import com.intellij.ide.actions.RevealFileAction
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.project.DumbAwareAction
-import org.jetbrains.bazel.bazelrunner.BazelLog
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.isBazelProject
-import java.nio.file.Files
+import consulo.annotation.component.ActionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.platform.Platform;
+import consulo.platform.PlatformFeature;
+import consulo.project.Project;
+import consulo.ui.UIAccess;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.AnActionWithSyncUpdate;
+import consulo.ui.ex.action.DumbAwareAction;
+import org.jetbrains.bazel.bazelrunner.BazelLog;
 
-internal class ShowBazelLogAction : DumbAwareAction() {
-  override fun actionPerformed(e: AnActionEvent) {
-    val logFile = BazelLog.logPath
-    if (Files.exists(logFile)) {
-      RevealFileAction.openFile(logFile)
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+@ActionImpl(id = "Bazel.ShowBazelLogAction")
+public class ShowBazelLogAction extends DumbAwareAction implements AnActionWithSyncUpdate {
+    public ShowBazelLogAction() {
+        super(BazelPluginLocalize.actionBazelShowbazellogactionText(Platform.current().fileManagerName()));
     }
-  }
 
-  override fun update(e: AnActionEvent) {
-    val isBazel = e.project?.isBazelProject == true
-    val logExists = Files.exists(BazelLog.logPath)
-    e.presentation.isEnabledAndVisible = isBazel && logExists && RevealFileAction.isSupported()
-    if (e.presentation.isEnabledAndVisible) {
-      e.presentation.text = BazelPluginBundle.message(
-        "action.Bazel.ShowBazelLogAction.text",
-        RevealFileAction.getFileManagerName(),
-      )
+    @RequiredUIAccess
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+        Path logFile = BazelLog.getLogPath();
+        if (Files.exists(logFile)) {
+            // consulo: upstream RevealFileAction.openFile(logFile)
+            Platform.current().openFileInFileManager(logFile, UIAccess.current());
+        }
     }
-  }
 
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+    @Override
+    public void update(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+        boolean isBazel = project != null && org.jetbrains.bazel.config.project.isBazelProject(project);
+        boolean logExists = Files.exists(BazelLog.getLogPath());
+        // consulo: upstream RevealFileAction.isSupported()
+        e.getPresentation().setEnabledAndVisible(
+            isBazel && logExists && Platform.current().supportsFeature(PlatformFeature.OPEN_FILE_IN_FILE_MANAGER)
+        );
+        if (e.getPresentation().isEnabledAndVisible()) {
+            e.getPresentation().setText(BazelPluginLocalize.actionBazelShowbazellogactionText(
+                // consulo: upstream RevealFileAction.getFileManagerName()
+                Platform.current().fileManagerName()
+            ));
+        }
+    }
+
+    // consulo: AnActionWithSyncUpdate always updates in background (upstream ActionUpdateThread.BGT)
 }

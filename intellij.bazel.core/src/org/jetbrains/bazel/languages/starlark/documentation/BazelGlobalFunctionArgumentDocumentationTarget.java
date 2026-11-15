@@ -1,28 +1,30 @@
-package org.jetbrains.bazel.languages.starlark.documentation
+package org.jetbrains.bazel.languages.starlark.documentation;
 
-import com.intellij.model.Pointer
-import com.intellij.platform.backend.documentation.DocumentationResult
-import com.intellij.platform.backend.documentation.DocumentationTarget
-import com.intellij.platform.backend.presentation.TargetPresentation
+import consulo.bazel.documentation.DocumentationResult;
+import consulo.bazel.documentation.DocumentationTarget;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("UnstableApiUsage")
-internal class BazelGlobalFunctionArgumentDocumentationTarget(symbol: BazelGlobalFunctionArgumentDocumentationSymbol) :
-  DocumentationTarget,
-  Pointer<BazelGlobalFunctionArgumentDocumentationTarget> {
-  val symbolPtr = symbol.createPointer()
+public class BazelGlobalFunctionArgumentDocumentationTarget implements DocumentationTarget {
+    // consulo: upstream symbol.createPointer(), the symbol is its own pointer
+    private final BazelGlobalFunctionArgumentDocumentationSymbol mySymbolPtr;
 
-  override fun createPointer() = this
-
-  override fun dereference(): BazelGlobalFunctionArgumentDocumentationTarget? = symbolPtr.dereference().documentationTarget
-
-  override fun computePresentation(): TargetPresentation =
-    symbolPtr.dereference().run {
-      TargetPresentation.builder(argument.name).presentation()
+    public BazelGlobalFunctionArgumentDocumentationTarget(BazelGlobalFunctionArgumentDocumentationSymbol symbol) {
+        mySymbolPtr = symbol;
     }
 
-  override fun computeDocumentation(): DocumentationResult? =
-    symbolPtr.dereference().run {
-      val html = argument.doc ?: return null
-      DocumentationResult.documentation(html)
+    public BazelGlobalFunctionArgumentDocumentationSymbol getSymbolPtr() {
+        return mySymbolPtr;
+    }
+
+    // consulo: createPointer(), dereference() and computePresentation() are dropped,
+    // pointer/presentation are not used by the classic documentation provider
+
+    @Override
+    public @Nullable DocumentationResult computeDocumentation() {
+        String html = mySymbolPtr.getArgument().doc();
+        if (html == null) {
+            return null;
+        }
+        return DocumentationResult.documentation(html);
     }
 }

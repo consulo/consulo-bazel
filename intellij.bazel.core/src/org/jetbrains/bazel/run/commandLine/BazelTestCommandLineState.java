@@ -1,64 +1,88 @@
-package org.jetbrains.bazel.run.commandLine
+package org.jetbrains.bazel.run.commandLine;
 
-import com.intellij.execution.ExecutionException
-import com.intellij.execution.ExecutionResult
-import com.intellij.execution.Executor
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.execution.runners.ProgramRunner
-import kotlinx.coroutines.CompletableDeferred
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.BazelCommandLineStateBase
-import org.jetbrains.bazel.run.BazelProcessHandler
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.state.AbstractGenericTestState
-import org.jetbrains.bazel.run.task.BazelTestTaskListener
-import org.jetbrains.bazel.server.BazelServerFacade
-import org.jetbrains.bazel.taskEvents.BazelTaskListener
-import org.jetbrains.bsp.protocol.TestParams
-import java.nio.file.Path
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.ExecutionResult;
+import consulo.execution.executor.Executor;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.execution.runner.ProgramRunner;
+import consulo.process.ExecutionException;
+import org.jetbrains.bazel.run.BazelCommandLineStateBase;
+import org.jetbrains.bazel.run.BazelProcessHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.state.AbstractGenericTestState;
+import org.jetbrains.bazel.run.task.BazelTestTaskListener;
+import org.jetbrains.bazel.server.BazelServerFacade;
+import org.jetbrains.bazel.taskEvents.BazelTaskListener;
+import org.jetbrains.bsp.protocol.TestParams;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-open class BazelTestCommandLineState(
-  environment: ExecutionEnvironment,
-  val state: AbstractGenericTestState<*>,
-) : BazelCommandLineStateBase(environment) {
-  var coverageReportListener: ((Path) -> Unit)? = null
+import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
-  private val configuration = BazelRunConfiguration.get(environment)
+public class BazelTestCommandLineState extends BazelCommandLineStateBase {
+    private static final String COVERAGE_EXECUTOR_ID = "Coverage";
 
-  protected open fun transformTestParams(params: TestParams): TestParams = params
+    private final AbstractGenericTestState<?> myState;
+    private @Nullable Consumer<Path> myCoverageReportListener = null;
 
-  override fun execute(executor: Executor, runner: ProgramRunner<*>): ExecutionResult = executeWithTestConsole(executor)
+    private final BazelRunConfiguration myConfiguration;
 
-  override fun createAndAddTaskListener(handler: BazelProcessHandler): BazelTaskListener = BazelTestTaskListener(handler, coverageReportListener)
-
-  override suspend fun startBsp(
-    server: BazelServerFacade,
-    pidDeferred: CompletableDeferred<Long?>,
-    handler: BazelProcessHandler,
-  ) {
-    if (configuration.targets.isEmpty()) {
-      throw ExecutionException(BazelPluginBundle.message("bsp.run.error.cannotRun"))
+    public BazelTestCommandLineState(ExecutionEnvironment environment, AbstractGenericTestState<?> state) {
+        super(environment);
+        myState = state;
+        myConfiguration = BazelRunConfiguration.get(environment);
     }
 
-    // TODO: add pidDeferred to TestParams
-    val params =
-      TestParams(
-        targets = configuration.targets,
-        taskId = taskGroupId.task("test"),
-        arguments = parseAsProgramArguments(state.programArguments),
-        environmentVariables = state.env.envs,
-        useCoverage = environment.executor.id == COVERAGE_EXECUTOR_ID,
-        coverageInstrumentationFilter = state.coverageInstrumentationFilter,
-        testFilter = state.testFilter,
-        additionalBazelParams = parseAsProgramArguments(state.additionalBazelParams),
-        streamTestOutput = false,
-      )
-    server.buildTargetTest(transformTestParams(params))
-  }
+    public AbstractGenericTestState<?> getState() {
+        return myState;
+    }
 
-  companion object {
-    private const val COVERAGE_EXECUTOR_ID: String = "Coverage"
-  }
+    public @Nullable Consumer<Path> getCoverageReportListener() {
+        return myCoverageReportListener;
+    }
+
+    public void setCoverageReportListener(@Nullable Consumer<Path> coverageReportListener) {
+        myCoverageReportListener = coverageReportListener;
+    }
+
+    protected TestParams transformTestParams(TestParams params) {
+        return params;
+    }
+
+    @Override
+    public ExecutionResult execute(Executor executor, ProgramRunner runner) throws ExecutionException {
+        return executeWithTestConsole(executor);
+    }
+
+    @Override
+    protected BazelTaskListener createAndAddTaskListener(BazelProcessHandler handler) {
+        return new BazelTestTaskListener(handler, myCoverageReportListener);
+    }
+
+    @Override
+    protected CompletableFuture<?> startBsp(
+        BazelServerFacade server,
+        CompletableFuture<@Nullable Long> pidDeferred,
+        BazelProcessHandler handler
+    ) {
+        if (myConfiguration.getTargets().isEmpty()) {
+            return CompletableFuture.failedFuture(new ExecutionException(BazelPluginLocalize.bspRunErrorCannotrun()));
+        }
+
+        // TODO: add pidDeferred to TestParams
+        TestParams params =
+            new TestParams(
+                /* taskId = */ getTaskGroupId().task("test"),
+                /* targets = */ myConfiguration.getTargets(),
+                /* arguments = */ Utils.parseAsProgramArguments(myState.getProgramArguments()),
+                /* environmentVariables = */ myState.getEnv().getEnvs(),
+                /* useCoverage = */ getEnvironment().getExecutor().getId().equals(COVERAGE_EXECUTOR_ID),
+                /* coverageInstrumentationFilter = */ myState.getCoverageInstrumentationFilter(),
+                /* testFilter = */ myState.getTestFilter(),
+                /* additionalBazelParams = */ Utils.parseAsProgramArguments(myState.getAdditionalBazelParams()),
+                /* streamTestOutput = */ false
+            );
+        return server.buildTargetTest(transformTestParams(params));
+    }
 }

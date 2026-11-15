@@ -30,6 +30,8 @@ import consulo.project.Project;
 import consulo.project.content.library.ProjectLibraryTable;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -109,6 +111,13 @@ public final class BazelModelBuilder {
             model.clear();
             return model;
         });
+    }
+
+    /**
+     * Root models of the modules filled by this sync (the classic counterpart of the module entities in upstream's diff storage).
+     */
+    public Collection<ModifiableRootModel> getRootModels() {
+        return Collections.unmodifiableCollection(myRootModels.values());
     }
 
     /**

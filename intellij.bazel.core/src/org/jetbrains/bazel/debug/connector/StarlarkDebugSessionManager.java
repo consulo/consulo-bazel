@@ -1,111 +1,164 @@
-package org.jetbrains.bazel.debug.connector
+package org.jetbrains.bazel.debug.connector;
 
-import com.intellij.execution.filters.TextConsoleBuilderFactory
-import com.intellij.execution.ui.ConsoleView
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
-import com.intellij.platform.ide.progress.withBackgroundProgress
-import com.intellij.xdebugger.XDebugProcess
-import com.intellij.xdebugger.XDebugProcessStarter
-import com.intellij.xdebugger.XDebugSession
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.TestOnly
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import org.jetbrains.bazel.debug.console.StarlarkDebugTaskListener
-import org.jetbrains.bazel.debug.platform.StarlarkBreakpointHandler
-import org.jetbrains.bazel.debug.platform.StarlarkDebugProcess
-import java.io.IOException
-import java.util.concurrent.CancellationException
+import consulo.application.progress.Task;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.disposer.Disposable;
+import consulo.disposer.Disposer;
+import consulo.execution.debug.XDebugProcess;
+import consulo.execution.debug.XDebugProcessStarter;
+import consulo.execution.debug.XDebugSession;
+import consulo.execution.ui.console.ConsoleView;
+import consulo.execution.ui.console.TextConsoleBuilderFactory;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jetbrains.bazel.debug.console.StarlarkDebugTaskListener;
+import org.jetbrains.bazel.debug.platform.StarlarkBreakpointHandler;
+import org.jetbrains.bazel.debug.platform.StarlarkDebugProcess;
+import org.jspecify.annotations.Nullable;
+
+import java.io.IOException;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Main controller for everything related to Starlark debug.
  * All debug elements which require disposal should have this class registered as their disposable parent.
  * Must be disposed after use.
  */
-@ApiStatus.Internal
-class StarlarkDebugSessionManager(private val project: Project) : Disposable {
-  internal val taskListener: StarlarkDebugTaskListener
+public class StarlarkDebugSessionManager implements Disposable {
+    private final Project myProject;
 
-  private val console: ConsoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+    private final StarlarkDebugTaskListener myTaskListener;
 
-  private var jobToCancel: Job? = null // job to be cancelled when debug stops
-  private var messenger: StarlarkDebugMessenger? = null
-  private var eventHandler: ThreadAwareEventHandler? = null
+    private final ConsoleView myConsole;
 
-  private var loop: Job? = null
+    private @Nullable CompletableFuture<?> myJobToCancel = null; // job to be cancelled when debug stops
+    private @Nullable StarlarkDebugMessenger myMessenger = null;
+    private @Nullable ThreadAwareEventHandler myEventHandler = null;
 
-  init {
-    Disposer.register(this, console)
-    taskListener = StarlarkDebugTaskListener(console)
-  }
+    private volatile @Nullable CompletableFuture<?> myLoop = null;
 
-  private fun startDebuggingProcess(session: XDebugSession, connector: StarlarkSocketConnector): StarlarkDebugProcess =
-    StarlarkDebugMessenger(connector, session).let {
-      messenger = it
-      val breakpointHandler = StarlarkBreakpointHandler(it)
-      eventHandler = ThreadAwareEventHandler(session, it, breakpointHandler::getBreakpointByPathAndLine)
-      loop = BazelCoroutineService.getInstance(project).start { runLoop() }
-      val debugProcess =
-        StarlarkDebugProcess(connector, session, breakpointHandler, console)
-      taskListener.setDebugPausedChecker { debugProcess.isSuspended() }
-      return@let debugProcess
+    public StarlarkDebugSessionManager(Project project) {
+        myProject = project;
+        myConsole = TextConsoleBuilderFactory.getInstance().createBuilder(project).getConsole();
+        Disposer.register(this, myConsole);
+        myTaskListener = new StarlarkDebugTaskListener(myConsole);
     }
 
-  private suspend fun runLoop() =
-    withBackgroundProgress(project, BazelPluginBundle.message("starlark.debug.task.title"), true) {
-      while (this.isActive) {
-        performEventLoopIteration()
-      }
+    public StarlarkDebugTaskListener getTaskListener() {
+        return myTaskListener;
     }
 
-  private fun performEventLoopIteration() {
-    try {
-      eventHandler?.let {
-        messenger?.readEventAndHandle(it)
-      }
-    } catch (e: Exception) {
-      if (e !is IOException && e !is CancellationException) {
-        log.error(e) // other exceptions are not expected
-      }
-      stop()
+    private StarlarkDebugProcess startDebuggingProcess(XDebugSession session, StarlarkSocketConnector connector) {
+        StarlarkDebugMessenger it = new StarlarkDebugMessenger(connector, session);
+        myMessenger = it;
+        StarlarkBreakpointHandler breakpointHandler = new StarlarkBreakpointHandler(it);
+        myEventHandler = new ThreadAwareEventHandler(session, it, breakpointHandler::getBreakpointByPathAndLine);
+        myLoop = BazelCoroutineService.getInstance(myProject).start(this::runLoop);
+        StarlarkDebugProcess debugProcess =
+            new StarlarkDebugProcess(connector, session, breakpointHandler, myConsole);
+        myTaskListener.setDebugPausedChecker(debugProcess::isSuspended);
+        return debugProcess;
     }
-  }
 
-  /** This function needs to be safe to call multiple times */
-  private fun stop() {
-    loop?.cancel()
-    jobToCancel?.cancel()
-    messenger?.close()
-  }
+    // consulo: withBackgroundProgress -> Task.Backgroundable.queue; the coroutine isActive check -> the progress indicator
+    //   is not cancelled and the loop job is not cancelled
+    private CompletableFuture<?> runLoop() {
+        CompletableFuture<@Nullable Object> result = new CompletableFuture<>();
+        Task.Backgroundable.queue(myProject, BazelPluginLocalize.starlarkDebugTaskTitle(), true, indicator -> {
+            try {
+                while (!indicator.isCanceled() && isLoopActive()) {
+                    performEventLoopIteration();
+                }
+                result.complete(null);
+            }
+            catch (Throwable e) {
+                result.completeExceptionally(e);
+            }
+        });
+        return result;
+    }
 
-  fun registerJobToCancel(job: Job) {
-    // if for some reason, another job is registered, cancel the previous one
-    jobToCancel?.cancel()
-    jobToCancel = job
-  }
+    // consulo: Java counterpart of the coroutine isActive check of runLoop()
+    private boolean isLoopActive() {
+        CompletableFuture<?> loop = myLoop;
+        return loop == null || !loop.isDone();
+    }
 
-  /** Gets a single debug session manager loop iteration for testing it without performing full session setup */
-  @TestOnly
-  fun getSingleLoopIteration(messenger: StarlarkDebugMessenger, eventHandler: ThreadAwareEventHandler): () -> Unit {
-    this.messenger = messenger
-    this.eventHandler = eventHandler
-    return this::performEventLoopIteration
-  }
+    private void performEventLoopIteration() {
+        try {
+            ThreadAwareEventHandler it = myEventHandler;
+            if (it != null) {
+                StarlarkDebugMessenger messenger = myMessenger;
+                if (messenger != null) {
+                    messenger.readEventAndHandle(it);
+                }
+            }
+        }
+        catch (Exception e) {
+            if (!(e instanceof IOException) && !(e instanceof CancellationException)) {
+                LOG.error(e); // other exceptions are not expected
+            }
+            stop();
+        }
+    }
 
-  override fun dispose() {
-    // no action - manager does not dispose anything itself, it just serves as parent for other disposables
-  }
+    /**
+     * This function needs to be safe to call multiple times
+     */
+    private void stop() {
+        CompletableFuture<?> loop = myLoop;
+        if (loop != null) {
+            loop.cancel(true);
+        }
+        CompletableFuture<?> jobToCancel = myJobToCancel;
+        if (jobToCancel != null) {
+            jobToCancel.cancel(true);
+        }
+        StarlarkDebugMessenger messenger = myMessenger;
+        if (messenger != null) {
+            messenger.close();
+        }
+    }
 
-  inner class ProcessStarter(private val connector: StarlarkSocketConnector) : XDebugProcessStarter() {
-    override fun start(session: XDebugSession): XDebugProcess = startDebuggingProcess(session, connector)
-  }
+    public void registerJobToCancel(CompletableFuture<?> job) {
+        // if for some reason, another job is registered, cancel the previous one
+        CompletableFuture<?> jobToCancel = myJobToCancel;
+        if (jobToCancel != null) {
+            jobToCancel.cancel(true);
+        }
+        myJobToCancel = job;
+    }
 
-  private companion object {
-    val log = logger<StarlarkDebugSessionManager>()
-  }
+    /**
+     * Gets a single debug session manager loop iteration for testing it without performing full session setup
+     */
+    @TestOnly
+    public Runnable getSingleLoopIteration(StarlarkDebugMessenger messenger, ThreadAwareEventHandler eventHandler) {
+        this.myMessenger = messenger;
+        this.myEventHandler = eventHandler;
+        return this::performEventLoopIteration;
+    }
+
+    @Override
+    public void dispose() {
+        // no action - manager does not dispose anything itself, it just serves as parent for other disposables
+    }
+
+    public class ProcessStarter implements XDebugProcessStarter {
+        private final StarlarkSocketConnector myConnector;
+
+        public ProcessStarter(StarlarkSocketConnector connector) {
+            myConnector = connector;
+        }
+
+        @Override
+        public XDebugProcess start(XDebugSession session) {
+            return startDebuggingProcess(session, myConnector);
+        }
+    }
+
+    private static final Logger LOG = Logger.getInstance(StarlarkDebugSessionManager.class);
 }

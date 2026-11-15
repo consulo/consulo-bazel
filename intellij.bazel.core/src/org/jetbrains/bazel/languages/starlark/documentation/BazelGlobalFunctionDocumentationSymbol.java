@@ -1,17 +1,31 @@
-package org.jetbrains.bazel.languages.starlark.documentation
+package org.jetbrains.bazel.languages.starlark.documentation;
 
-import com.intellij.model.Pointer
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.documentation.DocumentationSymbol
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunction
+import consulo.bazel.documentation.DocumentationSymbol;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.BazelGlobalFunction;
 
-@Suppress("UnstableApiUsage")
-internal class BazelGlobalFunctionDocumentationSymbol(val function: BazelGlobalFunction, val project: Project) :
-  DocumentationSymbol,
-  Pointer<BazelGlobalFunctionDocumentationSymbol> {
-  override fun createPointer() = this
+public class BazelGlobalFunctionDocumentationSymbol implements DocumentationSymbol {
+    private final BazelGlobalFunction myFunction;
+    private final Project myProject;
 
-  override fun dereference() = this
+    public BazelGlobalFunctionDocumentationSymbol(BazelGlobalFunction function, Project project) {
+        myFunction = function;
+        myProject = project;
+    }
 
-  override fun getDocumentationTarget() = BazelGlobalFunctionDocumentationTarget(this)
+    public BazelGlobalFunction getFunction() {
+        return myFunction;
+    }
+
+    public Project getProject() {
+        return myProject;
+    }
+
+    // consulo: createPointer()/dereference() (the symbol was its own Pointer) are dropped,
+    // pointer/presentation are not used by the classic documentation provider
+
+    @Override
+    public BazelGlobalFunctionDocumentationTarget getDocumentationTarget() {
+        return new BazelGlobalFunctionDocumentationTarget(this);
+    }
 }

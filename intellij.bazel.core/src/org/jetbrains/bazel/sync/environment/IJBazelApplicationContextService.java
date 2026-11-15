@@ -1,3 +1,13 @@
-package org.jetbrains.bazel.sync.environment
+package org.jetbrains.bazel.sync.environment;
 
-internal class IJBazelApplicationContextService : BazelApplicationContextService
+import consulo.annotation.component.ServiceImpl;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+@ServiceImpl
+@Singleton
+public class IJBazelApplicationContextService implements BazelApplicationContextService {
+    @Inject
+    public IJBazelApplicationContextService() {
+    }
+}

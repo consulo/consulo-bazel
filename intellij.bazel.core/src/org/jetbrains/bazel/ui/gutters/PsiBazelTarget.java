@@ -1,28 +1,56 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiManager
-import com.intellij.psi.impl.FakePsiElement
-import org.jetbrains.annotations.NonNls
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.language.impl.psi.FakePsiElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiManager;
+import consulo.project.Project;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A fake PSI element for cases where we want to get executor actions from Bazel target tool window, for example.
  */
-internal class PsiBazelTarget(private val project: Project, val target: BuildTarget) : FakePsiElement() {
-  override fun getParent(): PsiElement? = null
+public class PsiBazelTarget extends FakePsiElement {
+    private final Project myProject;
+    private final BuildTarget myTarget;
 
-  override fun getContainingFile(): PsiFile? = null
+    public PsiBazelTarget(Project project, BuildTarget target) {
+        myProject = project;
+        myTarget = target;
+    }
 
-  override fun getProject(): Project = project
+    public BuildTarget getTarget() {
+        return myTarget;
+    }
 
-  override fun getManager(): PsiManager = PsiManager.getInstance(project)
+    @Override
+    public @Nullable PsiElement getParent() {
+        return null;
+    }
 
-  override fun isValid(): Boolean = true
+    @Override
+    public @Nullable PsiFile getContainingFile() {
+        return null;
+    }
 
-  override fun getText(): @NonNls String? {
-    return super.getText()
-  }
+    @Override
+    public Project getProject() {
+        return myProject;
+    }
+
+    @Override
+    public PsiManager getManager() {
+        return PsiManager.getInstance(myProject);
+    }
+
+    @Override
+    public boolean isValid() {
+        return true;
+    }
+
+    @Override
+    public @Nullable String getText() {
+        return super.getText();
+    }
 }

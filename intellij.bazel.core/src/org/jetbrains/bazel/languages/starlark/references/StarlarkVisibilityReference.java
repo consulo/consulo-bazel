@@ -1,33 +1,58 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReferenceBase
-import com.intellij.util.PlatformIcons
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.languages.starlark.completion.getCompletionLookupElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.target.targetStorage
+import consulo.annotation.access.RequiredReadAction;
+import consulo.document.util.TextRange;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReferenceBase;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.target.TargetStorage;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkVisibilityReference(element: StarlarkStringLiteralExpression) :
-  PsiReferenceBase<StarlarkStringLiteralExpression>(element, TextRange(0, element.textLength), false) {
-  override fun resolve(): PsiElement? = null
+import java.util.ArrayList;
+import java.util.List;
 
-  override fun getVariants(): Array<LookupElement> {
-    val project = element.project
-    if (!project.isBazelProject) return emptyArray()
-    val icon = PlatformIcons.VARIABLE_ICON
-    val shortTargets = project.targetStorage.allTargetShortLabels
-    val targetVisibilities = shortTargets.map { getCompletionLookupElement(it, icon) }.toTypedArray()
-    val pkgVisibilities = shortTargets.map { getCompletionLookupElement("$it:__pkg__", icon) }.toTypedArray()
-    val subpkgVisibilities = shortTargets.map { getCompletionLookupElement("$it:__subpackages__", icon) }.toTypedArray()
+import static org.jetbrains.bazel.config.project.isBazelProject;
+import static org.jetbrains.bazel.languages.starlark.completion.StarlarkCompletionLookupElement.getCompletionLookupElement;
 
-    val predefined =
-      listOf(
-        getCompletionLookupElement("//visibility:public", icon, 1.0),
-        getCompletionLookupElement("//visibility:private", icon, 1.0),
-      )
-    return pkgVisibilities + subpkgVisibilities + targetVisibilities + predefined
-  }
+public class StarlarkVisibilityReference extends PsiReferenceBase<StarlarkStringLiteralExpression> {
+    @RequiredReadAction
+    public StarlarkVisibilityReference(StarlarkStringLiteralExpression element) {
+        super(element, new TextRange(0, element.getTextLength()), false);
+    }
+
+    @Override
+    @RequiredReadAction
+    public @Nullable PsiElement resolve() {
+        return null;
+    }
+
+    @Override
+    public LookupElement[] getVariants() {
+        Project project = myElement.getProject();
+        if (!isBazelProject(project)) {
+            return LookupElement.EMPTY_ARRAY;
+        }
+        Image icon = PlatformIconGroup.nodesVariable();
+        List<String> shortTargets = TargetStorage.getTargetStorage(project).getAllTargetShortLabels();
+        List<LookupElement> targetVisibilities = shortTargets.stream().map(it -> getCompletionLookupElement(it, icon)).toList();
+        List<LookupElement> pkgVisibilities = shortTargets.stream().map(it -> getCompletionLookupElement(it + ":__pkg__", icon)).toList();
+        List<LookupElement> subpkgVisibilities =
+            shortTargets.stream().map(it -> getCompletionLookupElement(it + ":__subpackages__", icon)).toList();
+
+        List<LookupElement> predefined =
+            List.of(
+                getCompletionLookupElement("//visibility:public", icon, 1.0),
+                getCompletionLookupElement("//visibility:private", icon, 1.0)
+            );
+        // consulo: Kotlin array + array + array + list
+        List<LookupElement> result = new ArrayList<>(pkgVisibilities);
+        result.addAll(subpkgVisibilities);
+        result.addAll(targetVisibilities);
+        result.addAll(predefined);
+        return result.toArray(LookupElement.EMPTY_ARRAY);
+    }
 }

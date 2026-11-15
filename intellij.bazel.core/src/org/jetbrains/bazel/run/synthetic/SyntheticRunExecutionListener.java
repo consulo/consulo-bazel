@@ -1,23 +1,38 @@
-package org.jetbrains.bazel.run.synthetic
+package org.jetbrains.bazel.run.synthetic;
 
-import com.intellij.execution.ExecutionListener
-import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.util.removeUserData
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import java.nio.file.Files
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.TopicImpl;
+import consulo.execution.event.ExecutionListener;
+import consulo.execution.runner.ExecutionEnvironment;
+import consulo.process.ProcessHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
 
-internal class SyntheticRunExecutionListener : ExecutionListener {
-  override fun processTerminated(
-    executorId: String,
-    env: ExecutionEnvironment,
-    handler: ProcessHandler,
-    exitCode: Int,
-  ) {
-    val runConfig = env.runProfile as? BazelRunConfiguration ?: return
-    val syntheticTemplate = runConfig.removeUserData(SYNTHETIC_BUILD_SESSION)
-    if (syntheticTemplate != null) {
-      Files.deleteIfExists(syntheticTemplate.buildFilePath)
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+
+@TopicImpl(ComponentScope.PROJECT)
+public class SyntheticRunExecutionListener implements ExecutionListener {
+    @Override
+    public void processTerminated(
+        String executorId,
+        ExecutionEnvironment env,
+        ProcessHandler handler,
+        int exitCode
+    ) {
+        if (!(env.getRunProfile() instanceof BazelRunConfiguration runConfig)) {
+            return;
+        }
+        // consulo: upstream removeUserData()
+        SyntheticRunTargetSession syntheticTemplate = runConfig.getUserData(GenerateSyntheticTargetRunTaskProvider.SYNTHETIC_BUILD_SESSION);
+        runConfig.putUserData(GenerateSyntheticTargetRunTaskProvider.SYNTHETIC_BUILD_SESSION, null);
+        if (syntheticTemplate != null) {
+            try {
+                Files.deleteIfExists(syntheticTemplate.buildFilePath());
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
     }
-  }
 }

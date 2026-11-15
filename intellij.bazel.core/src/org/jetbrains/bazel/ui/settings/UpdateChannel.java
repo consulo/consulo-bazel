@@ -1,28 +1,50 @@
-package org.jetbrains.bazel.ui.settings
+package org.jetbrains.bazel.ui.settings;
 
-private const val BAZEL_PLUGIN_MARKETPLACE_ID = "22977"
+public enum UpdateChannel {
+    /**
+     * If we don't override plugin repositories with custom URLs,
+     * the IDEA will automatically use the default channel for retrieving plugin URLs.
+     * The entry {@link #RELEASE} is here for settings and completeness and does not need the marketplace URLs.
+     */
+    RELEASE("Release", ""),
+    NIGHTLY(
+        "Nightly",
+        Constants.BAZEL_PLUGIN_MARKETPLACE_URL.formatted(Constants.NIGHTLY_MARKETPLACE_CHANNEL)
+    ),
+    ;
 
-private const val BASE_PLUGIN_MARKETPLACE_URL = "https://plugins.jetbrains.com/plugins/%s/"
-private const val BAZEL_PLUGIN_MARKETPLACE_URL = BASE_PLUGIN_MARKETPLACE_URL + BAZEL_PLUGIN_MARKETPLACE_ID
+    private final String myDisplayName;
+    private final String myBazelPluginUrl;
 
-private const val NIGHTLY_MARKETPLACE_CHANNEL = "nightly"
+    UpdateChannel(String displayName, String bazelPluginUrl) {
+        myDisplayName = displayName;
+        myBazelPluginUrl = bazelPluginUrl;
+    }
 
-internal enum class UpdateChannel(val displayName: String, val bazelPluginUrl: String) {
-  /**
-   * If we don't override plugin repositories with custom URLs,
-   * the IDEA will automatically use the default channel for retrieving plugin URLs.
-   * The entry [RELEASE] is here for settings and completeness and does not need the marketplace URLs.
-   */
-  RELEASE("Release", ""),
-  NIGHTLY(
-    "Nightly",
-    BAZEL_PLUGIN_MARKETPLACE_URL.format(NIGHTLY_MARKETPLACE_CHANNEL),
-  ),
-  ;
+    public String getDisplayName() {
+        return myDisplayName;
+    }
 
-  fun getPluginUrlFromId(id: String): String =
-    when (id) {
-      BAZEL_PLUGIN_ID -> bazelPluginUrl
-      else -> ""
+    public String getBazelPluginUrl() {
+        return myBazelPluginUrl;
+    }
+
+    public String getPluginUrlFromId(String id) {
+        if (BazelPluginUpdater.BAZEL_PLUGIN_ID.equals(id)) {
+            return myBazelPluginUrl;
+        }
+        else {
+            return "";
+        }
+    }
+
+    // consulo: upstream private top-level constants of UpdateChannel.kt (enum constants cannot reference static fields of the enum)
+    private static final class Constants {
+        private static final String BAZEL_PLUGIN_MARKETPLACE_ID = "22977";
+
+        private static final String BASE_PLUGIN_MARKETPLACE_URL = "https://plugins.jetbrains.com/plugins/%s/";
+        private static final String BAZEL_PLUGIN_MARKETPLACE_URL = BASE_PLUGIN_MARKETPLACE_URL + BAZEL_PLUGIN_MARKETPLACE_ID;
+
+        private static final String NIGHTLY_MARKETPLACE_CHANNEL = "nightly";
     }
 }

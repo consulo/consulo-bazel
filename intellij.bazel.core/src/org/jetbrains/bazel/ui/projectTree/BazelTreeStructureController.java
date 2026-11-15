@@ -1,169 +1,221 @@
-package org.jetbrains.bazel.ui.projectTree
+package org.jetbrains.bazel.ui.projectTree;
 
-import com.intellij.openapi.application.runReadActionBlocking
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.backend.workspace.WorkspaceModel
-import com.intellij.platform.backend.workspace.impl.WorkspaceModelInternal
-import com.intellij.platform.backend.workspace.virtualFile
-import com.intellij.platform.diagnostic.telemetry.helpers.use
-import com.intellij.platform.workspace.storage.CachedValue
-import com.intellij.platform.workspace.storage.EntityStorage
-import com.intellij.platform.workspace.storage.url.VirtualFileUrl
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.performance.bspTracer
-import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.EXCLUDED
-import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.ROOT
-import org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.UNIMPORTED
-import org.jetbrains.bazel.ui.projectTree.BazelTreeStructureContext.Companion.buildBazelTreeStructureContext
-import org.jetbrains.bazel.workspace.bazelProjectDirectoriesEntity
-import org.jetbrains.bazel.workspace.excludedRoots
-import org.jetbrains.bazel.workspace.includedRoots
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.ReadAction;
+import consulo.application.util.CachedValueProvider;
+import consulo.application.util.CachedValuesManager;
+import consulo.module.content.ProjectRootManager;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.workspace.BazelProjectDirectoriesUtils;
+import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-@Service(Service.Level.PROJECT)
-class BazelTreeStructureController(private val project: Project) {
-  fun shouldShowNode(bazelTreeNodeType: BazelTreeNodeType): Boolean =
-    measure("BazelTreeStructureController.shouldShowNode.$bazelTreeNodeType") {
-      val context = getOrComputeBazelTreeStructureContext()
-      return@measure when (bazelTreeNodeType) {
-        ROOT -> true
-        EXCLUDED -> context.projectImported && nodeHasAnyDirectories(context, EXCLUDED)
-        UNIMPORTED -> context.projectImported && nodeHasAnyDirectories(context, UNIMPORTED)
-      }
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Supplier;
+
+import static org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.EXCLUDED;
+import static org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.ROOT;
+import static org.jetbrains.bazel.ui.projectTree.BazelTreeNodeType.UNIMPORTED;
+
+// consulo: the IntelliJ workspace model is not used: BazelProjectDirectoriesEntity is project data of BazelProjectModelService,
+// and the CachedValue over the entity storage is a CachedValue that depends on the project roots
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class BazelTreeStructureController {
+    private final Project myProject;
+
+    @Inject
+    public BazelTreeStructureController(Project project) {
+        myProject = project;
     }
 
-  private fun nodeHasAnyDirectories(context: BazelTreeStructureContext, bazelTreeNodeType: BazelTreeNodeType): Boolean {
-    val rootProjectDir = context.rootProjectDir ?: return false
-    val directories = runReadActionBlocking {
-      rootProjectDir.children.filter { it.isDirectory }
-    }
-    return directories.any { shouldShowDirectoryUnderTreeNode(context, it, bazelTreeNodeType) }
-  }
-
-  fun shouldShowUnderTreeNode(file: VirtualFile, bazelTreeNodeType: BazelTreeNodeType): Boolean =
-    measure("BazelTreeStructureController.shouldShowUnderTreeNode.$bazelTreeNodeType") {
-      val context = getOrComputeBazelTreeStructureContext()
-      if (!context.projectImported) {
-        // When project isn't imported, we don't have information to determine the correct node,
-        // so we put everything under the root node
-        return@measure bazelTreeNodeType == ROOT
-      }
-
-      return@measure if (file.isDirectory) {
-        shouldShowDirectoryUnderTreeNode(context, file, bazelTreeNodeType)
-      }
-      else {
-        shouldShowFileUnderTreeNode(context, file, bazelTreeNodeType)
-      }
+    public boolean shouldShowNode(BazelTreeNodeType bazelTreeNodeType) {
+        return measure("BazelTreeStructureController.shouldShowNode." + bazelTreeNodeType, () -> {
+            BazelTreeStructureContext context = getOrComputeBazelTreeStructureContext();
+            return switch (bazelTreeNodeType) {
+                case ROOT -> true;
+                case EXCLUDED -> context.projectImported() && nodeHasAnyDirectories(context, EXCLUDED);
+                case UNIMPORTED -> context.projectImported() && nodeHasAnyDirectories(context, UNIMPORTED);
+            };
+        });
     }
 
-  private fun shouldShowFileUnderTreeNode(context: BazelTreeStructureContext, file: VirtualFile, bazelTreeNodeType: BazelTreeNodeType): Boolean {
-    val parent = file.parent ?: return false
-    if (parent == context.rootProjectDir) {
-      // Files under the project root directory should show ONLY under the root node
-      return bazelTreeNodeType == ROOT
+    private boolean nodeHasAnyDirectories(BazelTreeStructureContext context, BazelTreeNodeType bazelTreeNodeType) {
+        VirtualFile rootProjectDir = context.rootProjectDir();
+        if (rootProjectDir == null) {
+            return false;
+        }
+        List<VirtualFile> directories = ReadAction.compute(() ->
+            Arrays.stream(rootProjectDir.getChildren()).filter(VirtualFile::isDirectory).toList()
+        );
+        return directories.stream().anyMatch(it -> shouldShowDirectoryUnderTreeNode(context, it, bazelTreeNodeType));
     }
 
-    if (bazelTreeNodeType != ROOT) {
-      if (shouldShowDirectoryUnderTreeNode(context, parent, ROOT)) {
-        // If the file is already shown under the root node, don't show it under any other node to avoid duplication
-        return false
-      }
+    public boolean shouldShowUnderTreeNode(VirtualFile file, BazelTreeNodeType bazelTreeNodeType) {
+        return measure("BazelTreeStructureController.shouldShowUnderTreeNode." + bazelTreeNodeType, () -> {
+            BazelTreeStructureContext context = getOrComputeBazelTreeStructureContext();
+            if (!context.projectImported()) {
+                // When project isn't imported, we don't have information to determine the correct node,
+                // so we put everything under the root node
+                return bazelTreeNodeType == ROOT;
+            }
+
+            if (file.isDirectory()) {
+                return shouldShowDirectoryUnderTreeNode(context, file, bazelTreeNodeType);
+            }
+            else {
+                return shouldShowFileUnderTreeNode(context, file, bazelTreeNodeType);
+            }
+        });
     }
 
-    return shouldShowDirectoryUnderTreeNode(context, parent, bazelTreeNodeType)
-  }
+    private boolean shouldShowFileUnderTreeNode(BazelTreeStructureContext context, VirtualFile file, BazelTreeNodeType bazelTreeNodeType) {
+        VirtualFile parent = file.getParent();
+        if (parent == null) {
+            return false;
+        }
+        if (parent.equals(context.rootProjectDir())) {
+            // Files under the project root directory should show ONLY under the root node
+            return bazelTreeNodeType == ROOT;
+        }
 
-  private fun shouldShowDirectoryUnderTreeNode(context: BazelTreeStructureContext, directory: VirtualFile, bazelTreeNodeType: BazelTreeNodeType): Boolean {
-    if (bazelTreeNodeType == ROOT && context.isDirectoryContainingAnotherIncludedDirectory(directory)) {
-      return true
-    }
-    if (bazelTreeNodeType == EXCLUDED && context.isDirectoryContainingAnotherExcludedDirectory(directory)) {
-      return true
-    }
+        if (bazelTreeNodeType != ROOT) {
+            if (shouldShowDirectoryUnderTreeNode(context, parent, ROOT)) {
+                // If the file is already shown under the root node, don't show it under any other node to avoid duplication
+                return false;
+            }
+        }
 
-    return computeNodeTypeForFile(directory) == bazelTreeNodeType
-  }
-
-  /**
-   * Inspired by [WorkspaceFileIndexDataImpl.getFileInfo], which we can't use here directly
-   * because the whole project root is registered as a workspace content,
-   * so it won't give us data about unimported directories.
-   */
-  private fun computeNodeTypeForFile(virtualFile: VirtualFile): BazelTreeNodeType {
-    val includedRoots = project.includedRoots() ?: return ROOT
-    val excludedRoots = project.excludedRoots() ?: return ROOT
-    var current: VirtualFile? = virtualFile
-    while (current != null) {
-      if (current in includedRoots) return ROOT
-      if (current in excludedRoots) return EXCLUDED
-      current = current.parent
-    }
-    return UNIMPORTED
-  }
-
-  private fun getOrComputeBazelTreeStructureContext(): BazelTreeStructureContext =
-    (WorkspaceModel.getInstance(project) as WorkspaceModelInternal).entityStorage.cachedValue(treeStructureContextCache)
-
-  private val treeStructureContextCache =
-    CachedValue { it.buildBazelTreeStructureContext() }
-
-  private inline fun <T> measure(spanName: String, crossinline f: () -> T): T =
-    bspTracer.spanBuilder(spanName).use { f() }
-
-  companion object {
-    fun getInstance(project: Project): BazelTreeStructureController = project.getService(BazelTreeStructureController::class.java)
-  }
-}
-
-private data class BazelTreeStructureContext(
-  val projectImported: Boolean = false,
-  val rootProjectDir: VirtualFile? = null,
-  private val directoriesContainingIncludedDirectories: Set<VirtualFile> = emptySet(),
-  private val directoriesContainingExcludedDirectories: Set<VirtualFile> = emptySet(),
-) {
-  fun isDirectoryContainingAnotherIncludedDirectory(file: VirtualFile): Boolean = directoriesContainingIncludedDirectories.contains(file)
-
-  fun isDirectoryContainingAnotherExcludedDirectory(file: VirtualFile): Boolean = directoriesContainingExcludedDirectories.contains(file)
-
-  companion object {
-    fun EntityStorage.buildBazelTreeStructureContext(): BazelTreeStructureContext {
-      val bazelProjectDirectories = this.bazelProjectDirectoriesEntity() ?: return BazelTreeStructureContext()
-      return BazelTreeStructureContext(
-        projectImported = true,
-        rootProjectDir = bazelProjectDirectories.projectRoot.virtualFile,
-        directoriesContainingIncludedDirectories = directoriesContainingDirectories(bazelProjectDirectories.includedRoots),
-        directoriesContainingExcludedDirectories = directoriesContainingDirectories(bazelProjectDirectories.excludedRoots),
-      )
+        return shouldShowDirectoryUnderTreeNode(context, parent, bazelTreeNodeType);
     }
 
-    private fun directoriesContainingDirectories(roots: List<VirtualFileUrl>): Set<VirtualFile> {
-      val result =
-        roots
-          .asSequence()
-          .mapNotNull { it.virtualFile }
-          .mapNotNull { if (it.isDirectory) it else it.parent }
-          .toMutableSet()
+    private boolean shouldShowDirectoryUnderTreeNode(BazelTreeStructureContext context, VirtualFile directory, BazelTreeNodeType bazelTreeNodeType) {
+        if (bazelTreeNodeType == ROOT && context.isDirectoryContainingAnotherIncludedDirectory(directory)) {
+            return true;
+        }
+        if (bazelTreeNodeType == EXCLUDED && context.isDirectoryContainingAnotherExcludedDirectory(directory)) {
+            return true;
+        }
 
-      val toVisit = ArrayDeque(result)
-      while (toVisit.isNotEmpty()) {
-        val dir = toVisit.removeFirst()
-        val parent = dir.parent ?: continue
-        if (parent in result) continue
-        result.add(parent)
-        toVisit.add(parent)
-      }
-
-      return result
+        return computeNodeTypeForFile(directory) == bazelTreeNodeType;
     }
-  }
-}
 
-@ApiStatus.Internal
-enum class BazelTreeNodeType {
-  ROOT,
-  EXCLUDED,
-  UNIMPORTED,
+    /**
+     * Inspired by {@code WorkspaceFileIndexDataImpl.getFileInfo}, which we can't use here directly
+     * because the whole project root is registered as a workspace content,
+     * so it won't give us data about unimported directories.
+     */
+    private BazelTreeNodeType computeNodeTypeForFile(VirtualFile virtualFile) {
+        Set<VirtualFile> includedRoots = BazelProjectDirectoriesUtils.includedRoots(myProject);
+        if (includedRoots == null) {
+            return ROOT;
+        }
+        Set<VirtualFile> excludedRoots = BazelProjectDirectoriesUtils.excludedRoots(myProject);
+        if (excludedRoots == null) {
+            return ROOT;
+        }
+        VirtualFile current = virtualFile;
+        while (current != null) {
+            if (includedRoots.contains(current)) {
+                return ROOT;
+            }
+            if (excludedRoots.contains(current)) {
+                return EXCLUDED;
+            }
+            current = current.getParent();
+        }
+        return UNIMPORTED;
+    }
+
+    private BazelTreeStructureContext getOrComputeBazelTreeStructureContext() {
+        return CachedValuesManager.getManager(myProject).getCachedValue(
+            myProject,
+            () -> CachedValueProvider.Result.create(
+                BazelTreeStructureContext.buildBazelTreeStructureContext(BazelProjectDirectoriesUtils.bazelProjectDirectoriesEntity(myProject)),
+                ProjectRootManager.getInstance(myProject)
+            )
+        );
+    }
+
+    // consulo: telemetry is not ported, measure() only runs the body
+    private static <T> T measure(String spanName, Supplier<T> f) {
+        return f.get();
+    }
+
+    public static BazelTreeStructureController getInstance(Project project) {
+        return project.getInstance(BazelTreeStructureController.class);
+    }
+
+    private record BazelTreeStructureContext(
+        boolean projectImported,
+        @Nullable VirtualFile rootProjectDir,
+        Set<VirtualFile> directoriesContainingIncludedDirectories,
+        Set<VirtualFile> directoriesContainingExcludedDirectories
+    ) {
+        BazelTreeStructureContext() {
+            this(false, null, Set.of(), Set.of());
+        }
+
+        boolean isDirectoryContainingAnotherIncludedDirectory(VirtualFile file) {
+            return directoriesContainingIncludedDirectories.contains(file);
+        }
+
+        boolean isDirectoryContainingAnotherExcludedDirectory(VirtualFile file) {
+            return directoriesContainingExcludedDirectories.contains(file);
+        }
+
+        static BazelTreeStructureContext buildBazelTreeStructureContext(@Nullable BazelProjectDirectoriesEntity bazelProjectDirectories) {
+            if (bazelProjectDirectories == null) {
+                return new BazelTreeStructureContext();
+            }
+            return new BazelTreeStructureContext(
+                true,
+                VirtualFileManager.getInstance().findFileByUrl(bazelProjectDirectories.projectRoot()),
+                directoriesContainingDirectories(bazelProjectDirectories.includedRoots()),
+                directoriesContainingDirectories(bazelProjectDirectories.excludedRoots())
+            );
+        }
+
+        private static Set<VirtualFile> directoriesContainingDirectories(List<String> roots) {
+            Set<VirtualFile> result = new LinkedHashSet<>();
+            for (String url : roots) {
+                VirtualFile file = VirtualFileManager.getInstance().findFileByUrl(url);
+                if (file == null) {
+                    continue;
+                }
+                VirtualFile directory = file.isDirectory() ? file : file.getParent();
+                if (directory != null) {
+                    result.add(directory);
+                }
+            }
+
+            Deque<VirtualFile> toVisit = new ArrayDeque<>(result);
+            while (!toVisit.isEmpty()) {
+                VirtualFile dir = toVisit.removeFirst();
+                VirtualFile parent = dir.getParent();
+                if (parent == null) {
+                    continue;
+                }
+                if (result.contains(parent)) {
+                    continue;
+                }
+                result.add(parent);
+                toVisit.add(parent);
+            }
+
+            return result;
+        }
+    }
 }

@@ -1,37 +1,61 @@
-package org.jetbrains.bazel.languages.starlark.findusages
+package org.jetbrains.bazel.languages.starlark.findusages;
 
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiElement
-import com.intellij.psi.search.DelegatingGlobalSearchScope
-import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.psi.search.ScopeOptimizer
-import com.intellij.psi.search.SearchScope
-import org.jetbrains.bazel.languages.starlark.index.StarlarkLoadsIndex
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.content.scope.SearchScope;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.scope.DelegatingGlobalSearchScope;
+import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.language.psi.search.ScopeOptimizer;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.index.StarlarkLoadsIndex;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Narrows the use scope to only the defining file and files that actually load the searched Starlark element.
  */
-internal class StarlarkUseScopeOptimizer : ScopeOptimizer {
-
-  override fun getRestrictedUseScope(element: PsiElement): SearchScope? {
-    val namedElement = element as? StarlarkNamedElement ?: return null
-    val baseScope = element.useScope as? GlobalSearchScope ?: return null
-    return StarlarkLoadersScope(baseScope, namedElement)
-  }
+// consulo: upstream registers it as `useScopeOptimizer`; Consulo has a single ScopeOptimizer extension point,
+// applied by SearchRequestCollector to the code usage search scope
+@ExtensionImpl
+public class StarlarkUseScopeOptimizer implements ScopeOptimizer {
+    @Override
+    public @Nullable SearchScope getRestrictedUseScope(PsiElement element) {
+        if (!(element instanceof StarlarkNamedElement namedElement)) {
+            return null;
+        }
+        if (!(element.getUseScope() instanceof GlobalSearchScope baseScope)) {
+            return null;
+        }
+        return new StarlarkLoadersScope(baseScope, namedElement);
+    }
 }
 
 /**
- * A search scope that wraps the [baseScope] and limits it to files that actually load the [element].
+ * A search scope that wraps the {@code baseScope} and limits it to files that actually load the {@code element}.
  */
-private class StarlarkLoadersScope(
-  baseScope: GlobalSearchScope,
-  private val element: StarlarkNamedElement,
-) : DelegatingGlobalSearchScope(baseScope) {
+class StarlarkLoadersScope extends DelegatingGlobalSearchScope {
+    private final StarlarkNamedElement myElement;
 
-  override fun contains(file: VirtualFile): Boolean {
-    if (!super.contains(file)) return false
-    if (file == element.containingFile?.virtualFile) return true
-    return StarlarkLoadsIndex.isLoaded(element, fileScope(element.project, file))
-  }
+    StarlarkLoadersScope(
+        GlobalSearchScope baseScope,
+        StarlarkNamedElement element
+    ) {
+        super(baseScope);
+        myElement = element;
+    }
+
+    @Override
+    @RequiredReadAction
+    public boolean contains(VirtualFile file) {
+        if (!super.contains(file)) {
+            return false;
+        }
+        PsiFile containingFile = myElement.getContainingFile();
+        if (file.equals(containingFile == null ? null : containingFile.getVirtualFile())) {
+            return true;
+        }
+        return StarlarkLoadsIndex.isLoaded(myElement, GlobalSearchScope.fileScope(myElement.getProject(), file));
+    }
 }

@@ -1,41 +1,93 @@
-package org.jetbrains.bazel.run.state
+package org.jetbrains.bazel.run.state;
 
-import com.intellij.execution.ui.CommonParameterFragments
-import com.intellij.execution.ui.SettingsEditorFragmentType
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.SettingsEditorFragmentContainer
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.addLabeledSettingsEditorFragment
-import com.intellij.openapi.externalSystem.service.ui.util.LabeledSettingsFragmentInfo
-import com.intellij.openapi.util.NlsContexts
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import javax.swing.JTextField
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.execution.ui.CommonParameterFragments;
+import consulo.bazel.execution.ui.LabeledSettingsFragmentInfo;
+import consulo.bazel.execution.ui.SettingsEditorFragment;
+import consulo.bazel.execution.ui.SettingsEditorFragmentContainer;
+import consulo.bazel.execution.ui.SettingsEditorFragmentType;
+import consulo.bazel.execution.ui.SettingsEditorLabeledComponent;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface HasTestFilter {
-  var testFilter: String?
+import javax.swing.*;
+
+// consulo: upstream Kotlin top-level declarations of Test.kt; the interface is nested here
+public final class Test {
+    private Test() {
+    }
+
+    public interface HasTestFilter {
+        @Nullable String getTestFilter();
+
+        void setTestFilter(@Nullable String testFilter);
+    }
+
+    private static @Nullable HasTestFilter getTestFilterState(BazelRunConfiguration receiver) {
+        BazelRunHandler handler = receiver.getHandler();
+        return handler != null && handler.getState() instanceof HasTestFilter hasTestFilter ? hasTestFilter : null;
+    }
+
+    public static SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JTextField>> addTestFilterFragment(
+        SettingsEditorFragmentContainer<BazelRunConfiguration> receiver
+    ) {
+        return receiver.addLabeledSettingsEditorFragment(
+            new LabeledSettingsFragmentInfo() {
+                @Override
+                public LocalizeValue getSettingsActionHint() {
+                    return LocalizeValue.empty();
+                }
+
+                @Override
+                public LocalizeValue getSettingsGroup() {
+                    // consulo: upstream uses this id-like string as the group name
+                    return LocalizeValue.of("bsp.fragment.testFilter");
+                }
+
+                @Override
+                public LocalizeValue getSettingsHint() {
+                    return LocalizeValue.empty();
+                }
+
+                @Override
+                public String getSettingsId() {
+                    return "Test Filter ID";
+                }
+
+                @Override
+                public LocalizeValue getSettingsName() {
+                    // TODO consulo: move to the BazelPluginLocalize YAML (upstream hard-codes it)
+                    return LocalizeValue.localizeTODO("Test Filter");
+                }
+
+                @Override
+                public LocalizeValue getEditorLabel() {
+                    return BazelPluginLocalize.settingsEditorLabelTestFilter();
+                }
+
+                @Override
+                public SettingsEditorFragmentType getSettingsType() {
+                    return SettingsEditorFragmentType.EDITOR;
+                }
+            },
+            disposable -> {
+                JTextField textField = new JTextField();
+                CommonParameterFragments.setMonospaced(textField);
+                return textField;
+            },
+            (configuration, component) -> {
+                HasTestFilter state = getTestFilterState(configuration);
+                String testFilter = state == null ? null : state.getTestFilter();
+                component.setText(testFilter == null ? "" : testFilter);
+            },
+            (configuration, component) -> {
+                HasTestFilter state = getTestFilterState(configuration);
+                if (state != null) {
+                    state.setTestFilter(component.getText());
+                }
+            }
+        );
+    }
 }
-
-private val BazelRunConfiguration.testFilterState: HasTestFilter?
-  get() = handler?.state as? HasTestFilter
-
-@ApiStatus.Internal
-fun SettingsEditorFragmentContainer<BazelRunConfiguration>.addTestFilterFragment() =
-  addLabeledSettingsEditorFragment(
-    object : LabeledSettingsFragmentInfo {
-      override val settingsActionHint: String? = null
-      override val settingsGroup: String = "bsp.fragment.testFilter"
-      override val settingsHint: String? = null
-      override val settingsId: String = "Test Filter ID"
-      override val settingsName: String = "Test Filter"
-      override val editorLabel: @NlsContexts.Label String = BazelPluginBundle.message("settings.editor.label.test.filter")
-      override val settingsType: SettingsEditorFragmentType = SettingsEditorFragmentType.EDITOR
-    },
-    {
-      JTextField().also {
-        CommonParameterFragments.setMonospaced(it)
-      }
-    },
-    { configuration, component -> component.text = configuration.testFilterState?.testFilter ?: "" },
-    { configuration, component -> configuration.testFilterState?.testFilter = component.text },
-  )

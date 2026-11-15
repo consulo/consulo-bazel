@@ -1,31 +1,43 @@
-package org.jetbrains.bazel.flow.open
+package org.jetbrains.bazel.flow.open;
 
-import com.intellij.build.events.MessageEvent
-import com.intellij.openapi.components.serviceAsync
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.projectview.ProjectViewService
-import org.jetbrains.bazel.languages.projectview.unresolvedRequiredImports
-import org.jetbrains.bazel.progress.syncConsole
-import org.jetbrains.bazel.sync.ProjectPreSyncHook
-import org.jetbrains.bazel.sync.withSubtask
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.build.ui.FilePosition;
+import consulo.build.ui.event.MessageEvent;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.projectview.ProjectView;
+import org.jetbrains.bazel.languages.projectview.ProjectViewService;
+import org.jetbrains.bazel.languages.projectview.imports.Import;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.sync.ProjectPreSyncHook;
+import org.jspecify.annotations.Nullable;
 
-internal class ReparseProjectViewFilePreSyncHook : ProjectPreSyncHook {
-  override suspend fun onPreSync(environment: ProjectPreSyncHook.ProjectPreSyncHookEnvironment) {
-    val project = environment.project
-    environment.withSubtask(BazelPluginBundle.message("project.view.validate.subtask")) { taskId ->
-      val projectViewService = project.serviceAsync<ProjectViewService>()
-      projectViewService.forceReparseCurrentProjectViewFiles()
-      val unresolvedRequiredImports = projectViewService.projectView.unresolvedRequiredImports()
-      unresolvedRequiredImports.forEach {
-        project.syncConsole.addDiagnosticMessage(
-          taskId = taskId,
-          path = it.position?.path,
-          line = it.position?.startLine ?: -1,
-          column = it.position?.startColumn ?: -1,
-          message = BazelPluginBundle.message("project.view.import.unresolved", it.text),
-          severity = MessageEvent.Kind.ERROR,
-        )
-      }
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+@ExtensionImpl
+public class ReparseProjectViewFilePreSyncHook implements ProjectPreSyncHook {
+    @Override
+    public CompletableFuture<Void> onPreSync(ProjectPreSyncHook.ProjectPreSyncHookEnvironment environment) {
+        Project project = environment.project();
+        return ProjectPreSyncHook.withSubtask(environment, BazelPluginLocalize.projectViewValidateSubtask(), taskId -> {
+            ProjectViewService projectViewService = ProjectViewService.getInstance(project);
+            return projectViewService.forceReparseCurrentProjectViewFiles().thenApply(unused -> {
+                List<Import.Unresolved> unresolvedRequiredImports = ProjectView.unresolvedRequiredImports(projectViewService.getProjectView());
+                for (Import.Unresolved it : unresolvedRequiredImports) {
+                    @Nullable FilePosition position = it.position();
+                    util.getSyncConsole(project).addDiagnosticMessage(
+                        taskId,
+                        position == null ? null : position.getFile().toPath(),
+                        position == null ? -1 : position.getStartLine(),
+                        position == null ? -1 : position.getStartColumn(),
+                        BazelPluginLocalize.projectViewImportUnresolved(it.text()),
+                        null,
+                        MessageEvent.Kind.ERROR
+                    );
+                }
+                return null;
+            });
+        });
     }
-  }
 }

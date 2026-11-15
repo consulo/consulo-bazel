@@ -1,27 +1,54 @@
-package org.jetbrains.bazel.languages.bazelrc.quickfix
+package org.jetbrains.bazel.languages.bazelrc.quickfix;
 
-import com.intellij.codeInspection.util.IntentionFamilyName
-import com.intellij.modcommand.ActionContext
-import com.intellij.modcommand.ModPsiUpdater
-import com.intellij.modcommand.Presentation
-import com.intellij.modcommand.PsiUpdateModCommandAction
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.parentOfType
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.bazelrc.flags.Flag
-import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFlag
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.codeEditor.Editor;
+import consulo.language.editor.inspection.LocalQuickFixAndIntentionActionOnPsiElement;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
+import org.jetbrains.bazel.languages.bazelrc.psi.BazelrcFlag;
+import org.jspecify.annotations.Nullable;
 
-internal class DeleteFlagUseFix(element: PsiElement, val flag: Flag) : PsiUpdateModCommandAction<PsiElement>(element) {
-  override fun invoke(
-    context: ActionContext,
-    element: PsiElement,
-    updater: ModPsiUpdater,
-  ) {
-    element.parentOfType<BazelrcFlag>()?.delete()
-  }
+// consulo: the ModCommand API (PsiUpdateModCommandAction) does not exist in Consulo; a classic intention action bound to the
+// element (smart pointer), run in a write action
+public class DeleteFlagUseFix extends LocalQuickFixAndIntentionActionOnPsiElement {
+    private final Flag myFlag;
 
-  override fun getPresentation(context: ActionContext, element: PsiElement): Presentation? =
-    Presentation.of(BazelPluginBundle.message("quickfix.bazelrc.delete.noop.flag.presentation"))
+    public DeleteFlagUseFix(PsiElement element, Flag flag) {
+        super(element);
+        myFlag = flag;
+    }
 
-  override fun getFamilyName(): @IntentionFamilyName String = BazelPluginBundle.message("quickfix.bazelrc.delete.noop.flag.declaration")
+    public Flag getFlag() {
+        return myFlag;
+    }
+
+    // consulo: upstream invoke(context: ActionContext, element: PsiElement, updater: ModPsiUpdater)
+    @Override
+    public void invoke(
+        Project project,
+        PsiFile psiFile,
+        @Nullable Editor editor,
+        PsiElement element,
+        PsiElement endElement
+    ) {
+        BazelrcFlag flag = PsiTreeUtil.getParentOfType(element, BazelrcFlag.class, true);
+        if (flag != null) {
+            flag.delete();
+        }
+    }
+
+    // consulo: upstream getPresentation(context, element) returned Presentation.of(text)
+    @Override
+    public LocalizeValue getText() {
+        return BazelPluginLocalize.quickfixBazelrcDeleteNoopFlagPresentation();
+    }
+
+    // consulo: Consulo intention actions have no family name; kept from upstream
+    public LocalizeValue getFamilyName() {
+        return BazelPluginLocalize.quickfixBazelrcDeleteNoopFlagDeclaration();
+    }
 }

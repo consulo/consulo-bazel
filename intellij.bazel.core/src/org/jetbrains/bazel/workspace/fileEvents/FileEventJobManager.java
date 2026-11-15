@@ -1,50 +1,72 @@
-package org.jetbrains.bazel.workspace.fileEvents
+package org.jetbrains.bazel.workspace.fileEvents;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.Job
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.sync.status.SyncStatusListener
-import org.jetbrains.bazel.sync.status.SyncStatusService
-import java.util.concurrent.atomic.AtomicReference
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.project.Project;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.sync.status.SyncStatusListener;
+import org.jetbrains.bazel.sync.status.SyncStatusService;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-@Service(Service.Level.PROJECT)
-class FileEventJobManager(private val project: Project) {
-  private val fileEventProcessingJob = AtomicReference<Job?>(null)
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
-  init {
-    project.messageBus.connect().subscribe(SyncStatusListener.TOPIC, StatusListener())
-  }
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class FileEventJobManager {
+    private final Project myProject;
 
-  fun <T : Job> runFileEventsProcessing(jobStarter: () -> T): T? {
-    val syncStatusService = SyncStatusService.getInstance(project)
-    val job =
-      syncStatusService.withSyncStatus { syncInProgress -> jobStarter.takeIf { !syncInProgress }?.invoke() } ?: return null
-    setJobAndCancelPrevious(job)
-    return job
-  }
+    // consulo: kotlinx Job -> CompletableFuture
+    private final AtomicReference<@Nullable CompletableFuture<?>> myFileEventProcessingJob = new AtomicReference<>(null);
 
-  private fun cancelCurrentJob() {
-    setJobAndCancelPrevious(null)
-  }
-
-  private fun setJobAndCancelPrevious(job: Job?) {
-    fileEventProcessingJob.getAndSet(job)?.cancel()
-  }
-
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): FileEventJobManager = project.service()
-  }
-
-  private inner class StatusListener : SyncStatusListener {
-    override fun syncStarted() {
-      val jobRunner = this@FileEventJobManager
-      jobRunner.cancelCurrentJob()
+    @Inject
+    public FileEventJobManager(Project project) {
+        myProject = project;
+        project.getMessageBus().connect().subscribe(SyncStatusListener.TOPIC, new StatusListener());
     }
 
-    override fun syncFinished(canceled: Boolean) { }
-  }
+    public <T extends CompletableFuture<?>> @Nullable T runFileEventsProcessing(Supplier<T> jobStarter) {
+        SyncStatusService syncStatusService = SyncStatusService.getInstance(myProject);
+        // consulo: Optional instead of a nullable result of withSyncStatus
+        T job = syncStatusService
+            .withSyncStatus(syncInProgress -> Optional.ofNullable(!syncInProgress ? jobStarter.get() : null))
+            .orElse(null);
+        if (job == null) {
+            return null;
+        }
+        setJobAndCancelPrevious(job);
+        return job;
+    }
+
+    private void cancelCurrentJob() {
+        setJobAndCancelPrevious(null);
+    }
+
+    private void setJobAndCancelPrevious(@Nullable CompletableFuture<?> job) {
+        CompletableFuture<?> previous = myFileEventProcessingJob.getAndSet(job);
+        if (previous != null) {
+            previous.cancel(true);
+        }
+    }
+
+    public static FileEventJobManager getInstance(Project project) {
+        return project.getInstance(FileEventJobManager.class);
+    }
+
+    private class StatusListener implements SyncStatusListener {
+        @Override
+        public void syncStarted() {
+            FileEventJobManager jobRunner = FileEventJobManager.this;
+            jobRunner.cancelCurrentJob();
+        }
+
+        @Override
+        public void syncFinished(boolean canceled) {
+        }
+    }
 }

@@ -1,25 +1,32 @@
-package org.jetbrains.bazel.workspace.fileEvents
+package org.jetbrains.bazel.workspace.fileEvents;
 
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.ProjectManager
-import com.intellij.openapi.vfs.newvfs.BulkFileListenerBackgroundable
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.TopicImpl;
+import consulo.project.Project;
+import consulo.project.ProjectManager;
+import consulo.virtualFileSystem.event.BulkFileListenerBackgroundable;
+import consulo.virtualFileSystem.event.VFileEvent;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
 
-@ApiStatus.Internal
-class BazelFileEventListener : BulkFileListenerBackgroundable {
-  override fun after(events: MutableList<out VFileEvent>) {
-    val projects =
-      ProjectManager
-        .getInstance()
-        .openProjects // ProjectLocator::getProjectsForFile won't work, since it only recognizes files already added to content roots
-        .filter { it.isBazelProject }
-    for (project in projects) {
-      BazelCoroutineService.getInstance(project).start {
-        BazelFileEventProcessor.getInstance(project).enqueue(events)
-      }
+import java.util.ArrayList;
+import java.util.List;
+
+@TopicImpl(ComponentScope.APPLICATION)
+public class BazelFileEventListener implements BulkFileListenerBackgroundable {
+    @Override
+    public void after(List<? extends VFileEvent> events) {
+        List<Project> projects = new ArrayList<>();
+        // ProjectLocator::getProjectsForFile won't work, since it only recognizes files already added to content roots
+        for (Project it : ProjectManager.getInstance().getOpenProjects()) {
+            if (org.jetbrains.bazel.config.project.isBazelProject(it)) {
+                projects.add(it);
+            }
+        }
+        List<VFileEvent> eventList = List.copyOf(events);
+        for (Project project : projects) {
+            BazelCoroutineService.getInstance(project).start(() ->
+                BazelFileEventProcessor.getInstance(project).enqueue(eventList)
+            );
+        }
     }
-  }
 }

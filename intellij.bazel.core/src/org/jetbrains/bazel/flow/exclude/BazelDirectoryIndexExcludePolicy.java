@@ -1,13 +1,47 @@
-package org.jetbrains.bazel.flow.exclude
+package org.jetbrains.bazel.flow.exclude;
 
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.impl.DirectoryIndexExcludePolicy
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.module.content.layer.DirectoryIndexExcludePolicy;
+import consulo.module.content.layer.ModuleRootLayer;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import consulo.virtualFileSystem.pointer.VirtualFilePointer;
+import jakarta.inject.Inject;
 
-internal class BazelDirectoryIndexExcludePolicy(val project: Project) : DirectoryIndexExcludePolicy, DumbAware {
-  override fun getExcludeUrlsForProject(): Array<out String> =
-    BazelSymlinkExcludeService.getInstance(project)
-      .getBazelSymlinksToExclude()
-      .map { it.toUri().toString() }
-      .toTypedArray()
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+@ExtensionImpl
+public class BazelDirectoryIndexExcludePolicy implements DirectoryIndexExcludePolicy, DumbAware {
+    private final Project myProject;
+
+    @Inject
+    public BazelDirectoryIndexExcludePolicy(Project project) {
+        myProject = project;
+    }
+
+    public Project getProject() {
+        return myProject;
+    }
+
+    // consulo: Consulo excludes VirtualFiles (upstream getExcludeUrlsForProject() returns the `Path.toUri()` urls)
+    @Override
+    public VirtualFile[] getExcludeRootsForProject() {
+        List<VirtualFile> result = new ArrayList<>();
+        for (Path it : BazelSymlinkExcludeService.getInstance(myProject).getBazelSymlinksToExclude()) {
+            VirtualFile file = VirtualFileManager.getInstance().findFileByNioPath(it);
+            if (file != null) {
+                result.add(file);
+            }
+        }
+        return result.toArray(VirtualFile.EMPTY_ARRAY);
+    }
+
+    @Override
+    public VirtualFilePointer[] getExcludeRootsForModule(ModuleRootLayer rootModel) {
+        return VirtualFilePointer.EMPTY_ARRAY;
+    }
 }

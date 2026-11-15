@@ -1,54 +1,91 @@
-package org.jetbrains.bazel.languages.starlark.findusages
+package org.jetbrains.bazel.languages.starlark.findusages;
 
-import com.intellij.lang.HelpID
-import com.intellij.lang.cacheBuilder.DefaultWordsScanner
-import com.intellij.lang.cacheBuilder.WordsScanner
-import com.intellij.lang.findUsages.FindUsagesProvider
-import com.intellij.psi.PsiElement
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets
-import org.jetbrains.bazel.languages.starlark.lexer.StarlarkHighlightingLexer
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.isRuleTarget
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.Language;
+import consulo.language.cacheBuilder.DefaultWordsScanner;
+import consulo.language.cacheBuilder.WordsScanner;
+import consulo.language.findUsage.FindUsagesProvider;
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenSets;
+import org.jetbrains.bazel.languages.starlark.lexer.StarlarkHighlightingLexer;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkNamedElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration;
 
-internal class StarlarkFindUsagesProvider : FindUsagesProvider {
-  override fun canFindUsagesFor(psiElement: PsiElement): Boolean =
-    psiElement is StarlarkNamedElement || psiElement is StarlarkReferenceExpression || psiElement.isRuleTarget()
-
-  override fun getHelpId(psiElement: PsiElement): String =
-    when (psiElement) {
-      is StarlarkTargetExpression, is StarlarkReferenceExpression -> "reference.dialogs.findUsages.variable"
-      else -> HelpID.FIND_OTHER_USAGES
+@ExtensionImpl
+public class StarlarkFindUsagesProvider implements FindUsagesProvider {
+    @Override
+    public boolean canFindUsagesFor(PsiElement psiElement) {
+        return psiElement instanceof StarlarkNamedElement
+            || psiElement instanceof StarlarkReferenceExpression
+            || StarlarkCallExpression.isRuleTarget(psiElement);
     }
 
-  @Suppress("HardCodedStringLiteral")
-  override fun getType(element: PsiElement): String =
-    when {
-      element.isRuleTarget() -> "target"
-      element is StarlarkFunctionDeclaration -> "function"
-      element is StarlarkTargetExpression || element is StarlarkReferenceExpression -> "variable"
-      else -> ""
+    @Override
+    public String getHelpId(PsiElement psiElement) {
+        if (psiElement instanceof StarlarkTargetExpression || psiElement instanceof StarlarkReferenceExpression) {
+            return "reference.dialogs.findUsages.variable";
+        }
+        else {
+            // consulo: HelpID.FIND_OTHER_USAGES (the HelpID class is in ide-impl)
+            return "reference.dialogs.findUsages.other";
+        }
     }
 
-  @Suppress("HardCodedStringLiteral")
-  override fun getDescriptiveName(element: PsiElement): String =
-    when (element) {
-      is StarlarkElement -> element.name ?: "<anonymous>"
-      else -> element.toString()
+    @Override
+    public String getType(PsiElement element) {
+        if (StarlarkCallExpression.isRuleTarget(element)) {
+            return "target";
+        }
+        else if (element instanceof StarlarkFunctionDeclaration) {
+            return "function";
+        }
+        else if (element instanceof StarlarkTargetExpression || element instanceof StarlarkReferenceExpression) {
+            return "variable";
+        }
+        else {
+            return "";
+        }
     }
 
-  override fun getNodeText(element: PsiElement, useFullName: Boolean): String = getDescriptiveName(element)
+    @Override
+    public String getDescriptiveName(PsiElement element) {
+        if (element instanceof StarlarkElement starlarkElement) {
+            String name = starlarkElement.getName();
+            return name != null ? name : "<anonymous>";
+        }
+        else {
+            return element.toString();
+        }
+    }
 
-  override fun getWordsScanner(): WordsScanner = StarlarkWordsScanner()
+    @Override
+    public String getNodeText(PsiElement element, boolean useFullName) {
+        return getDescriptiveName(element);
+    }
+
+    @Override
+    public WordsScanner getWordsScanner() {
+        return new StarlarkWordsScanner();
+    }
+
+    @Override
+    public Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
 }
 
-internal class StarlarkWordsScanner :
-  DefaultWordsScanner(
-    StarlarkHighlightingLexer(),
-    StarlarkTokenSets.IDENTIFIER,
-    StarlarkTokenSets.COMMENT,
-    StarlarkTokenSets.STRINGS,
-  )
+class StarlarkWordsScanner extends DefaultWordsScanner {
+    StarlarkWordsScanner() {
+        super(
+            new StarlarkHighlightingLexer(),
+            StarlarkTokenSets.IDENTIFIER,
+            StarlarkTokenSets.COMMENT,
+            StarlarkTokenSets.STRINGS
+        );
+    }
+}

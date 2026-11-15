@@ -28,7 +28,8 @@ import org.jspecify.annotations.Nullable;
 import java.util.List;
 
 /**
- * Serves upstream {@link DocumentationTargetProvider}s and {@link LookupElementDocumentationTargetProvider}s through the
+ * Serves upstream {@link DocumentationTargetProvider}s, {@link LookupElementDocumentationTargetProvider}s,
+ * {@link PsiDocumentationTargetProvider}s and {@link DocumentationLinkHandler}s through the
  * classic Consulo documentation provider. Register one subclass per Bazel language.
  *
  * @author VISTALL
@@ -71,17 +72,42 @@ public abstract class BazelDocumentationProviderBase extends DocumentationProvid
 
     @Override
     public @Nullable String generateDoc(PsiElement element, @Nullable PsiElement originalElement) {
+        DocumentationTarget target = findTarget(element, originalElement);
+        return target == null ? null : DocumentationResult.toHtml(target.computeDocumentation());
+    }
+
+    @Override
+    public @Nullable PsiElement getDocumentationElementForLink(PsiManager psiManager, String link, PsiElement context) {
+        DocumentationTarget target = findTarget(context, null);
+        if (target == null) {
+            return null;
+        }
+        PsiElement anchor = context instanceof BazelDocumentationElement documentationElement ? documentationElement.getParent() : context;
+        for (DocumentationLinkHandler handler : Application.get().getExtensionList(DocumentationLinkHandler.class)) {
+            LinkResolveResult result = handler.resolveLink(target, link);
+            if (result != null) {
+                return new BazelDocumentationElement(anchor, result.target());
+            }
+        }
+        return null;
+    }
+
+    private static @Nullable DocumentationTarget findTarget(PsiElement element, @Nullable PsiElement originalElement) {
         if (element instanceof BazelDocumentationElement documentationElement) {
-            return DocumentationResult.toHtml(documentationElement.getTarget().computeDocumentation());
+            return documentationElement.getTarget();
+        }
+        for (PsiDocumentationTargetProvider provider : Application.get().getExtensionList(PsiDocumentationTargetProvider.class)) {
+            DocumentationTarget target = provider.documentationTarget(element, originalElement);
+            if (target != null) {
+                return target;
+            }
         }
         return null;
     }
 
     @Override
     public @Nullable String getQuickNavigateInfo(PsiElement element, PsiElement originalElement) {
-        if (element instanceof BazelDocumentationElement documentationElement) {
-            return documentationElement.getTarget().computeDocumentationHint();
-        }
-        return null;
+        DocumentationTarget target = findTarget(element, originalElement);
+        return target == null ? null : target.computeDocumentationHint();
     }
 }

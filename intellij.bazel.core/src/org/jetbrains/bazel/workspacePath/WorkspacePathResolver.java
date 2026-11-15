@@ -13,44 +13,55 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.bazel.workspacePath
+package org.jetbrains.bazel.workspacePath;
 
-import org.jetbrains.bazel.commons.WorkspacePath
-import org.jetbrains.bazel.workspace.WorkspaceRoot
-import java.nio.file.Path
+import org.jetbrains.bazel.commons.WorkspacePath;
+import org.jetbrains.bazel.workspace.WorkspaceRoot;
+import org.jspecify.annotations.Nullable;
+
+import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Converts workspace-relative paths to absolute files with a minimum of file system calls
  * (typically none).
  */
-internal interface WorkspacePathResolver {
-  /** Resolves a workspace path to an absolute file.  */
-  fun resolveToFile(workspacepath: WorkspacePath): Path? = resolveToFile(workspacepath.relativePath())
+public interface WorkspacePathResolver {
+    /**
+     * Resolves a workspace path to an absolute file.
+     */
+    default @Nullable Path resolveToFile(WorkspacePath workspacepath) {
+        return resolveToFile(workspacepath.relativePath());
+    }
 
-  /** Resolves a workspace relative path to an absolute file.  */
-  fun resolveToFile(workspaceRelativePath: String): Path? {
-    val packageRoot = findPackageRoot(workspaceRelativePath)
-    return packageRoot?.resolve(workspaceRelativePath)
-  }
+    /**
+     * Resolves a workspace relative path to an absolute file.
+     */
+    default @Nullable Path resolveToFile(String workspaceRelativePath) {
+        Path packageRoot = findPackageRoot(workspaceRelativePath);
+        return packageRoot != null ? packageRoot.resolve(workspaceRelativePath) : null;
+    }
 
-  /**
-   * This method should be used for directories. Returns all workspace files corresponding to the
-   * given workspace path.
-   */
-  fun resolveToIncludeDirectories(relativePath: WorkspacePath): List<Path>
+    /**
+     * This method should be used for directories. Returns all workspace files corresponding to the
+     * given workspace path.
+     */
+    List<Path> resolveToIncludeDirectories(WorkspacePath relativePath);
 
-  /** Finds the package root directory that a workspace relative path is in.  */
-  fun findPackageRoot(relativePath: String): Path?
+    /**
+     * Finds the package root directory that a workspace relative path is in.
+     */
+    @Nullable Path findPackageRoot(String relativePath);
 
-  /**
-   * Finds the workspace root directory that an absolute file lies under. Returns null if the file
-   * is not in a known workspace.
-   */
-  fun findWorkspaceRoot(absolutePath: Path): WorkspaceRoot?
+    /**
+     * Finds the workspace root directory that an absolute file lies under. Returns null if the file
+     * is not in a known workspace.
+     */
+    @Nullable WorkspaceRoot findWorkspaceRoot(Path absolutePath);
 
-  /**
-   * Given a resolved, absolute file, returns the corresponding [WorkspacePath]. Returns null
-   * if the file is not in the workspace.
-   */
-  fun getWorkspacePath(absolutePath: Path): WorkspacePath?
+    /**
+     * Given a resolved, absolute file, returns the corresponding {@link WorkspacePath}. Returns null
+     * if the file is not in the workspace.
+     */
+    @Nullable WorkspacePath getWorkspacePath(Path absolutePath);
 }

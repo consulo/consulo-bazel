@@ -1,42 +1,68 @@
-package org.jetbrains.bazel.run.state
+package org.jetbrains.bazel.run.state;
 
-import com.intellij.execution.ui.SettingsEditorFragment
-import com.intellij.execution.ui.SettingsEditorFragmentType
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.SettingsEditorFragmentContainer
-import com.intellij.openapi.ui.DialogPanel
-import com.intellij.ui.dsl.builder.panel
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import javax.swing.JCheckBox
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.execution.ui.SettingsEditorFragment;
+import consulo.bazel.execution.ui.SettingsEditorFragmentType;
+import consulo.ui.ex.awt.FormBuilder;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface HasRunWithBazel {
-  var runWithBazel: Boolean
+import javax.swing.*;
+
+// consulo: upstream Kotlin top-level declarations of RunWithBazel.kt; the interface and the fragment are nested here
+public final class RunWithBazel {
+    private RunWithBazel() {
+    }
+
+    public interface HasRunWithBazel {
+        boolean getRunWithBazel();
+
+        void setRunWithBazel(boolean runWithBazel);
+    }
+
+    // consulo: upstream component is a Kotlin UI DSL DialogPanel, here a FormBuilder panel (the context help is a tooltip row)
+    public static class RunWithBazelFragment extends SettingsEditorFragment<BazelRunConfiguration, JPanel> {
+        private final JCheckBox myCheckBox;
+
+        public RunWithBazelFragment(JCheckBox checkBox) {
+            super(
+                "Run with Bazel",
+                BazelPluginLocalize.runconfigRunWithBazel(),
+                BazelPluginLocalize.runconfigRunWithBazel(),
+                FormBuilder.createFormBuilder()
+                    .addComponent(checkBox)
+                    .addTooltip(BazelPluginLocalize.runconfigRunWithBazelHint().get())
+                    .getPanel(),
+                /* priority = */ 1,
+                SettingsEditorFragmentType.EDITOR,
+                (configuration, component) -> {
+                    HasRunWithBazel state = getRunWithBazelState(configuration);
+                    checkBox.setSelected(state != null && state.getRunWithBazel());
+                },
+                (configuration, component) -> {
+                    HasRunWithBazel state = getRunWithBazelState(configuration);
+                    if (state != null) {
+                        state.setRunWithBazel(checkBox.isSelected());
+                    }
+                },
+                configuration -> true
+            );
+            myCheckBox = checkBox;
+            setRemovable(false);
+        }
+
+        public RunWithBazelFragment() {
+            this(new JCheckBox(BazelPluginLocalize.runconfigRunWithBazel().get()));
+        }
+
+        public JCheckBox getCheckBox() {
+            return myCheckBox;
+        }
+    }
+
+    private static @Nullable HasRunWithBazel getRunWithBazelState(BazelRunConfiguration receiver) {
+        BazelRunHandler handler = receiver.getHandler();
+        return handler != null && handler.getState() instanceof HasRunWithBazel hasRunWithBazel ? hasRunWithBazel : null;
+    }
 }
-
-@ApiStatus.Internal
-class RunWithBazelFragment(
-  val checkBox: JCheckBox = JCheckBox(BazelPluginBundle.message("runconfig.run.with.bazel")),
-) : SettingsEditorFragment<BazelRunConfiguration, DialogPanel>(
-    "Run with Bazel",
-    BazelPluginBundle.message("runconfig.run.with.bazel"),
-    BazelPluginBundle.message("runconfig.run.with.bazel"),
-    panel {
-      row {
-        cell(checkBox).contextHelp(BazelPluginBundle.message("runconfig.run.with.bazel.hint"))
-      }
-    },
-    /* priority = */ 1,
-    SettingsEditorFragmentType.EDITOR,
-    { configuration, _ -> checkBox.isSelected = configuration.runWithBazelState?.runWithBazel ?: false },
-    { configuration, _ -> configuration.runWithBazelState?.runWithBazel = checkBox.isSelected },
-    { true },
-  ) {
-  init {
-    isRemovable = false
-  }
-}
-
-private val BazelRunConfiguration.runWithBazelState: HasRunWithBazel?
-  get() = handler?.state as? HasRunWithBazel

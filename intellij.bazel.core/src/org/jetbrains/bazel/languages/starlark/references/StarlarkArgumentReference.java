@@ -1,32 +1,64 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiReferenceBase
-import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLookupElement
-import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkParameterLookupElement
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration
+import consulo.annotation.access.RequiredReadAction;
+import consulo.document.util.TextRange;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import consulo.language.psi.PsiReferenceBase;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkLookupElement;
+import org.jetbrains.bazel.languages.starlark.completion.lookups.StarlarkParameterLookupElement;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.arguments.StarlarkArgumentElement;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration;
+import org.jspecify.annotations.Nullable;
 
-internal open class StarlarkArgumentReference(element: StarlarkArgumentElement, range: TextRange) :
-  PsiReferenceBase<StarlarkArgumentElement>(element, range, true) {
-  override fun resolve(): PsiElement? = null
+import java.util.Set;
 
-  override fun getVariants(): Array<StarlarkLookupElement> {
-    val originalFunction = resolveFunction() ?: return emptyArray()
-    val passedArgumentNames = getArgumentNames()
-    return originalFunction
-      .getNamedParameters()
-      .filterNot { passedArgumentNames.contains(it.name) }
-      .map { StarlarkParameterLookupElement(it) }
-      .toTypedArray()
-  }
+public class StarlarkArgumentReference extends PsiReferenceBase<StarlarkArgumentElement> {
+    public StarlarkArgumentReference(StarlarkArgumentElement element, TextRange range) {
+        super(element, range, true);
+    }
 
-  fun resolveFunction(): StarlarkFunctionDeclaration? = getFunctionCall()?.getCalledExpression()?.reference?.resolve() as? StarlarkFunctionDeclaration
+    @Override
+    @RequiredReadAction
+    public @Nullable PsiElement resolve() {
+        return null;
+    }
 
-  private fun getArgumentNames(): Set<String> = getFunctionCall()?.getArgumentList()?.getArgumentNames() ?: emptySet()
+    @Override
+    @RequiredReadAction
+    public StarlarkLookupElement[] getVariants() {
+        StarlarkFunctionDeclaration originalFunction = resolveFunction();
+        if (originalFunction == null) {
+            return new StarlarkLookupElement[0];
+        }
+        Set<String> passedArgumentNames = getArgumentNames();
+        return originalFunction
+            .getNamedParameters()
+            .stream()
+            .filter(it -> !passedArgumentNames.contains(it.getName()))
+            .map(it -> new StarlarkParameterLookupElement(it))
+            .toArray(StarlarkLookupElement[]::new);
+    }
 
-  private fun getFunctionCall(): StarlarkCallExpression? = PsiTreeUtil.getParentOfType(element, StarlarkCallExpression::class.java)
+    @RequiredReadAction
+    public @Nullable StarlarkFunctionDeclaration resolveFunction() {
+        StarlarkCallExpression functionCall = getFunctionCall();
+        PsiElement calledExpression = functionCall == null ? null : functionCall.getCalledExpression();
+        PsiReference reference = calledExpression == null ? null : calledExpression.getReference();
+        PsiElement resolved = reference == null ? null : reference.resolve();
+        return resolved instanceof StarlarkFunctionDeclaration functionDeclaration ? functionDeclaration : null;
+    }
+
+    private Set<String> getArgumentNames() {
+        StarlarkCallExpression functionCall = getFunctionCall();
+        StarlarkArgumentList argumentList = functionCall == null ? null : functionCall.getArgumentList();
+        return argumentList != null ? argumentList.getArgumentNames() : Set.of();
+    }
+
+    private @Nullable StarlarkCallExpression getFunctionCall() {
+        return PsiTreeUtil.getParentOfType(myElement, StarlarkCallExpression.class);
+    }
 }

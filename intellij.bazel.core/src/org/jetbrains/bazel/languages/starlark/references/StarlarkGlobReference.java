@@ -1,52 +1,73 @@
-package org.jetbrains.bazel.languages.starlark.references
+package org.jetbrains.bazel.languages.starlark.references;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.TextRange
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementResolveResult
-import com.intellij.psi.PsiFileSystemItem
-import com.intellij.psi.PsiManager
-import com.intellij.psi.PsiPolyVariantReference
-import com.intellij.psi.PsiPolyVariantReferenceBase
-import com.intellij.psi.ResolveResult
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.globbing.getGlob
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.access.RequiredWriteAction;
+import consulo.document.util.TextRange;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementResolveResult;
+import consulo.language.psi.PsiFileSystemItem;
+import consulo.language.psi.PsiManager;
+import consulo.language.psi.PsiPolyVariantReference;
+import consulo.language.psi.PsiPolyVariantReferenceBase;
+import consulo.language.psi.ResolveResult;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.globbing.StarlarkGlob;
+import org.jetbrains.bazel.languages.starlark.globbing.StarlarkGlobExpressionGlob;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkGlobReference(element: StarlarkGlobExpression) :
-  PsiPolyVariantReferenceBase<StarlarkGlobExpression>(
-    element,
-    TextRange(0, element.textLength),
-  ),
-  PsiPolyVariantReference {
-  override fun multiResolve(incompleteCode: Boolean): Array<out ResolveResult> {
-    val project = element.getProject()
+import java.util.ArrayList;
+import java.util.List;
 
-    try {
-      val files: List<VirtualFile> = element.getGlob()?.execute() ?: emptyList()
-
-      val results: MutableList<ResolveResult> = arrayListOf()
-      for (file in files) {
-        val psiFile: PsiFileSystemItem? = resolveFile(file, project)
-        if (psiFile != null) {
-          results.add(PsiElementResolveResult(psiFile))
-        }
-      }
-
-      return results.toTypedArray()
-    } catch (_: Exception) {
-      return ResolveResult.EMPTY_ARRAY
+public class StarlarkGlobReference extends PsiPolyVariantReferenceBase<StarlarkGlobExpression> implements PsiPolyVariantReference {
+    @RequiredReadAction
+    public StarlarkGlobReference(StarlarkGlobExpression element) {
+        super(
+            element,
+            new TextRange(0, element.getTextLength())
+        );
     }
-  }
 
-  fun resolveFile(vf: VirtualFile, project: Project): PsiFileSystemItem? {
-    val manager = PsiManager.getInstance(project)
-    return if (vf.isDirectory) manager.findDirectory(vf) else manager.findFile(vf)
-  }
+    @Override
+    @RequiredReadAction
+    public ResolveResult[] multiResolve(boolean incompleteCode) {
+        Project project = myElement.getProject();
 
-  override fun handleElementRename(newElementName: String): PsiElement? = myElement
+        try {
+            StarlarkGlob glob = StarlarkGlobExpressionGlob.getGlob(myElement);
+            List<VirtualFile> files = glob != null ? glob.execute() : List.of();
 
-  override fun bindToElement(element: PsiElement): PsiElement = myElement
+            List<ResolveResult> results = new ArrayList<>();
+            for (VirtualFile file : files) {
+                PsiFileSystemItem psiFile = resolveFile(file, project);
+                if (psiFile != null) {
+                    results.add(new PsiElementResolveResult(psiFile));
+                }
+            }
+
+            return results.toArray(ResolveResult.EMPTY_ARRAY);
+        }
+        catch (Exception ignored) {
+            return ResolveResult.EMPTY_ARRAY;
+        }
+    }
+
+    @RequiredReadAction
+    public @Nullable PsiFileSystemItem resolveFile(VirtualFile vf, Project project) {
+        PsiManager manager = PsiManager.getInstance(project);
+        return vf.isDirectory() ? manager.findDirectory(vf) : manager.findFile(vf);
+    }
+
+    @Override
+    @RequiredWriteAction
+    public PsiElement handleElementRename(String newElementName) {
+        return myElement;
+    }
+
+    @Override
+    @RequiredWriteAction
+    public PsiElement bindToElement(PsiElement element) {
+        return myElement;
+    }
 }

@@ -1,42 +1,67 @@
-package org.jetbrains.bazel.languages.starlark.globbing
+package org.jetbrains.bazel.languages.starlark.globbing;
 
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.CachedValueProvider
-import com.intellij.psi.util.CachedValuesManager
-import com.intellij.psi.util.PsiModificationTracker
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.references.findBuildFile
+import consulo.application.util.CachedValueProvider;
+import consulo.language.psi.PsiDirectory;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiModificationTracker;
+import consulo.language.psi.util.LanguageCachedValueUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
+import org.jspecify.annotations.Nullable;
 
-private fun StarlarkGlobExpression.buildGlob(): StarlarkGlob? {
-  val containingDirectory = containingFile?.parent?.virtualFile ?: return null
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Predicate;
 
-  fun listContents(expr: PsiElement?): List<String> {
-    if (expr !is StarlarkListLiteralExpression) {
-      return emptyList()
+// consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name
+public final class StarlarkGlobExpressionGlob {
+    private StarlarkGlobExpressionGlob() {
     }
-    return expr.getElements().filterIsInstance<StarlarkStringLiteralExpression>().map {
-      it.getStringContents()
+
+    private static @Nullable StarlarkGlob buildGlob(StarlarkGlobExpression receiver) {
+        PsiFile containingFile = receiver.getContainingFile();
+        PsiDirectory parent = containingFile == null ? null : containingFile.getParent();
+        VirtualFile containingDirectory = parent == null ? null : parent.getVirtualFile();
+        if (containingDirectory == null) {
+            return null;
+        }
+
+        return StarlarkGlob
+            .forPath(containingDirectory)
+            .addPatterns(listContents(receiver.getIncludes()))
+            .addExcludes(listContents(receiver.getExcludes()))
+            .setExcludeDirectories(receiver.areDirectoriesExcluded())
+            .setDirectoryFilter(directoryFilter(containingDirectory.getPath()))
+            .build();
     }
-  }
 
-  fun directoryFilter(base: String): (VirtualFile) -> Boolean = { dir ->
-    dir.path == base || findBuildFile(dir) == null
-  }
+    // consulo: local function of buildGlob()
+    private static List<String> listContents(@Nullable PsiElement expr) {
+        if (!(expr instanceof StarlarkListLiteralExpression listLiteralExpression)) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (PsiElement element : listLiteralExpression.getElements()) {
+            if (element instanceof StarlarkStringLiteralExpression stringLiteralExpression) {
+                result.add(stringLiteralExpression.getStringContents());
+            }
+        }
+        return result;
+    }
 
-  return StarlarkGlob
-    .forPath(containingDirectory)
-    .addPatterns(listContents(getIncludes()))
-    .addExcludes(listContents(getExcludes()))
-    .setExcludeDirectories(areDirectoriesExcluded())
-    .setDirectoryFilter(directoryFilter(containingDirectory.path))
-    .build()
-}
+    // consulo: local function of buildGlob()
+    private static Predicate<VirtualFile> directoryFilter(String base) {
+        return dir -> dir.getPath().equals(base) || LabelResolveUtils.findBuildFile(dir) == null;
+    }
 
-@ApiStatus.Internal
-fun StarlarkGlobExpression.getGlob(): StarlarkGlob? = CachedValuesManager.getCachedValue(this) {
-  CachedValueProvider.Result.create(buildGlob(), PsiModificationTracker.MODIFICATION_COUNT)
+    public static @Nullable StarlarkGlob getGlob(StarlarkGlobExpression receiver) {
+        return LanguageCachedValueUtil.getCachedValue(
+            receiver,
+            () -> CachedValueProvider.Result.create(buildGlob(receiver), PsiModificationTracker.MODIFICATION_COUNT)
+        );
+    }
 }

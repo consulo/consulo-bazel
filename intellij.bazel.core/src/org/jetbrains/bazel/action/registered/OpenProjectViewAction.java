@@ -1,35 +1,43 @@
-package org.jetbrains.bazel.action.registered
+package org.jetbrains.bazel.action.registered;
 
-import com.intellij.icons.AllIcons
-import com.intellij.ide.projectView.ProjectView
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiManager
-import com.intellij.ui.treeStructure.ProjectViewUpdateCause
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.project.projectViewFile
+import consulo.annotation.component.ActionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.PsiManager;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.project.ui.view.ProjectView;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.project.DefaultProjectViewService;
 
-internal class OpenProjectViewAction :
-  SuspendableAction(
-    { BazelPluginBundle.message("widget.config.file.popup.message", BazelPluginBundle.message("tool.window.generic.config.file")) },
-    AllIcons.FileTypes.Config,
-  ),
-  DumbAware {
-  override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-    openProjectView(project)
-  }
-}
+import java.util.concurrent.CompletableFuture;
 
-internal suspend fun openProjectView(project: Project) {
-  val configFile = project.projectViewFile
-  withContext(Dispatchers.EDT) {
-    project.serviceAsync<ProjectView>().refresh(ProjectViewUpdateCause.ACTION)
-    project.serviceAsync<PsiManager>().findFile(configFile)?.navigate(true)
-  }
+@ActionImpl(id = "Bazel.OpenProjectViewFile")
+public class OpenProjectViewAction extends SuspendableAction implements DumbAware {
+    public OpenProjectViewAction() {
+        super(
+            BazelPluginLocalize.widgetConfigFilePopupMessage(BazelPluginLocalize.toolWindowGenericConfigFile()),
+            PlatformIconGroup.filetypesConfig()
+        );
+    }
+
+    @Override
+    protected CompletableFuture<?> actionPerformed(Project project, AnActionEvent e) {
+        return openProjectView(project);
+    }
+
+    public static CompletableFuture<?> openProjectView(Project project) {
+        VirtualFile configFile = DefaultProjectViewService.getProjectViewFile(project);
+        // consulo: upstream withContext(Dispatchers.EDT); ProjectViewUpdateCause is dropped
+        return project.getUIAccess().giveAsync(() -> {
+            ProjectView.getInstance(project).refresh();
+            PsiFile psiFile = PsiManager.getInstance(project).findFile(configFile);
+            if (psiFile != null) {
+                psiFile.navigate(true);
+            }
+        });
+    }
 }

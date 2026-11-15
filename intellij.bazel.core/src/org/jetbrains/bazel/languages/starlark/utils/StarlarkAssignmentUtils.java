@@ -1,89 +1,140 @@
-package org.jetbrains.bazel.languages.starlark.utils
+package org.jetbrains.bazel.languages.starlark.utils;
 
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkUtils.nearestRelevantBeforeOperator
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkDictLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkFalseLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkFloatLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkIntegerLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkNoneLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkParenthesizedExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTrueLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTupleExpression
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.util.PsiTreeUtil;
+import org.jetbrains.bazel.languages.starlark.StarlarkUtils;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkDictLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkFalseLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkFloatLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkIntegerLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkNoneLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkParenthesizedExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTrueLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTupleExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-object StarlarkAssignmentUtils {
-  fun assignedValueForTarget(target: StarlarkTargetExpression): PsiElement? {
-    val assignment = target.containingAssignment() ?: return null
-    return assignment.assignedValueFor(target)
-  }
+import java.util.ArrayList;
+import java.util.List;
 
-  private fun PsiElement.containingAssignment(): StarlarkAssignmentStatement? =
-    this as? StarlarkAssignmentStatement
-    ?: PsiTreeUtil.getParentOfType(this, StarlarkAssignmentStatement::class.java, false)
-
-  private fun StarlarkAssignmentStatement.assignedValueFor(target: StarlarkTargetExpression): PsiElement? {
-    val lhs = leftHandSide() ?: return null
-    val rhs = rightHandSide() ?: return null
-    return matchAssignedValue(lhs, rhs, target)
-  }
-
-  private fun matchAssignedValue(lhs: PsiElement, rhs: PsiElement, target: StarlarkTargetExpression): PsiElement? {
-    if (lhs == target) return rhs
-
-    val lhsElements = destructuringTargets(lhs) ?: return null
-    val rhsElements = destructuringElements(rhs) ?: return null
-    if (lhsElements.size != rhsElements.size) return null
-
-    for ((lhsElement, rhsElement) in lhsElements.zip(rhsElements)) {
-      matchAssignedValue(lhsElement, rhsElement, target)?.let { return it }
+public final class StarlarkAssignmentUtils {
+    private StarlarkAssignmentUtils() {
     }
 
-    return null
-  }
-
-  fun destructuringTargets(element: PsiElement): List<PsiElement>? =
-    when (element) {
-      is StarlarkParenthesizedExpression -> (element.getTuple() ?: element.expressionElements().singleOrNull())?.let(::destructuringTargets)
-
-      is StarlarkTupleExpression,
-      is StarlarkListLiteralExpression -> element.expressionElements()
-
-      else -> null
+    public static @Nullable PsiElement assignedValueForTarget(StarlarkTargetExpression target) {
+        StarlarkAssignmentStatement assignment = containingAssignment(target);
+        if (assignment == null) {
+            return null;
+        }
+        return assignedValueFor(assignment, target);
     }
 
-  fun destructuringElements(element: PsiElement): List<PsiElement>? =
-    when (element) {
-      is StarlarkParenthesizedExpression -> (element.getTuple() ?: element.expressionElements().singleOrNull())?.let(::destructuringElements)
-
-      is StarlarkTupleExpression,
-      is StarlarkListLiteralExpression -> element.expressionElements()
-
-      is StarlarkDictLiteralExpression -> element.getKeys()
-
-      is StarlarkFalseLiteralExpression,
-      is StarlarkFloatLiteralExpression,
-      is StarlarkIntegerLiteralExpression,
-      is StarlarkNoneLiteralExpression,
-      is StarlarkStringLiteralExpression,
-      is StarlarkTrueLiteralExpression -> listOf(element)
-
-      else -> null
+    private static @Nullable StarlarkAssignmentStatement containingAssignment(PsiElement receiver) {
+        if (receiver instanceof StarlarkAssignmentStatement assignmentStatement) {
+            return assignmentStatement;
+        }
+        return PsiTreeUtil.getParentOfType(receiver, StarlarkAssignmentStatement.class, false);
     }
 
-  private fun PsiElement.expressionElements(): List<PsiElement> {
-    val result = mutableListOf<PsiElement>()
-    var child = nearestRelevantBeforeOperator(firstChild)
-    while (child != null) {
-      result.add(child)
-      child = nearestRelevantBeforeOperator(child.nextSibling)
+    private static @Nullable PsiElement assignedValueFor(StarlarkAssignmentStatement receiver, StarlarkTargetExpression target) {
+        PsiElement lhs = receiver.leftHandSide();
+        if (lhs == null) {
+            return null;
+        }
+        PsiElement rhs = receiver.rightHandSide();
+        if (rhs == null) {
+            return null;
+        }
+        return matchAssignedValue(lhs, rhs, target);
     }
-    return result
-  }
+
+    private static @Nullable PsiElement matchAssignedValue(PsiElement lhs, PsiElement rhs, StarlarkTargetExpression target) {
+        if (lhs.equals(target)) {
+            return rhs;
+        }
+
+        List<PsiElement> lhsElements = destructuringTargets(lhs);
+        if (lhsElements == null) {
+            return null;
+        }
+        List<PsiElement> rhsElements = destructuringElements(rhs);
+        if (rhsElements == null) {
+            return null;
+        }
+        if (lhsElements.size() != rhsElements.size()) {
+            return null;
+        }
+
+        for (int i = 0; i < lhsElements.size(); i++) {
+            PsiElement matched = matchAssignedValue(lhsElements.get(i), rhsElements.get(i), target);
+            if (matched != null) {
+                return matched;
+            }
+        }
+
+        return null;
+    }
+
+    public static @Nullable List<PsiElement> destructuringTargets(PsiElement element) {
+        if (element instanceof StarlarkParenthesizedExpression parenthesizedExpression) {
+            PsiElement inner = parenthesizedExpression.getTuple();
+            if (inner == null) {
+                inner = singleOrNull(expressionElements(parenthesizedExpression));
+            }
+            return inner == null ? null : destructuringTargets(inner);
+        }
+        else if (element instanceof StarlarkTupleExpression
+            || element instanceof StarlarkListLiteralExpression) {
+            return expressionElements(element);
+        }
+        else {
+            return null;
+        }
+    }
+
+    public static @Nullable List<PsiElement> destructuringElements(PsiElement element) {
+        if (element instanceof StarlarkParenthesizedExpression parenthesizedExpression) {
+            PsiElement inner = parenthesizedExpression.getTuple();
+            if (inner == null) {
+                inner = singleOrNull(expressionElements(parenthesizedExpression));
+            }
+            return inner == null ? null : destructuringElements(inner);
+        }
+        else if (element instanceof StarlarkTupleExpression
+            || element instanceof StarlarkListLiteralExpression) {
+            return expressionElements(element);
+        }
+        else if (element instanceof StarlarkDictLiteralExpression dictLiteralExpression) {
+            return dictLiteralExpression.getKeys();
+        }
+        else if (element instanceof StarlarkFalseLiteralExpression
+            || element instanceof StarlarkFloatLiteralExpression
+            || element instanceof StarlarkIntegerLiteralExpression
+            || element instanceof StarlarkNoneLiteralExpression
+            || element instanceof StarlarkStringLiteralExpression
+            || element instanceof StarlarkTrueLiteralExpression) {
+            return List.of(element);
+        }
+        else {
+            return null;
+        }
+    }
+
+    private static List<PsiElement> expressionElements(PsiElement receiver) {
+        List<PsiElement> result = new ArrayList<>();
+        PsiElement child = StarlarkUtils.nearestRelevantBeforeOperator(receiver.getFirstChild());
+        while (child != null) {
+            result.add(child);
+            child = StarlarkUtils.nearestRelevantBeforeOperator(child.getNextSibling());
+        }
+        return result;
+    }
+
+    // consulo: Kotlin List.singleOrNull()
+    private static @Nullable PsiElement singleOrNull(List<PsiElement> list) {
+        return list.size() == 1 ? list.get(0) : null;
+    }
 }

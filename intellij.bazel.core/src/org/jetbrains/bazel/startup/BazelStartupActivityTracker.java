@@ -1,32 +1,38 @@
-package org.jetbrains.bazel.startup
+package org.jetbrains.bazel.startup;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.project.Project
-import com.intellij.platform.backend.observation.ActivityTracker
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
+import consulo.project.Project;
+import consulo.util.concurrent.coroutine.Coroutine;
+import consulo.util.concurrent.coroutine.CoroutineScope;
+import consulo.util.concurrent.coroutine.MutableObservableValue;
+import consulo.util.concurrent.coroutine.step.AwaitValue;
 
-internal class BazelStartupActivityTracker : ActivityTracker {
-  override val presentableName: String
-    get() = "bsp-sync"
+import java.util.concurrent.CompletableFuture;
 
-  override suspend fun awaitConfiguration(project: Project) {
-    isStartupRunning(project).first { !it }
-  }
+// TODO consulo: ActivityTracker (com.intellij.platform.backend.observation, <activityTracker>) is missing in Consulo,
+//  the class implements no platform interface and is not registered
+// consulo: BspConfigurationTrackerService (declared in this file upstream) is in its own file
+class BazelStartupActivityTracker {
+    public String getPresentableName() {
+        return "bsp-sync";
+    }
 
-  override suspend fun isInProgress(project: Project): Boolean = isStartupRunning(project).value
+    // consulo: the coroutine has no input, Consulo coroutines are started with a null input
+    @SuppressWarnings("NullAway")
+    public CompletableFuture<?> awaitConfiguration(Project project) {
+        return isStartupRunning(project).thenCompose(isRunning -> {
+            // consulo: upstream isRunning.first { !it }
+            CoroutineScope scope = CoroutineScope.of(project.coroutineContext());
+            return Coroutine.first(AwaitValue.<Object, Boolean>until(isRunning, it -> !it))
+                .runAsync(scope, null)
+                .toFuture();
+        });
+    }
 
-  private suspend fun isStartupRunning(project: Project): MutableStateFlow<Boolean> =
-    BspConfigurationTrackerService.getInstanceAsync(project).isRunning
-}
+    public CompletableFuture<Boolean> isInProgress(Project project) {
+        return isStartupRunning(project).thenApply(MutableObservableValue::get);
+    }
 
-@Service(Service.Level.PROJECT)
-internal class BspConfigurationTrackerService {
-  companion object {
-    @JvmStatic
-    suspend fun getInstanceAsync(project: Project): BspConfigurationTrackerService = project.serviceAsync()
-  }
-
-  val isRunning: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    private CompletableFuture<MutableObservableValue<Boolean>> isStartupRunning(Project project) {
+        return BspConfigurationTrackerService.getInstanceAsync(project).thenApply(BspConfigurationTrackerService::getIsRunning);
+    }
 }

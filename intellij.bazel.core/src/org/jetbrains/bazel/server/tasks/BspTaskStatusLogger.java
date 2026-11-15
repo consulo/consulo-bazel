@@ -1,64 +1,101 @@
-package org.jetbrains.bazel.server.tasks
+package org.jetbrains.bazel.server.tasks;
 
-import com.intellij.build.events.impl.FailureResultImpl
-import kotlinx.coroutines.Deferred
-import org.jetbrains.bazel.commons.BazelStatus
-import org.jetbrains.bazel.config.BazelExtBundle
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.progress.TaskConsole
-import org.jetbrains.bsp.protocol.TaskId
-import java.util.concurrent.CancellationException
-import java.util.concurrent.TimeoutException
+import consulo.application.Application;
+import consulo.bazel.commons.localize.BazelExtLocalize;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.build.ui.event.BuildEventFactory;
+import org.jetbrains.bazel.commons.BazelStatus;
+import org.jetbrains.bazel.progress.TaskConsole;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-internal class BspTaskStatusLogger(
-  private val taskDeferred: Deferred<BazelStatus>,
-  private val bspBuildConsole: TaskConsole,
-  private val taskId: TaskId,
-) {
-  suspend fun getStatus(): BazelStatus =
-    taskDeferred
-      .also { it.invokeOnCompletion { throwable -> catchBuildErrors(throwable) } }
-      .await()
-      .also { finishBuildConsoleTaskWithProperResult(it, bspBuildConsole) }
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
-  private fun finishBuildConsoleTaskWithProperResult(
-    status: BazelStatus,
-    bspBuildConsole: TaskConsole,
-  ) = when (status) {
-    BazelStatus.SUCCESS -> bspBuildConsole.finishTask(taskId, BazelPluginBundle.message("console.task.status.ok"))
-    BazelStatus.CANCEL -> bspBuildConsole.finishTask(taskId, BazelPluginBundle.message("console.task.status.cancelled"))
-    else ->
-      bspBuildConsole.finishTask(
-        taskId,
-        BazelPluginBundle.message("console.task.status.error"),
-        FailureResultImpl(),
-      )
-  }
+class BspTaskStatusLogger {
+    private final CompletableFuture<BazelStatus> myTaskDeferred;
+    private final TaskConsole myBspBuildConsole;
+    private final TaskId myTaskId;
 
-  private fun catchBuildErrors(exception: Throwable?) {
-    if (exception == null) return
-    when (exception) {
-      is CancellationException -> {
-        bspBuildConsole.finishTask(
-          taskId,
-          BazelPluginBundle.message("console.task.exception.cancellation"),
-          FailureResultImpl(BazelExtBundle.message ("console.task.exception.cancellation.message")),
-        )
-      }
-      is TimeoutException -> {
-        bspBuildConsole.finishTask(
-          taskId,
-          BazelPluginBundle.message("console.task.exception.timed.out"),
-          FailureResultImpl(BazelExtBundle.message("console.task.exception.timeout.message")),
-        )
-      }
-      else -> {
-        bspBuildConsole.finishTask(
-          taskId,
-          BazelPluginBundle.message("console.task.exception.other"),
-          FailureResultImpl(exception),
-        )
-      }
+    BspTaskStatusLogger(
+        CompletableFuture<BazelStatus> taskDeferred,
+        TaskConsole bspBuildConsole,
+        TaskId taskId
+    ) {
+        myTaskDeferred = taskDeferred;
+        myBspBuildConsole = bspBuildConsole;
+        myTaskId = taskId;
     }
-  }
+
+    CompletableFuture<BazelStatus> getStatus() {
+        // consulo: upstream invokeOnCompletion { } + await()
+        myTaskDeferred.whenComplete((result, throwable) -> catchBuildErrors(unwrap(throwable)));
+        return myTaskDeferred.thenApply(it -> {
+            finishBuildConsoleTaskWithProperResult(it, myBspBuildConsole);
+            return it;
+        });
+    }
+
+    private void finishBuildConsoleTaskWithProperResult(
+        BazelStatus status,
+        TaskConsole bspBuildConsole
+    ) {
+        if (status == BazelStatus.SUCCESS) {
+            bspBuildConsole.finishTask(myTaskId, BazelPluginLocalize.consoleTaskStatusOk());
+        }
+        else if (status == BazelStatus.CANCEL) {
+            bspBuildConsole.finishTask(myTaskId, BazelPluginLocalize.consoleTaskStatusCancelled());
+        }
+        else {
+            bspBuildConsole.finishTask(
+                myTaskId,
+                BazelPluginLocalize.consoleTaskStatusError(),
+                buildEventFactory().newFailure().createResult()
+            );
+        }
+    }
+
+    private void catchBuildErrors(@Nullable Throwable exception) {
+        if (exception == null) {
+            return;
+        }
+        if (exception instanceof CancellationException) {
+            myBspBuildConsole.finishTask(
+                myTaskId,
+                BazelPluginLocalize.consoleTaskExceptionCancellation(),
+                buildEventFactory().newFailure().message(BazelExtLocalize.consoleTaskExceptionCancellationMessage()).createResult()
+            );
+        }
+        else if (exception instanceof TimeoutException) {
+            myBspBuildConsole.finishTask(
+                myTaskId,
+                BazelPluginLocalize.consoleTaskExceptionTimedOut(),
+                buildEventFactory().newFailure().message(BazelExtLocalize.consoleTaskExceptionTimeoutMessage()).createResult()
+            );
+        }
+        else {
+            myBspBuildConsole.finishTask(
+                myTaskId,
+                BazelPluginLocalize.consoleTaskExceptionOther(),
+                buildEventFactory().newFailure().error(exception).createResult()
+            );
+        }
+    }
+
+    // consulo: upstream FailureResultImpl(...)
+    private static BuildEventFactory buildEventFactory() {
+        return Application.get().getInstance(BuildEventFactory.class);
+    }
+
+    // consulo: futures wrap the failure of a dependent stage
+    private static @Nullable Throwable unwrap(@Nullable Throwable throwable) {
+        Throwable result = throwable;
+        while ((result instanceof CompletionException || result instanceof ExecutionException) && result.getCause() != null) {
+            result = result.getCause();
+        }
+        return result;
+    }
 }

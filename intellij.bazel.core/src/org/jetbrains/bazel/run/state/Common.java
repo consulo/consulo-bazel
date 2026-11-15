@@ -1,178 +1,292 @@
-package org.jetbrains.bazel.run.state
+package org.jetbrains.bazel.run.state;
 
-import com.intellij.configurationStore.Property
-import com.intellij.execution.ExecutionBundle
-import com.intellij.execution.configuration.EnvironmentVariablesData
-import com.intellij.execution.ui.CommandLinePanel
-import com.intellij.execution.ui.CommonParameterFragments
-import com.intellij.execution.ui.SettingsEditorFragment
-import com.intellij.ide.macro.MacrosDialog
-import com.intellij.openapi.components.BaseState
-import com.intellij.openapi.externalSystem.service.execution.configuration.addEnvironmentFragment
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.SettingsEditorFragmentContainer
-import com.intellij.openapi.externalSystem.service.ui.util.LabeledSettingsFragmentInfo
-import com.intellij.openapi.ui.ValidationInfo
-import com.intellij.ui.RawCommandLineEditor
-import com.intellij.ui.components.TextComponentEmptyText
-import com.intellij.util.xmlb.annotations.Tag
-import com.intellij.util.xmlb.annotations.XMap
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.execution.ui.CommandLinePanel;
+import consulo.bazel.execution.ui.CommonParameterFragments;
+import consulo.bazel.execution.ui.EnvironmentFragments;
+import consulo.bazel.execution.ui.LabeledSettingsFragmentInfo;
+import consulo.bazel.execution.ui.SettingsEditorFragment;
+import consulo.bazel.execution.ui.SettingsEditorFragmentContainer;
+import consulo.bazel.execution.ui.SettingsEditorLabeledComponent;
+import consulo.execution.configuration.EnvironmentVariablesData;
+import consulo.execution.localize.ExecutionLocalize;
+import consulo.execution.ui.awt.RawCommandLineEditor;
+import consulo.localize.LocalizeValue;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.awt.ValidationInfo;
+import consulo.util.xml.serializer.annotation.MapAnnotation;
+import consulo.util.xml.serializer.annotation.Property;
+import consulo.util.xml.serializer.annotation.Tag;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface HasEnv {
-  var env: EnvironmentVariablesDataOptions
-}
+import javax.swing.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-private val BazelRunConfiguration.envState: HasEnv?
-  get() = handler?.state as? HasEnv
-
-// Copied from org.jetbrains.plugins.terminal.EnvironmentVariablesDataOptions
-// We can't use it directly because it comes from a different plugin
-@Tag("")
-@ApiStatus.Internal
-class EnvironmentVariablesDataOptions : BaseState() {
-  // user order of env must be preserved - do not sort user input
-  @Property(description = "Environment variables")
-  @get:XMap(entryTagName = "env", keyAttributeName = "key")
-  val envs by linkedMap<String, String>()
-
-  var isPassParentEnvs by property(true)
-
-  fun set(envData: EnvironmentVariablesData) {
-    envs.clear()
-    envs.putAll(envData.envs)
-    isPassParentEnvs = envData.isPassParentEnvs
-    incrementModificationCount()
-  }
-
-  fun get(): EnvironmentVariablesData = EnvironmentVariablesData.create(envs, isPassParentEnvs)
-}
-
-@ApiStatus.Internal
-fun SettingsEditorFragmentContainer<BazelRunConfiguration>.addEnvironmentFragment() =
-  addEnvironmentFragment(
-    object : LabeledSettingsFragmentInfo {
-      override val editorLabel: String = ExecutionBundle.message("environment.variables.component.title")
-      override val settingsId: String = "external.system.environment.variables.fragment"
-      override val settingsName: String = ExecutionBundle.message("environment.variables.fragment.name")
-      override val settingsGroup: String = ExecutionBundle.message("group.operating.system")
-      override val settingsHint: String = ExecutionBundle.message("environment.variables.fragment.hint")
-      override val settingsActionHint: String =
-        ExecutionBundle.message("set.custom.environment.variables.for.the.process")
-    },
-    { envState?.env?.envs.orEmpty() },
-    {
-      val env = envState?.env ?: return@addEnvironmentFragment
-      env.set(env.get().with(it))
-    },
-    { envState?.env?.isPassParentEnvs ?: false },
-    { envState?.env?.isPassParentEnvs = it },
-    hideWhenEmpty = false,
-  ).apply {
-    setValidation { configuration ->
-      // When running via --script_path (instead of bazel run), we only pass envs to the program itself, not to Bazel:
-      // bazel run --script_path=foo //foo && export FOO=BAR ./foo
-      if (configuration.envState?.env?.envs?.isNotEmpty() == true && configuration.handler?.state?.let { it is HasRunWithBazel && it.runWithBazel } != false) {
-        listOf(ValidationInfo(BazelPluginBundle.message("runconfig.bazel.warnings.env.vars"), editorComponent).asWarning())
-      }
-      else {
-        emptyList()
-      }
+// consulo: upstream Kotlin top-level declarations of Common.kt; public interfaces and classes are nested here
+public final class Common {
+    private Common() {
     }
-  }
 
-@ApiStatus.Internal
-interface HasProgramArguments {
-  var programArguments: String?
-}
+    public interface HasEnv {
+        EnvironmentVariablesDataOptions getEnv();
 
-private val BazelRunConfiguration.programArgumentsState: HasProgramArguments?
-  get() = handler?.state as? HasProgramArguments
-
-@ApiStatus.Internal
-fun programArgumentsFragment(): SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> {
-  val programArguments = RawCommandLineEditor()
-  CommandLinePanel.setMinimumWidth(programArguments, 400)
-  val message = ExecutionBundle.message("run.configuration.program.parameters.placeholder")
-  programArguments.editorField.emptyText.text = message
-  programArguments.editorField.accessibleContext.accessibleName = message
-  TextComponentEmptyText.setupPlaceholderVisibility(programArguments.editorField)
-  CommonParameterFragments.setMonospaced(programArguments.textField)
-  MacrosDialog.addMacroSupport(
-    programArguments.editorField,
-    MacrosDialog.Filters.ALL,
-  ) { false }
-  val parameters: SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> =
-    SettingsEditorFragment(
-      "commandLineParameters",
-      ExecutionBundle.message("run.configuration.program.parameters.name"),
-      null,
-      programArguments,
-      100,
-      { configuration, component ->
-        component.text = configuration.programArgumentsState?.programArguments
-      },
-      { configuration, component ->
-        configuration.programArgumentsState?.programArguments = component.text
-      },
-      { true },
-    )
-  parameters.isRemovable = false
-  parameters.setEditorGetter { editor: RawCommandLineEditor -> editor.editorField }
-  parameters.setHint(ExecutionBundle.message("run.configuration.program.parameters.hint"))
-
-  return parameters
-}
-
-@ApiStatus.Internal
-interface HasBazelParams {
-  var additionalBazelParams: String?
-}
-
-private val BazelRunConfiguration.bazelParamsState: HasBazelParams?
-  get() = handler?.state as? HasBazelParams
-
-@ApiStatus.Internal
-fun bazelParamsFragment(): SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> {
-  val bazelParams = RawCommandLineEditor()
-  CommandLinePanel.setMinimumWidth(bazelParams, 400)
-  val message = BazelPluginBundle.message("runconfig.bazel.flags")
-  bazelParams.editorField.emptyText.text = message
-  bazelParams.editorField.accessibleContext.accessibleName = message
-  TextComponentEmptyText.setupPlaceholderVisibility(bazelParams.editorField)
-  CommonParameterFragments.setMonospaced(bazelParams.textField)
-  MacrosDialog.addMacroSupport(
-    bazelParams.editorField,
-    MacrosDialog.Filters.ALL,
-  ) { false }
-  val parameters: SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> =
-    SettingsEditorFragment(
-      "bazelParameters",
-      BazelPluginBundle.message("runconfig.bazel.flags"),
-      null,
-      bazelParams,
-      100,
-      { configuration, component ->
-        component.text = configuration.bazelParamsState?.additionalBazelParams ?: ""
-      },
-      { configuration, component ->
-        configuration.bazelParamsState?.additionalBazelParams = component.text
-      },
-      { true },
-    )
-  parameters.isRemovable = false
-  parameters.setEditorGetter { editor: RawCommandLineEditor -> editor.editorField }
-  parameters.setHint(BazelPluginBundle.message("runconfig.bazel.flags"))
-  parameters.setValidation { configuration ->
-    if (configuration.bazelParamsState?.additionalBazelParams?.isNotEmpty() == true) {
-      listOf(ValidationInfo(BazelPluginBundle.message("runconfig.bazel.warnings.bazel.flags"), bazelParams.editorField).asWarning())
+        void setEnv(EnvironmentVariablesDataOptions env);
     }
-    else {
-      emptyList()
-    }
-  }
 
-  return parameters
+    private static @Nullable HasEnv getEnvState(BazelRunConfiguration receiver) {
+        BazelRunHandler handler = receiver.getHandler();
+        return handler != null && handler.getState() instanceof HasEnv hasEnv ? hasEnv : null;
+    }
+
+    // Copied from org.jetbrains.plugins.terminal.EnvironmentVariablesDataOptions
+    // We can't use it directly because it comes from a different plugin
+    // consulo: upstream is a BaseState, here a plain bean for XmlSerializer
+    @Tag("")
+    public static class EnvironmentVariablesDataOptions {
+        private Map<String, String> myEnvs = new LinkedHashMap<>();
+
+        private boolean myPassParentEnvs = true;
+
+        // user order of env must be preserved - do not sort user input
+        // consulo: upstream @com.intellij.configurationStore.Property(description = "Environment variables") has no Consulo counterpart
+        @Property(surroundWithTag = false)
+        @MapAnnotation(
+            surroundWithTag = false,
+            surroundKeyWithTag = false,
+            surroundValueWithTag = false,
+            entryTagName = "env",
+            keyAttributeName = "key",
+            sortBeforeSave = false
+        )
+        public Map<String, String> getEnvs() {
+            return myEnvs;
+        }
+
+        // consulo: setter for XmlSerializer (upstream property is read-only)
+        public void setEnvs(Map<String, String> envs) {
+            myEnvs = new LinkedHashMap<>(envs);
+        }
+
+        public boolean isPassParentEnvs() {
+            return myPassParentEnvs;
+        }
+
+        public void setPassParentEnvs(boolean passParentEnvs) {
+            myPassParentEnvs = passParentEnvs;
+        }
+
+        public void set(EnvironmentVariablesData envData) {
+            myEnvs.clear();
+            myEnvs.putAll(envData.getEnvs());
+            setPassParentEnvs(envData.isPassParentEnvs());
+            // consulo: BaseState.incrementModificationCount() has no counterpart in a plain bean
+        }
+
+        public EnvironmentVariablesData get() {
+            return EnvironmentVariablesData.create(myEnvs, isPassParentEnvs());
+        }
+    }
+
+    @RequiredUIAccess
+    public static SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JComponent>> addEnvironmentFragment(
+        SettingsEditorFragmentContainer<BazelRunConfiguration> receiver
+    ) {
+        SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JComponent>> fragment =
+            EnvironmentFragments.addEnvironmentFragment(
+                receiver,
+                new LabeledSettingsFragmentInfo() {
+                    @Override
+                    public LocalizeValue getEditorLabel() {
+                        return ExecutionLocalize.environmentVariablesComponentTitle();
+                    }
+
+                    @Override
+                    public String getSettingsId() {
+                        return "external.system.environment.variables.fragment";
+                    }
+
+                    @Override
+                    public LocalizeValue getSettingsName() {
+                        // consulo: ExecutionBundle environment.variables.fragment.name
+                        return ExecutionLocalize.runConfigurationFragmentEnvironment();
+                    }
+
+                    @Override
+                    public LocalizeValue getSettingsGroup() {
+                        // consulo: ExecutionBundle group.operating.system
+                        return ExecutionLocalize.runConfigurationFragmentGroupOperatingSystem();
+                    }
+
+                    @Override
+                    public LocalizeValue getSettingsHint() {
+                        // consulo: ExecutionBundle environment.variables.fragment.hint is missing in ExecutionLocalize
+                        return LocalizeValue.localizeTODO("Separate variables with semicolon: VAR=value; VAR1=value1");
+                    }
+
+                    @Override
+                    public LocalizeValue getSettingsActionHint() {
+                        // consulo: ExecutionBundle set.custom.environment.variables.for.the.process is missing in ExecutionLocalize
+                        return LocalizeValue.localizeTODO("Set custom environment variables for the process");
+                    }
+                },
+                it -> {
+                    HasEnv envState = getEnvState(it);
+                    return envState == null ? Map.of() : envState.getEnv().getEnvs();
+                },
+                (it, envs) -> {
+                    HasEnv envState = getEnvState(it);
+                    if (envState == null) {
+                        return;
+                    }
+                    EnvironmentVariablesDataOptions env = envState.getEnv();
+                    env.set(env.get().with(envs));
+                },
+                it -> {
+                    HasEnv envState = getEnvState(it);
+                    return envState != null && envState.getEnv().isPassParentEnvs();
+                },
+                (it, passParentEnvs) -> {
+                    HasEnv envState = getEnvState(it);
+                    if (envState != null) {
+                        envState.getEnv().setPassParentEnvs(passParentEnvs);
+                    }
+                },
+                /* hideWhenEmpty = */ false
+            );
+        fragment.setValidation(configuration -> {
+            // When running via --script_path (instead of bazel run), we only pass envs to the program itself, not to Bazel:
+            // bazel run --script_path=foo //foo && export FOO=BAR ./foo
+            HasEnv envState = getEnvState(configuration);
+            BazelRunHandler handler = configuration.getHandler();
+            if (envState != null && !envState.getEnv().getEnvs().isEmpty()
+                && (handler == null
+                || handler.getState() instanceof RunWithBazel.HasRunWithBazel hasRunWithBazel && hasRunWithBazel.getRunWithBazel())) {
+                return List.of(
+                    new ValidationInfo(BazelPluginLocalize.runconfigBazelWarningsEnvVars(), fragment.getEditorComponent()).asWarning()
+                );
+            }
+            else {
+                return List.of();
+            }
+        });
+        return fragment;
+    }
+
+    public interface HasProgramArguments {
+        @Nullable String getProgramArguments();
+
+        void setProgramArguments(@Nullable String programArguments);
+    }
+
+    private static @Nullable HasProgramArguments getProgramArgumentsState(BazelRunConfiguration receiver) {
+        BazelRunHandler handler = receiver.getHandler();
+        return handler != null && handler.getState() instanceof HasProgramArguments hasProgramArguments ? hasProgramArguments : null;
+    }
+
+    public static SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> programArgumentsFragment() {
+        RawCommandLineEditor programArguments = new RawCommandLineEditor();
+        CommandLinePanel.setMinimumWidth(programArguments, 400);
+        // consulo: ExecutionBundle run.configuration.program.parameters.placeholder ("Program arguments")
+        LocalizeValue message = ExecutionLocalize.runConfigurationFragmentProgramParameters();
+        // TODO consulo: RawCommandLineEditor has no editor field with an empty text (placeholder)
+        // programArguments.editorField.emptyText.text = message
+        programArguments.getTextField().getAccessibleContext().setAccessibleName(message.get());
+        // TODO consulo: TextComponentEmptyText.setupPlaceholderVisibility(programArguments.editorField)
+        CommonParameterFragments.setMonospaced(programArguments.getTextField());
+        // TODO consulo: MacrosDialog.addMacroSupport(programArguments.editorField, MacrosDialog.Filters.ALL) { false } - MacrosDialog
+        //  is not an API in Consulo
+        SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> parameters =
+            new SettingsEditorFragment<>(
+                "commandLineParameters",
+                // consulo: ExecutionBundle run.configuration.program.parameters.name
+                ExecutionLocalize.runConfigurationFragmentProgramParameters(),
+                null,
+                programArguments,
+                100,
+                (configuration, component) -> {
+                    HasProgramArguments state = getProgramArgumentsState(configuration);
+                    component.setText(state == null ? null : state.getProgramArguments());
+                },
+                (configuration, component) -> {
+                    HasProgramArguments state = getProgramArgumentsState(configuration);
+                    if (state != null) {
+                        state.setProgramArguments(component.getText());
+                    }
+                },
+                configuration -> true
+            );
+        parameters.setRemovable(false);
+        // consulo: RawCommandLineEditor has no getEditorField(), the text field is the editor
+        parameters.setEditorGetter((RawCommandLineEditor editor) -> editor.getTextField());
+        // consulo: ExecutionBundle run.configuration.program.parameters.hint is missing in ExecutionLocalize
+        parameters.setHint(LocalizeValue.localizeTODO("CLI arguments to your application"));
+
+        return parameters;
+    }
+
+    public interface HasBazelParams {
+        @Nullable String getAdditionalBazelParams();
+
+        void setAdditionalBazelParams(@Nullable String additionalBazelParams);
+    }
+
+    private static @Nullable HasBazelParams getBazelParamsState(BazelRunConfiguration receiver) {
+        BazelRunHandler handler = receiver.getHandler();
+        return handler != null && handler.getState() instanceof HasBazelParams hasBazelParams ? hasBazelParams : null;
+    }
+
+    public static SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> bazelParamsFragment() {
+        RawCommandLineEditor bazelParams = new RawCommandLineEditor();
+        CommandLinePanel.setMinimumWidth(bazelParams, 400);
+        LocalizeValue message = BazelPluginLocalize.runconfigBazelFlags();
+        // TODO consulo: RawCommandLineEditor has no editor field with an empty text (placeholder)
+        // bazelParams.editorField.emptyText.text = message
+        bazelParams.getTextField().getAccessibleContext().setAccessibleName(message.get());
+        // TODO consulo: TextComponentEmptyText.setupPlaceholderVisibility(bazelParams.editorField)
+        CommonParameterFragments.setMonospaced(bazelParams.getTextField());
+        // TODO consulo: MacrosDialog.addMacroSupport(bazelParams.editorField, MacrosDialog.Filters.ALL) { false } - MacrosDialog
+        //  is not an API in Consulo
+        SettingsEditorFragment<BazelRunConfiguration, RawCommandLineEditor> parameters =
+            new SettingsEditorFragment<>(
+                "bazelParameters",
+                BazelPluginLocalize.runconfigBazelFlags(),
+                null,
+                bazelParams,
+                100,
+                (configuration, component) -> {
+                    HasBazelParams state = getBazelParamsState(configuration);
+                    String additionalBazelParams = state == null ? null : state.getAdditionalBazelParams();
+                    component.setText(additionalBazelParams == null ? "" : additionalBazelParams);
+                },
+                (configuration, component) -> {
+                    HasBazelParams state = getBazelParamsState(configuration);
+                    if (state != null) {
+                        state.setAdditionalBazelParams(component.getText());
+                    }
+                },
+                configuration -> true
+            );
+        parameters.setRemovable(false);
+        // consulo: RawCommandLineEditor has no getEditorField(), the text field is the editor
+        parameters.setEditorGetter((RawCommandLineEditor editor) -> editor.getTextField());
+        parameters.setHint(BazelPluginLocalize.runconfigBazelFlags());
+        parameters.setValidation(configuration -> {
+            HasBazelParams state = getBazelParamsState(configuration);
+            String additionalBazelParams = state == null ? null : state.getAdditionalBazelParams();
+            if (additionalBazelParams != null && !additionalBazelParams.isEmpty()) {
+                return List.of(
+                    new ValidationInfo(BazelPluginLocalize.runconfigBazelWarningsBazelFlags(), bazelParams.getTextField()).asWarning()
+                );
+            }
+            else {
+                return List.of();
+            }
+        });
+
+        return parameters;
+    }
 }

@@ -90,6 +90,19 @@ public class BazelProjectModelService implements PersistentStateComponent<BazelP
         return data == null ? null : type.cast(data.get(type));
     }
 
+    /**
+     * Replaces one project-level data value outside a sync (upstream modifies the custom workspace entity with
+     * {@code WorkspaceModel.update}).
+     * <p>
+     * TODO consulo: Consulo has no public API to fire a roots change, so file index contributors and exclude policies
+     * reading this data see the new value on the next roots change
+     */
+    public synchronized <T> void putProjectData(Class<T> type, T data) {
+        Map<Class<?>, Object> copy = new HashMap<>(myProjectData);
+        copy.put(type, data);
+        myProjectData = Map.copyOf(copy);
+    }
+
     void update(
         Collection<String> modules,
         Collection<String> libraries,

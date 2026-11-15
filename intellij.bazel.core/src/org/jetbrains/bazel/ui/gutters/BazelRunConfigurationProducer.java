@@ -1,127 +1,240 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.execution.actions.ConfigurationContext
-import com.intellij.execution.actions.LazyRunConfigurationProducer
-import com.intellij.execution.configurations.ConfigurationFactory
-import com.intellij.openapi.util.Ref
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.starlark.repomapping.toShortString
-import org.jetbrains.bazel.run.BazelRunConfigurationState
-import org.jetbrains.bazel.run.RunHandlerProvider
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.config.bazelRunConfigurationFactory
-import org.jetbrains.bazel.run.state.HasEnv
-import org.jetbrains.bazel.run.state.HasProgramArguments
-import org.jetbrains.bazel.run.state.HasTestFilter
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.id
+import consulo.application.dumb.DumbAware;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.action.ConfigurationContext;
+import consulo.execution.action.RunConfigurationProducer;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.configuration.RunConfigurationExtensionsManager;
+import consulo.language.psi.PsiElement;
+import consulo.util.lang.ref.SimpleReference;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jetbrains.bazel.run.BazelRunConfigurationState;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.RunHandlerProvider;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
+import org.jetbrains.bazel.run.state.Common.HasEnv;
+import org.jetbrains.bazel.run.state.Common.HasProgramArguments;
+import org.jetbrains.bazel.run.state.Test.HasTestFilter;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jspecify.annotations.Nullable;
 
-abstract class BazelRunConfigurationProducer : LazyRunConfigurationProducer<BazelRunConfiguration>() {
-  override fun isDumbAware(): Boolean = true
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
-  override fun getConfigurationFactory(): ConfigurationFactory = bazelRunConfigurationFactory
-
-  @ApiStatus.Internal
-  override fun setupConfigurationFromContext(
-    configuration: BazelRunConfiguration,
-    context: ConfigurationContext,
-    sourceElement: Ref<PsiElement>,
-  ): Boolean {
-    val location = context.location as? BazelRunLocation ?: return false
-    val target = location.target
-    if (!acceptsTarget(target)) return false
-    val element = location.originalLocation.psiElement
-    val gutterAction = getGutterAction(element, target) ?: return false
-    configuration.updateTargets(listOf(target.id), RunHandlerProvider.getRunHandlerProvider(context.project, listOf(target)))
-    configuration.handler?.state?.let { gutterAction.applyTo(it) } ?: return false
-    configuration.handler?.extensionsManager?.extendCreatedConfiguration(configuration, location)
-    val targetName = target.id.toShortString(context.project)
-    configuration.name = gutterAction.additionalLocationString?.let {
-      BazelPluginBundle.message(
-        "runconfig.name.and.location",
-        targetName,
-        gutterAction.additionalLocationString,
-      )
-    } ?: targetName
-    return true
-  }
-
-  @ApiStatus.Internal
-  override fun isConfigurationFromContext(configuration: BazelRunConfiguration, context: ConfigurationContext): Boolean {
-    val location = context.location as? BazelRunLocation ?: return false
-    val target = location.target
-    if (!acceptsTarget(target)) return false
-    if (configuration.targets != listOf(target.id)) return false
-    val element = location.originalLocation.psiElement
-    val gutterAction = getGutterAction(element, target) ?: return false
-    return configuration.handler?.state?.let { gutterAction.isFromContext(it) } ?: false
-  }
-
-  abstract fun getGutterAction(
-    element: PsiElement,
-    target: BuildTarget,
-  ): GutterAction?
-
-  protected fun acceptsTarget(target: BuildTarget): Boolean =
-    target.kind.isExecutable
-
-  class GutterAction(
-    val testFilter: String? = null,
-    val programArguments: List<String> = emptyList(),
-    val env: Map<String, String> = emptyMap(),
-    val additionalLocationString: String? = null,
-  ) {
-    @ApiStatus.Internal
-    fun applyTo(state: BazelRunConfigurationState<*>) {
-      (state as? HasTestFilter)?.testFilter = testFilter
-      (state as? HasProgramArguments)?.programArguments = formatProgramArguments(programArguments)
-      (state as? HasEnv)?.env?.envs?.putAll(env)
+// consulo: LazyRunConfigurationProducer -> RunConfigurationProducer (the factory is passed to the constructor);
+//   upstream isDumbAware() = true -> DumbAware
+public abstract class BazelRunConfigurationProducer extends RunConfigurationProducer<BazelRunConfiguration> implements DumbAware {
+    protected BazelRunConfigurationProducer() {
+        super(BazelRunConfigurationType.getBazelRunConfigurationFactory());
     }
 
-    @ApiStatus.Internal
-    fun isFromContext(state: BazelRunConfigurationState<*>): Boolean {
-      (state as? HasTestFilter)?.let { if (testFilter != it.testFilter) return false }
-      (state as? HasProgramArguments)?.let { if (formatProgramArguments(programArguments) != it.programArguments) return false }
-      (state as? HasEnv)?.env?.let { if (it.envs + env != it.envs) return false }
-      return true
+    @Override
+    public ConfigurationFactory getConfigurationFactory() {
+        return BazelRunConfigurationType.getBazelRunConfigurationFactory();
     }
 
-    private fun formatProgramArguments(arguments: List<String>): String? =
-      arguments.joinToString(" ") { argument ->
-        val escaped = argument.replace("\"", "\\\"")
-        "\"$escaped\""
-      }.takeIf { it.isNotEmpty() }
-
-    override fun equals(other: Any?): Boolean {
-      if (this === other) return true
-      if (javaClass != other?.javaClass) return false
-
-      other as GutterAction
-
-      if (testFilter != other.testFilter) return false
-      if (programArguments != other.programArguments) return false
-      if (env != other.env) return false
-      if (additionalLocationString != other.additionalLocationString) return false
-
-      return true
+    @Override
+    protected boolean setupConfigurationFromContext(
+        BazelRunConfiguration configuration,
+        ConfigurationContext context,
+        SimpleReference<PsiElement> sourceElement
+    ) {
+        if (!(context.getLocation() instanceof BazelRunLocation location)) {
+            return false;
+        }
+        BuildTarget target = location.getTarget();
+        if (!acceptsTarget(target)) {
+            return false;
+        }
+        PsiElement element = location.getOriginalLocation().getPsiElement();
+        GutterAction gutterAction = getGutterAction(element, target);
+        if (gutterAction == null) {
+            return false;
+        }
+        configuration.updateTargets(List.of(BuildTarget.getId(target)), RunHandlerProvider.getRunHandlerProvider(context.getProject(), List.of(target)));
+        BazelRunHandler handler = configuration.getHandler();
+        if (handler == null) {
+            return false;
+        }
+        gutterAction.applyTo(handler.getState());
+        RunConfigurationExtensionsManager<? super RunConfigurationBase, ?> extensionsManager = handler.getExtensionsManager();
+        if (extensionsManager != null) {
+            extensionsManager.extendCreatedConfiguration(configuration, location);
+        }
+        String targetName = BazelRepoMappingUtils.toShortString(BuildTarget.getId(target), context.getProject());
+        String additionalLocationString = gutterAction.getAdditionalLocationString();
+        configuration.setName(
+            additionalLocationString != null
+                ? BazelPluginLocalize.runconfigNameAndLocation(
+                    targetName,
+                    additionalLocationString
+                ).get()
+                : targetName
+        );
+        return true;
     }
 
-    override fun hashCode(): Int {
-      var result = testFilter.hashCode()
-      result = 31 * result + programArguments.hashCode()
-      result = 31 * result + env.hashCode()
-      result = 31 * result + additionalLocationString.hashCode()
-      return result
+    @Override
+    public boolean isConfigurationFromContext(BazelRunConfiguration configuration, ConfigurationContext context) {
+        if (!(context.getLocation() instanceof BazelRunLocation location)) {
+            return false;
+        }
+        BuildTarget target = location.getTarget();
+        if (!acceptsTarget(target)) {
+            return false;
+        }
+        if (!configuration.getTargets().equals(List.of(BuildTarget.getId(target)))) {
+            return false;
+        }
+        PsiElement element = location.getOriginalLocation().getPsiElement();
+        GutterAction gutterAction = getGutterAction(element, target);
+        if (gutterAction == null) {
+            return false;
+        }
+        BazelRunHandler handler = configuration.getHandler();
+        return handler != null && gutterAction.isFromContext(handler.getState());
     }
 
-    @ApiStatus.Internal
-    fun copy(
-      testFilter: String? = this.testFilter,
-      programArguments: List<String> = this.programArguments,
-      env: Map<String, String> = this.env,
-      additionalLocationString: String? = this.additionalLocationString,
-    ): GutterAction = GutterAction(testFilter, programArguments, env, additionalLocationString)
-  }
+    public abstract @Nullable GutterAction getGutterAction(
+        PsiElement element,
+        BuildTarget target
+    );
+
+    protected boolean acceptsTarget(BuildTarget target) {
+        return target.getKind().isExecutable();
+    }
+
+    public static class GutterAction {
+        private final @Nullable String myTestFilter;
+        private final List<String> myProgramArguments;
+        private final Map<String, String> myEnv;
+        private final @Nullable String myAdditionalLocationString;
+
+        // consulo: overload for the upstream default arguments
+        public GutterAction() {
+            this(null, List.of(), Map.of(), null);
+        }
+
+        public GutterAction(
+            @Nullable String testFilter,
+            List<String> programArguments,
+            Map<String, String> env,
+            @Nullable String additionalLocationString
+        ) {
+            myTestFilter = testFilter;
+            myProgramArguments = programArguments;
+            myEnv = env;
+            myAdditionalLocationString = additionalLocationString;
+        }
+
+        public @Nullable String getTestFilter() {
+            return myTestFilter;
+        }
+
+        public List<String> getProgramArguments() {
+            return myProgramArguments;
+        }
+
+        public Map<String, String> getEnv() {
+            return myEnv;
+        }
+
+        public @Nullable String getAdditionalLocationString() {
+            return myAdditionalLocationString;
+        }
+
+        public void applyTo(BazelRunConfigurationState<?> state) {
+            if (state instanceof HasTestFilter hasTestFilter) {
+                hasTestFilter.setTestFilter(myTestFilter);
+            }
+            if (state instanceof HasProgramArguments hasProgramArguments) {
+                hasProgramArguments.setProgramArguments(formatProgramArguments(myProgramArguments));
+            }
+            if (state instanceof HasEnv hasEnv) {
+                hasEnv.getEnv().getEnvs().putAll(myEnv);
+            }
+        }
+
+        public boolean isFromContext(BazelRunConfigurationState<?> state) {
+            if (state instanceof HasTestFilter it) {
+                if (!Objects.equals(myTestFilter, it.getTestFilter())) {
+                    return false;
+                }
+            }
+            if (state instanceof HasProgramArguments it) {
+                if (!Objects.equals(formatProgramArguments(myProgramArguments), it.getProgramArguments())) {
+                    return false;
+                }
+            }
+            if (state instanceof HasEnv hasEnv) {
+                Map<String, String> envs = hasEnv.getEnv().getEnvs();
+                Map<String, String> merged = new HashMap<>(envs);
+                merged.putAll(myEnv);
+                if (!merged.equals(envs)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static @Nullable String formatProgramArguments(List<String> arguments) {
+            String result = arguments.stream().map(argument -> {
+                String escaped = argument.replace("\"", "\\\"");
+                return "\"" + escaped + "\"";
+            }).collect(Collectors.joining(" "));
+            return result.isEmpty() ? null : result;
+        }
+
+        @Override
+        public boolean equals(@Nullable Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+
+            GutterAction that = (GutterAction) other;
+
+            if (!Objects.equals(myTestFilter, that.myTestFilter)) {
+                return false;
+            }
+            if (!myProgramArguments.equals(that.myProgramArguments)) {
+                return false;
+            }
+            if (!myEnv.equals(that.myEnv)) {
+                return false;
+            }
+            if (!Objects.equals(myAdditionalLocationString, that.myAdditionalLocationString)) {
+                return false;
+            }
+
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = Objects.hashCode(myTestFilter);
+            result = 31 * result + myProgramArguments.hashCode();
+            result = 31 * result + myEnv.hashCode();
+            result = 31 * result + Objects.hashCode(myAdditionalLocationString);
+            return result;
+        }
+
+        // consulo: upstream copy() has default arguments, Java callers pass every value
+        public GutterAction copy(
+            @Nullable String testFilter,
+            List<String> programArguments,
+            Map<String, String> env,
+            @Nullable String additionalLocationString
+        ) {
+            return new GutterAction(testFilter, programArguments, env, additionalLocationString);
+        }
+    }
 }

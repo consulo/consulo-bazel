@@ -1,24 +1,36 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.utils
+package org.jetbrains.bazel.ui.widgets.tool.window.utils;
 
-import com.intellij.openapi.actionSystem.CustomShortcutSet
-import java.awt.event.ActionEvent
-import java.awt.event.KeyEvent
-import javax.swing.KeyStroke
+import consulo.ui.ex.action.CustomShortcutSet;
+
+import consulo.ui.event.details.KeyCode;
+import consulo.ui.event.details.KeyStroke;
+import consulo.ui.event.details.ModifiedInputDetails.Modifier;
 
 /**
  * Custom keyboard shortcuts for BSP plugin's UI.
- * If a shortcut is present in [com.intellij.openapi.actionSystem.CommonShortcuts], it does not have to be defined here
+ * If a shortcut is present in {@link consulo.ui.ex.action.CommonShortcuts}, it does not have to be defined here
  */
-internal object BspShortcuts {
-  /** Toggle case-sensitivity in target search */
-  val matchCase = CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_C, ActionEvent.ALT_MASK))
+public final class BspShortcuts {
+    private BspShortcuts() {
+    }
 
-  /** Toggle regex mode in target search */
-  val regexMode = CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_X, ActionEvent.ALT_MASK))
+    /**
+     * Toggle case-sensitivity in target search
+     */
+    public static final CustomShortcutSet matchCase = new CustomShortcutSet(KeyStroke.pressed(KeyCode.C, Modifier.ALT));
 
-  /** Switch focus from the searchbar, down to the tree/list of targets */
-  val fromSearchBarToTargets = CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0))
+    /**
+     * Toggle regex mode in target search
+     */
+    public static final CustomShortcutSet regexMode = new CustomShortcutSet(KeyStroke.pressed(KeyCode.X, Modifier.ALT));
 
-  /** Open context menu for the selected target */
-  val openTargetContextMenu = CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0))
+    /**
+     * Switch focus from the searchbar, down to the tree/list of targets
+     */
+    public static final CustomShortcutSet fromSearchBarToTargets = new CustomShortcutSet(KeyStroke.pressed(KeyCode.DOWN));
+
+    /**
+     * Open context menu for the selected target
+     */
+    public static final CustomShortcutSet openTargetContextMenu = new CustomShortcutSet(KeyStroke.pressed(KeyCode.ENTER));
 }

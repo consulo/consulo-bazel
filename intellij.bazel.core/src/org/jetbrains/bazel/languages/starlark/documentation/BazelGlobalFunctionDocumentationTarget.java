@@ -1,52 +1,62 @@
-package org.jetbrains.bazel.languages.starlark.documentation
+package org.jetbrains.bazel.languages.starlark.documentation;
 
-import com.intellij.lang.documentation.QuickDocHighlightingHelper
-import com.intellij.model.Pointer
-import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
-import com.intellij.platform.backend.documentation.DocumentationResult
-import com.intellij.platform.backend.documentation.DocumentationTarget
-import com.intellij.platform.backend.presentation.TargetPresentation
-import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunction
-import org.jetbrains.bazel.languages.starlark.highlighting.StarlarkHighlightingColors
+import consulo.bazel.documentation.DocumentationResult;
+import consulo.bazel.documentation.DocumentationTarget;
+import consulo.codeEditor.DefaultLanguageHighlighterColors;
+import consulo.colorScheme.TextAttributesKey;
+import org.jetbrains.bazel.languages.starlark.bazel.BazelGlobalFunctions.BazelGlobalFunction;
+import org.jetbrains.bazel.languages.starlark.highlighting.StarlarkHighlightingColors;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("UnstableApiUsage")
-internal class BazelGlobalFunctionDocumentationTarget(symbol: BazelGlobalFunctionDocumentationSymbol) :
-  DocumentationTarget,
-  Pointer<BazelGlobalFunctionDocumentationTarget> {
-  val symbolPtr = symbol.createPointer()
+import java.util.Objects;
+import java.util.stream.Collectors;
 
-  override fun createPointer() = this
+public class BazelGlobalFunctionDocumentationTarget implements DocumentationTarget {
+    // consulo: upstream symbol.createPointer(), the symbol is its own pointer
+    private final BazelGlobalFunctionDocumentationSymbol mySymbolPtr;
 
-  override fun dereference(): BazelGlobalFunctionDocumentationTarget = symbolPtr.dereference().documentationTarget
-
-  override fun computePresentation(): TargetPresentation =
-    symbolPtr.dereference().run {
-      TargetPresentation.builder(function.name).presentation()
+    public BazelGlobalFunctionDocumentationTarget(BazelGlobalFunctionDocumentationSymbol symbol) {
+        mySymbolPtr = symbol;
     }
 
-  private fun computeFunctionDefinition(function: BazelGlobalFunction): String {
-    val functionName = QuickDocHighlightingHelper.getStyledFragment(function.name, StarlarkHighlightingColors.FUNCTION_DECLARATION)
-    val comma = QuickDocHighlightingHelper.getStyledFragment(", ", StarlarkHighlightingColors.COMMA)
-    val openParen = QuickDocHighlightingHelper.getStyledFragment("(", StarlarkHighlightingColors.PARENTHESES)
-    val closeParen = QuickDocHighlightingHelper.getStyledFragment(")", StarlarkHighlightingColors.PARENTHESES)
-    val params =
-      function.params.joinToString(comma) { param ->
-        val name = QuickDocHighlightingHelper.getStyledFragment(param.name, StarlarkHighlightingColors.NAMED_ARGUMENT)
-        if (param.defaultValue != null) {
-          val value = QuickDocHighlightingHelper.getStyledFragment(param.defaultValue, DefaultLanguageHighlighterColors.STRING)
-          "$name = $value"
-        } else {
-          name
-        }
-      }
-    return "$functionName$openParen$params$closeParen"
-  }
+    public BazelGlobalFunctionDocumentationSymbol getSymbolPtr() {
+        return mySymbolPtr;
+    }
 
-  @Suppress("HardCodedStringLiteral")
-  override fun computeDocumentation(): DocumentationResult? =
-    symbolPtr.dereference().run {
-      val functionDefinition = computeFunctionDefinition(function)
-      val html = function.doc ?: ""
-      DocumentationResult.documentation("<pre>$functionDefinition</pre><hr/>$html")
+    // consulo: createPointer(), dereference() and computePresentation() are dropped,
+    // pointer/presentation are not used by the classic documentation provider
+
+    private String computeFunctionDefinition(BazelGlobalFunction function) {
+        String functionName = getStyledFragment(function.name(), StarlarkHighlightingColors.FUNCTION_DECLARATION);
+        String comma = getStyledFragment(", ", StarlarkHighlightingColors.COMMA);
+        String openParen = getStyledFragment("(", StarlarkHighlightingColors.PARENTHESES);
+        String closeParen = getStyledFragment(")", StarlarkHighlightingColors.PARENTHESES);
+        String params =
+            function.params().stream().map(param -> {
+                String name = getStyledFragment(param.name(), StarlarkHighlightingColors.NAMED_ARGUMENT);
+                String defaultValue = param.defaultValue();
+                if (defaultValue != null) {
+                    String value = getStyledFragment(defaultValue, DefaultLanguageHighlighterColors.STRING);
+                    return name + " = " + value;
+                }
+                else {
+                    return name;
+                }
+            }).collect(Collectors.joining(comma));
+        return functionName + openParen + params + closeParen;
+    }
+
+    @Override
+    public @Nullable DocumentationResult computeDocumentation() {
+        BazelGlobalFunction function = mySymbolPtr.getFunction();
+        String functionDefinition = computeFunctionDefinition(function);
+        String html = Objects.requireNonNullElse(function.doc(), "");
+        return DocumentationResult.documentation("<pre>" + functionDefinition + "</pre><hr/>" + html);
+    }
+
+    // consulo: QuickDocHighlightingHelper.getStyledFragment(text, key) does not exist in Consulo,
+    // the function name is bold text and the other fragments are plain text
+    private static String getStyledFragment(String text, TextAttributesKey key) {
+        return key == StarlarkHighlightingColors.FUNCTION_DECLARATION ? "<b>" + text + "</b>" : text;
     }
 }

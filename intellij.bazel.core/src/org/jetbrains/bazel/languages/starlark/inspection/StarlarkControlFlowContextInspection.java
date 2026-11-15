@@ -1,44 +1,101 @@
-package org.jetbrains.bazel.languages.starlark.inspection
+package org.jetbrains.bazel.languages.starlark.inspection;
 
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import com.intellij.psi.util.parentOfType
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkBreakStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkContinueStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkForStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkReturnStatement
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkBreakStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkContinueStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkForStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkReturnStatement;
+import org.jspecify.annotations.Nullable;
 
 
-@ApiStatus.Internal
-class StarlarkControlFlowContextInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is StarlarkFileType
-
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = BreakContinueVisitor(holder)
-
-  class BreakContinueVisitor(private val holder: ProblemsHolder) : StarlarkElementVisitor() {
-    override fun visitBreakStatement(node: StarlarkBreakStatement) {
-      if (node.parentOfType<StarlarkForStatement>() == null) {
-        holder.registerProblem(node, StarlarkBundle.message("inspection.description.break.outside.for.loop"))
-      }
+@ExtensionImpl
+public class StarlarkControlFlowContextInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof StarlarkLanguage.StarlarkFileType;
     }
 
-    override fun visitContinueStatement(node: StarlarkContinueStatement) {
-      if (node.parentOfType<StarlarkForStatement>() == null) {
-        holder.registerProblem(node, StarlarkBundle.message("inspection.description.continue.outside.for.loop"))
-      }
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        return new BreakContinueVisitor(holder);
     }
 
-    override fun visitReturnStatement(node: StarlarkReturnStatement) {
-      if (node.parentOfType<StarlarkFunctionDeclaration>() == null) {
-        holder.registerProblem(node, StarlarkBundle.message("inspection.description.return.outside.function"))
-      }
+    public static class BreakContinueVisitor extends StarlarkElementVisitor {
+        private final ProblemsHolder myHolder;
+
+        public BreakContinueVisitor(ProblemsHolder holder) {
+            myHolder = holder;
+        }
+
+        @Override
+        public void visitBreakStatement(StarlarkBreakStatement node) {
+            if (PsiTreeUtil.getParentOfType(node, StarlarkForStatement.class, true) == null) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionBreakOutsideForLoop()).range(node).create();
+            }
+        }
+
+        @Override
+        public void visitContinueStatement(StarlarkContinueStatement node) {
+            if (PsiTreeUtil.getParentOfType(node, StarlarkForStatement.class, true) == null) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionContinueOutsideForLoop()).range(node).create();
+            }
+        }
+
+        @Override
+        public void visitReturnStatement(StarlarkReturnStatement node) {
+            if (PsiTreeUtil.getParentOfType(node, StarlarkFunctionDeclaration.class, true) == null) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionReturnOutsideFunction()).range(node).create();
+            }
+        }
     }
-  }
+
+    // consulo: registration attributes of <localInspection> in intellij.bazel.core.xml
+    @Override
+    public @Nullable Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    @Override
+    public String getShortName() {
+        return "StarlarkControlFlowContext";
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameStarlarkControlFlowContextCheck();
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.starlarkInspectionGroupName();
+    }
+
+    // consulo: upstream groupPath="Bazel"
+    @Override
+    public LocalizeValue[] getGroupPath() {
+        return new LocalizeValue[]{BazelPluginLocalize.bazelInspectionGroupName(), getGroupDisplayName()};
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }

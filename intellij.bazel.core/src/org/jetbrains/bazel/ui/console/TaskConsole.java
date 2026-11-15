@@ -1,463 +1,584 @@
-package org.jetbrains.bazel.ui.console
+package org.jetbrains.bazel.ui.console;
 
-import com.google.common.base.Throwables.getStackTraceAsString
-import com.intellij.build.BuildContentDescriptor
-import com.intellij.build.BuildProgressListener
-import com.intellij.build.DefaultBuildDescriptor
-import com.intellij.build.FilePosition
-import com.intellij.build.events.BuildEvent
-import com.intellij.build.events.EventResult
-import com.intellij.build.events.MessageEvent
-import com.intellij.build.events.OutputBuildEvent
-import com.intellij.build.events.StartBuildEvent
-import com.intellij.build.events.impl.FailureResultImpl
-import com.intellij.build.events.impl.FileMessageEventImpl
-import com.intellij.build.events.impl.FinishBuildEventImpl
-import com.intellij.build.events.impl.FinishEventImpl
-import com.intellij.build.events.impl.MessageEventImpl
-import com.intellij.build.events.impl.OutputBuildEventImpl
-import com.intellij.build.events.impl.ProgressBuildEventImpl
-import com.intellij.execution.ui.ConsoleView
-import com.intellij.execution.ui.ConsoleViewContentType
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.diagnostic.runAndLogException
-import com.intellij.openapi.project.DumbAwareAction
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
-import com.intellij.terminal.TerminalExecutionConsoleBuilder
-import com.jediterm.core.util.TermSize
-import com.jediterm.terminal.TtyConnector
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.action.SuspendableAction
-import org.jetbrains.bazel.config.BazelFeatureFlags
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.BazelPluginConstants
-import org.jetbrains.bazel.progress.ConsoleService
-import org.jetbrains.bazel.progress.ShowConsole
-import org.jetbrains.bazel.progress.TaskConsole
-import org.jetbrains.bazel.sync.status.SyncStatusListener
-import org.jetbrains.bazel.sync.status.isSyncInProgress
-import org.jetbrains.bsp.protocol.TaskId
-import java.nio.file.Path
+import consulo.application.Application;
+import consulo.bazel.core.BazelNotificationGroupContributor;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.build.ui.DefaultBuildDescriptor;
+import consulo.build.ui.FilePosition;
+import consulo.build.ui.event.BuildEvent;
+import consulo.build.ui.event.BuildEventFactory;
+import consulo.build.ui.event.EventResult;
+import consulo.build.ui.event.Failure;
+import consulo.build.ui.event.FailureResult;
+import consulo.build.ui.event.MessageEvent;
+import consulo.build.ui.event.StartBuildEvent;
+import consulo.build.ui.progress.BuildProgressListener;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.project.Project;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.action.AnAction;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.AnActionWithSyncUpdate;
+import consulo.ui.ex.action.DumbAwareAction;
+import org.jetbrains.bazel.action.SuspendableAction;
+import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.config.BazelPluginConstants;
+import org.jetbrains.bazel.progress.ConsoleService;
+import org.jetbrains.bazel.progress.ShowConsole;
+import org.jetbrains.bazel.sync.status.SyncStatusListener;
+import org.jetbrains.bazel.sync.status.SyncStatusService;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-abstract class BaseTaskConsole(
-  private val taskView: BuildProgressListener,
-  private val basePath: String,
-  private val project: Project,
-  private val usePty: Boolean = BazelFeatureFlags.usePty
-) : TaskConsole {
-  companion object {
-    private val log = logger<BaseTaskConsole>()
-  }
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
-  protected val tasksInProgress: MutableSet<TaskId> = mutableSetOf()
-  private val taskFailures: MutableMap<TaskId, MutableSet<Throwable>> = linkedMapOf()
-  private val subtaskParentMap: MutableMap<TaskId, TaskId> = linkedMapOf()
-  private val subtaskMessageMap: MutableMap<TaskId, String> = linkedMapOf()
+import static com.google.common.base.Throwables.getStackTraceAsString;
 
-  @Synchronized
-  override fun startTask(
-    taskId: TaskId,
-    title: String,
-    message: String,
-    cancelAction: () -> Unit,
-    redoAction: (suspend () -> Unit)?,
-    showConsole: ShowConsole,
-  ) {
-    if (tasksInProgress.add(taskId)) {
-      doStartTask(
-        taskId,
-        BazelPluginBundle.message("console.tasks.title", BazelPluginConstants.BAZEL_DISPLAY_NAME, title),
-        message,
-        cancelAction,
-        redoAction,
-        showConsole,
-      )
+// consulo: upstream file-level declarations of TaskConsole.kt
+public final class TaskConsole {
+    private TaskConsole() {
     }
-  }
 
-  private fun doStartTask(
-    taskId: TaskId,
-    title: String,
-    message: String,
-    cancelAction: () -> Unit,
-    redoAction: (suspend () -> Unit)?,
-    showConsole: ShowConsole,
-  ) {
-    val taskDescriptor = DefaultBuildDescriptor(taskId, taskId.taskGroupId, title, basePath, System.currentTimeMillis())
-    when (showConsole) {
-      ShowConsole.ALWAYS -> {
-        taskDescriptor.isActivateToolWindowWhenAdded = true
-        taskDescriptor.isActivateToolWindowWhenFailed = true
-      }
+    public abstract static class BaseTaskConsole implements org.jetbrains.bazel.progress.TaskConsole {
+        private static final Logger LOG = Logger.getInstance(BaseTaskConsole.class);
 
-      ShowConsole.ON_FAIL -> {
-        taskDescriptor.isActivateToolWindowWhenAdded = false
-        taskDescriptor.isActivateToolWindowWhenFailed = true
-      }
+        private final BuildProgressListener myTaskView;
+        private final String myBasePath;
+        private final Project myProject;
+        private final boolean myUsePty;
 
-      ShowConsole.NEVER -> {
-        taskDescriptor.isActivateToolWindowWhenAdded = false
-        taskDescriptor.isActivateToolWindowWhenFailed = false
-      }
-    }
-    addRedoActionToDescriptor(taskDescriptor, redoAction)
-    addCancelActionToDescriptor(taskId, taskDescriptor, cancelAction)
-    if (usePty)
-      addPtyToDescriptor(taskId, taskDescriptor)
-    val startEvent = StartBuildEvent.builder(message, taskDescriptor).build()
-    taskView.onEvent(taskId, startEvent)
-  }
+        protected final Set<TaskId> myTasksInProgress = new LinkedHashSet<>();
+        private final Map<TaskId, Set<Throwable>> myTaskFailures = new LinkedHashMap<>();
+        private final Map<TaskId, TaskId> mySubtaskParentMap = new LinkedHashMap<>();
+        private final Map<TaskId, LocalizeValue> mySubtaskMessageMap = new LinkedHashMap<>();
 
-  private fun addCancelActionToDescriptor(
-    taskId: TaskId,
-    taskDescriptor: DefaultBuildDescriptor,
-    doCancelAction: () -> Unit,
-  ) {
-    val cancelAction = CancelAction(doCancelAction, taskId)
-    taskDescriptor.withAction(cancelAction)
-  }
-
-  private fun addRedoActionToDescriptor(taskDescriptor: DefaultBuildDescriptor, redoAction: (suspend () -> Unit)? = null) {
-    val action = calculateRedoAction(redoAction)
-    taskDescriptor.withAction(action)
-  }
-
-  private fun addPtyToDescriptor(taskId: TaskId, taskDescriptor: DefaultBuildDescriptor) {
-    val consoleDelegate = log.runAndLogException {
-      TerminalExecutionConsoleBuilder(project).build()
-    } ?: return
-
-    val console = object : ConsoleView by consoleDelegate, BuildProgressListener {
-      override fun onEvent(buildId: Any, event: BuildEvent) {
-        if (event is OutputBuildEvent) {
-          consoleDelegate.print(event.message, ConsoleViewContentType.getConsoleViewType(event.outputType))
+        public BaseTaskConsole(
+            BuildProgressListener taskView,
+            String basePath,
+            Project project,
+            boolean usePty
+        ) {
+            myTaskView = taskView;
+            myBasePath = basePath;
+            myProject = project;
+            myUsePty = usePty;
         }
-      }
-    }
 
-    val contentDescriptor =
-      BuildContentDescriptor(console, null, consoleDelegate.component, null)
-    contentDescriptor.apply {
-      // copy values from taskDescriptor, where it had been set before already
-      isActivateToolWindowWhenAdded = taskDescriptor.isActivateToolWindowWhenAdded
-      isActivateToolWindowWhenFailed = taskDescriptor.isActivateToolWindowWhenFailed
-    }
-    Disposer.register(contentDescriptor, consoleDelegate)
-    Disposer.register(taskView as Disposable, contentDescriptor)
-
-    // TerminalExecutionConsoleBuilder expects a ProcessHandler, so we provide a stub because we handle process interaction in the server.
-    // See https://github.com/bazelbuild/intellij/pull/7001/files
-    val ttyConnector = object : TtyConnector, Disposable {
-      init {
-        Disposer.register(contentDescriptor, this)
-      }
-
-      private var connected: Boolean = true
-      override fun dispose() {
-        connected = false
-      }
-
-      override fun read(buf: CharArray?, offset: Int, length: Int): Int = 0
-      override fun write(bytes: ByteArray?) = Unit
-      override fun write(string: String?) = Unit
-      override fun isConnected(): Boolean = connected
-      override fun waitFor(): Int = 0
-      override fun ready(): Boolean = true
-      override fun getName(): String = ""
-      override fun close() = Unit
-      override fun resize(termSize: TermSize) = Unit
-    }
-
-    consoleDelegate.terminalWidget.createTerminalSession(ttyConnector)
-    consoleDelegate.terminalWidget.start()
-    taskDescriptor.withContentDescriptor { contentDescriptor }
-  }
-
-  protected abstract fun calculateRedoAction(redoAction: (suspend () -> Unit)?): AnAction
-
-  override fun hasTasksInProgress(): Boolean = tasksInProgress.isNotEmpty()
-
-  @Synchronized
-  override fun finishTask(
-    taskId: TaskId,
-    message: String,
-    result: EventResult,
-  ) {
-    if (tasksInProgress.contains(taskId)) {
-      doFinishTask(taskId, message, result)
-    }
-  }
-
-  private fun doFinishTask(
-    taskId: TaskId,
-    message: String,
-    result: EventResult,
-  ) {
-    if (result is FailureResultImpl) {
-      result.failures.forEach {
-        log.warn(it.message, it.error)
-        it.error?.let { error ->
-          addMessage(taskId, getStackTraceAsString(error))
+        // consulo: upstream default argument usePty = BazelFeatureFlags.usePty
+        public BaseTaskConsole(
+            BuildProgressListener taskView,
+            String basePath,
+            Project project
+        ) {
+            this(taskView, basePath, project, BazelFeatureFlags.getUsePty());
         }
-      }
+
+        private static BuildEventFactory buildEventFactory() {
+            return Application.get().getInstance(BuildEventFactory.class);
+        }
+
+        @Override
+        public synchronized void startTask(
+            TaskId taskId,
+            LocalizeValue title,
+            LocalizeValue message,
+            Runnable cancelAction,
+            @Nullable Supplier<? extends CompletableFuture<?>> redoAction,
+            ShowConsole showConsole
+        ) {
+            if (myTasksInProgress.add(taskId)) {
+                doStartTask(
+                    taskId,
+                    BazelPluginLocalize.consoleTasksTitle(BazelPluginConstants.BAZEL_DISPLAY_NAME, title),
+                    message,
+                    cancelAction,
+                    redoAction,
+                    showConsole
+                );
+            }
+        }
+
+        private void doStartTask(
+            TaskId taskId,
+            LocalizeValue title,
+            LocalizeValue message,
+            Runnable cancelAction,
+            @Nullable Supplier<? extends CompletableFuture<?>> redoAction,
+            ShowConsole showConsole
+        ) {
+            // consulo: Consulo DefaultBuildDescriptor has no group id (upstream passes taskId.taskGroupId)
+            DefaultBuildDescriptor taskDescriptor = new DefaultBuildDescriptor(taskId, title, myBasePath, System.currentTimeMillis());
+            switch (showConsole) {
+                case ALWAYS -> {
+                    taskDescriptor.setActivateToolWindowWhenAdded(true);
+                    taskDescriptor.setActivateToolWindowWhenFailed(true);
+                }
+
+                case ON_FAIL -> {
+                    taskDescriptor.setActivateToolWindowWhenAdded(false);
+                    taskDescriptor.setActivateToolWindowWhenFailed(true);
+                }
+
+                case NEVER -> {
+                    taskDescriptor.setActivateToolWindowWhenAdded(false);
+                    taskDescriptor.setActivateToolWindowWhenFailed(false);
+                }
+            }
+            addRedoActionToDescriptor(taskDescriptor, redoAction);
+            addCancelActionToDescriptor(taskId, taskDescriptor, cancelAction);
+            if (myUsePty) {
+                addPtyToDescriptor(taskId, taskDescriptor);
+            }
+            StartBuildEvent startEvent = buildEventFactory().createStartBuildEvent(taskDescriptor, message);
+            myTaskView.onEvent(taskId, startEvent);
+        }
+
+        private void addCancelActionToDescriptor(
+            TaskId taskId,
+            DefaultBuildDescriptor taskDescriptor,
+            Runnable doCancelAction
+        ) {
+            CancelAction cancelAction = new CancelAction(doCancelAction, taskId);
+            taskDescriptor.withAction(cancelAction);
+        }
+
+        private void addRedoActionToDescriptor(
+            DefaultBuildDescriptor taskDescriptor,
+            @Nullable Supplier<? extends CompletableFuture<?>> redoAction
+        ) {
+            AnAction action = calculateRedoAction(redoAction);
+            taskDescriptor.withAction(action);
+        }
+
+        private void addPtyToDescriptor(TaskId taskId, DefaultBuildDescriptor taskDescriptor) {
+            // TODO consulo: TerminalExecutionConsoleBuilder (terminal plugin), BuildContentDescriptor and jediterm TtyConnector
+            //  are missing, the build view keeps its default (non-pty) console
+            //val consoleDelegate = log.runAndLogException {
+            //  TerminalExecutionConsoleBuilder(project).build()
+            //} ?: return
+            //
+            //val console = object : ConsoleView by consoleDelegate, BuildProgressListener {
+            //  override fun onEvent(buildId: Any, event: BuildEvent) {
+            //    if (event is OutputBuildEvent) {
+            //      consoleDelegate.print(event.message, ConsoleViewContentType.getConsoleViewType(event.outputType))
+            //    }
+            //  }
+            //}
+            //
+            //val contentDescriptor =
+            //  BuildContentDescriptor(console, null, consoleDelegate.component, null)
+            //contentDescriptor.apply {
+            //  // copy values from taskDescriptor, where it had been set before already
+            //  isActivateToolWindowWhenAdded = taskDescriptor.isActivateToolWindowWhenAdded
+            //  isActivateToolWindowWhenFailed = taskDescriptor.isActivateToolWindowWhenFailed
+            //}
+            //Disposer.register(contentDescriptor, consoleDelegate)
+            //Disposer.register(taskView as Disposable, contentDescriptor)
+            //
+            //// TerminalExecutionConsoleBuilder expects a ProcessHandler, so we provide a stub because we handle process interaction
+            //// in the server.
+            //// See https://github.com/bazelbuild/intellij/pull/7001/files
+            //val ttyConnector = object : TtyConnector, Disposable {
+            //  init {
+            //    Disposer.register(contentDescriptor, this)
+            //  }
+            //
+            //  private var connected: Boolean = true
+            //  override fun dispose() {
+            //    connected = false
+            //  }
+            //
+            //  override fun read(buf: CharArray?, offset: Int, length: Int): Int = 0
+            //  override fun write(bytes: ByteArray?) = Unit
+            //  override fun write(string: String?) = Unit
+            //  override fun isConnected(): Boolean = connected
+            //  override fun waitFor(): Int = 0
+            //  override fun ready(): Boolean = true
+            //  override fun getName(): String = ""
+            //  override fun close() = Unit
+            //  override fun resize(termSize: TermSize) = Unit
+            //}
+            //
+            //consoleDelegate.terminalWidget.createTerminalSession(ttyConnector)
+            //consoleDelegate.terminalWidget.start()
+            //taskDescriptor.withContentDescriptor { contentDescriptor }
+        }
+
+        protected abstract AnAction calculateRedoAction(@Nullable Supplier<? extends CompletableFuture<?>> redoAction);
+
+        @Override
+        public boolean hasTasksInProgress() {
+            return !myTasksInProgress.isEmpty();
+        }
+
+        @Override
+        public synchronized void finishTask(
+            TaskId taskId,
+            LocalizeValue message,
+            EventResult result
+        ) {
+            if (myTasksInProgress.contains(taskId)) {
+                doFinishTask(taskId, message, result);
+            }
+        }
+
+        private void doFinishTask(
+            TaskId taskId,
+            LocalizeValue message,
+            EventResult result
+        ) {
+            if (result instanceof FailureResult failureResult) {
+                for (Failure it : failureResult.getFailures()) {
+                    LOG.warn(it.getMessage().get(), it.getError());
+                    Throwable error = it.getError();
+                    if (error != null) {
+                        addMessage(taskId, getStackTraceAsString(error));
+                    }
+                }
+            }
+            finishChildrenSubtasks(taskId, result);
+            myTasksInProgress.remove(taskId);
+            myTaskFailures.remove(taskId);
+            mySubtaskParentMap.entrySet().removeIf(it -> Objects.equals(findActiveRootTaskId(it.getValue()), taskId));
+            BuildEvent event = buildEventFactory().createFinishBuildEvent(taskId, null, System.currentTimeMillis(), message, result);
+            myTaskView.onEvent(taskId, event);
+        }
+
+        @Override
+        public synchronized void startSubtask(
+            TaskId subtaskId,
+            LocalizeValue message
+        ) {
+            TaskId rootTaskId = findActiveRootTaskId(subtaskId);
+            if (rootTaskId == null) {
+                return;
+            }
+            TaskId activeTaskId = findActiveTaskId(subtaskId);
+            if (activeTaskId == null) {
+                return;
+            }
+            if (activeTaskId.equals(subtaskId)) {
+                throw new IllegalStateException("Cannot restart task " + subtaskId);
+            }
+            doStartSubtask(rootTaskId, activeTaskId, subtaskId, message);
+        }
+
+        private void doStartSubtask(
+            TaskId rootTaskId,
+            TaskId parentTaskId,
+            TaskId subtaskId,
+            LocalizeValue message
+        ) {
+            mySubtaskMessageMap.put(subtaskId, message);
+            mySubtaskParentMap.put(subtaskId, parentTaskId);
+            // consulo: upstream sends ProgressBuildEventImpl(subtaskId, parentTaskId, time, message, -1, -1, ""),
+            // BuildEventFactory has no progress event, a start event creates the same subtask node
+            BuildEvent event = buildEventFactory().createStartEvent(subtaskId, parentTaskId, System.currentTimeMillis(), message);
+            myTaskView.onEvent(rootTaskId, event);
+        }
+
+        @Override
+        public synchronized void finishSubtask(
+            TaskId subtaskId,
+            @Nullable LocalizeValue message,
+            EventResult result
+        ) {
+            TaskId parentTaskId = mySubtaskParentMap.get(subtaskId);
+            if (parentTaskId == null) {
+                return;
+            }
+            TaskId rootTaskId = findActiveRootTaskId(parentTaskId);
+            if (rootTaskId == null) {
+                return;
+            }
+            doFinishSubtask(rootTaskId, subtaskId, message, result);
+        }
+
+        private void doFinishSubtask(
+            TaskId rootTask,
+            TaskId subtaskId,
+            @Nullable LocalizeValue message,
+            EventResult result
+        ) {
+            LocalizeValue removedMessage = mySubtaskMessageMap.remove(subtaskId);
+            LocalizeValue savedMessage = removedMessage != null ? removedMessage : LocalizeValue.empty();
+            LocalizeValue messageToDisplay = message != null ? message : savedMessage;
+
+            finishChildrenSubtasks(subtaskId, result);
+            BuildEvent event = buildEventFactory().createFinishEvent(subtaskId, null, System.currentTimeMillis(), messageToDisplay, result);
+            myTaskView.onEvent(rootTask, event);
+
+            mySubtaskParentMap.remove(subtaskId);
+        }
+
+        private void finishChildrenSubtasks(TaskId parentId, EventResult result) {
+            List<TaskId> children = new ArrayList<>();
+            for (Map.Entry<TaskId, TaskId> entry : mySubtaskParentMap.entrySet()) {
+                if (entry.getValue().equals(parentId)) {
+                    children.add(entry.getKey());
+                }
+            }
+            for (TaskId it : children) {
+                finishSubtask(it, null, result);
+            }
+        }
+
+        @Override
+        public synchronized void addDiagnosticMessage(
+            TaskId taskId,
+            @Nullable Path path,
+            int line,
+            int column,
+            LocalizeValue message,
+            @Nullable String description,
+            MessageEvent.Kind severity
+        ) {
+            if (message.get().isBlank()) {
+                return;
+            }
+            TaskId rootTaskId = findActiveRootTaskId(taskId);
+            if (rootTaskId == null) {
+                return;
+            }
+            TaskId activeTaskId = findActiveTaskId(taskId);
+            if (activeTaskId == null) {
+                return;
+            }
+            FilePosition filePosition = path != null ? new FilePosition(path.toFile(), line, column) : null;
+            doAddDiagnosticMessage(rootTaskId, activeTaskId, filePosition, message, description, severity);
+        }
+
+        private void doAddDiagnosticMessage(
+            TaskId taskId,
+            TaskId subtaskId,
+            @Nullable FilePosition filePosition,
+            LocalizeValue message,
+            @Nullable String description,
+            MessageEvent.Kind severity
+        ) {
+            // consulo: Consulo message events need a notification group (upstream passes a null group)
+            BuildEvent event;
+            if (filePosition == null) {
+                event = buildEventFactory().createMessageEvent(
+                    subtaskId,
+                    severity,
+                    BazelNotificationGroupContributor.BAZEL,
+                    message.map(this::prepareTextToPrint),
+                    description != null ? LocalizeValue.of(description) : message.map(this::prepareTextToPrint)
+                );
+            }
+            else {
+                event = buildEventFactory().createFileMessageEvent(
+                    subtaskId,
+                    severity,
+                    BazelNotificationGroupContributor.BAZEL,
+                    message.map(this::prepareTextToPrint),
+                    LocalizeValue.ofNullable(description),
+                    filePosition
+                );
+            }
+
+            myTaskView.onEvent(taskId, event);
+        }
+
+        @Override
+        public synchronized void addMessage(TaskId taskId, String message) {
+            if (message.isBlank()) {
+                return;
+            }
+            TaskId rootTaskId = findActiveRootTaskId(taskId);
+            if (rootTaskId == null) {
+                return;
+            }
+            TaskId activeTaskId = findActiveTaskId(taskId);
+            if (activeTaskId == null) {
+                return;
+            }
+            doAddMessage(activeTaskId, message);
+        }
+
+        @Override
+        public synchronized boolean registerException(TaskId taskId, Throwable ex) {
+            TaskId rootTaskId = findActiveRootTaskId(taskId);
+            if (rootTaskId == null) {
+                return true;
+            }
+            return myTaskFailures.computeIfAbsent(rootTaskId, it -> new LinkedHashSet<>()).add(ex);
+        }
+
+        private void doAddMessage(TaskId taskId, String message) {
+            if (myTasksInProgress.contains(taskId)) {
+                sendMessageEvent(taskId, message);
+            }
+            else if (mySubtaskParentMap.containsKey(taskId)) {
+                sendMessageEvent(taskId, message);
+                sendMessageToAncestors(taskId, message);
+            }
+        }
+
+        private void sendMessageToAncestors(TaskId taskId, String message) {
+            TaskId parentTask = mySubtaskParentMap.get(taskId);
+            if (parentTask != null) {
+                sendMessageEvent(parentTask, message);
+                sendMessageToAncestors(parentTask, message);
+            }
+        }
+
+        private void sendMessageEvent(TaskId taskId, String message) {
+            TaskId subtaskId = myTasksInProgress.contains(taskId) ? null : taskId;
+            BuildEvent event = buildEventFactory().createOutputBuildEvent(subtaskId, message, true);
+            TaskId rootTaskId = findActiveRootTaskId(taskId);
+            if (rootTaskId != null) {
+                myTaskView.onEvent(rootTaskId, event);
+            }
+        }
+
+        private @Nullable TaskId findActiveTaskId(TaskId taskId) {
+            TaskId id = taskId;
+            while (id != null) {
+                if (mySubtaskParentMap.containsKey(id) || myTasksInProgress.contains(id)) {
+                    return id;
+                }
+                id = id.parent();
+            }
+            return null;
+        }
+
+        private @Nullable TaskId findActiveRootTaskId(TaskId taskId) {
+            TaskId id = taskId;
+            while (id != null) {
+                if (myTasksInProgress.contains(id)) {
+                    return id;
+                }
+                id = id.parent();
+            }
+            return null;
+        }
+
+        private String prepareTextToPrint(String text) {
+            return text.endsWith("\n") ? text : text + "\n";
+        }
+
+        private class CancelAction extends DumbAwareAction implements AnActionWithSyncUpdate {
+            private final Runnable myDoCancelAction;
+            private final TaskId myTaskId;
+
+            private volatile boolean myCancelActionActivated = false;
+
+            CancelAction(Runnable doCancelAction, TaskId taskId) {
+                super(BazelPluginLocalize.cancelActionText(), LocalizeValue.empty(), PlatformIconGroup.actionsSuspend());
+                myDoCancelAction = doCancelAction;
+                myTaskId = taskId;
+
+                myProject.getMessageBus().connect().subscribe(
+                    SyncStatusListener.class,
+                    new SyncStatusListener() {
+                        @Override
+                        public void syncStarted() {
+                        }
+
+                        @Override
+                        public void syncFinished(boolean canceled) {
+                        }
+                    }
+                );
+            }
+
+            @RequiredUIAccess
+            @Override
+            public void actionPerformed(AnActionEvent e) {
+                myCancelActionActivated = true;
+                myDoCancelAction.run();
+            }
+
+            @Override
+            public void update(AnActionEvent e) {
+                e.getPresentation().setEnabled(!myCancelActionActivated && myTasksInProgress.contains(myTaskId));
+            }
+
+            // consulo: no getActionUpdateThread() (upstream: ActionUpdateThread.BGT)
+        }
     }
-    finishChildrenSubtasks(taskId, result)
-    tasksInProgress.remove(taskId)
-    taskFailures.remove(taskId)
-    subtaskParentMap.entries.removeAll { findActiveRootTaskId(it.value) == taskId }
-    val event = FinishBuildEventImpl(taskId, null, System.currentTimeMillis(), message, result)
-    taskView.onEvent(taskId, event)
-  }
 
-  @Synchronized
-  override fun startSubtask(
-    subtaskId: TaskId,
-    message: String,
-  ) {
-    val rootTaskId = findActiveRootTaskId(subtaskId) ?: return
-    val activeTaskId = findActiveTaskId(subtaskId) ?: return
-    if (activeTaskId == subtaskId)
-      throw IllegalStateException("Cannot restart task $subtaskId")
-    doStartSubtask(rootTaskId, activeTaskId, subtaskId, message)
-  }
-
-  private fun doStartSubtask(
-    rootTaskId: TaskId,
-    parentTaskId: TaskId,
-    subtaskId: TaskId,
-    message: String,
-  ) {
-    subtaskMessageMap[subtaskId] = message
-    subtaskParentMap[subtaskId] = parentTaskId
-    val event = ProgressBuildEventImpl(subtaskId, parentTaskId, System.currentTimeMillis(), message, -1, -1, "")
-    taskView.onEvent(rootTaskId, event)
-  }
-
-  @Synchronized
-  override fun finishSubtask(
-    subtaskId: TaskId,
-    message: String?,
-    result: EventResult,
-  ) {
-    val parentTaskId = subtaskParentMap[subtaskId] ?: return
-    val rootTaskId = findActiveRootTaskId(parentTaskId) ?: return
-    doFinishSubtask(rootTaskId, subtaskId, message, result)
-  }
-
-  private fun doFinishSubtask(
-    rootTask: TaskId,
-    subtaskId: TaskId,
-    message: String?,
-    result: EventResult,
-  ) {
-    val savedMessage = subtaskMessageMap.remove(subtaskId) ?: ""
-    val messageToDisplay = message ?: savedMessage
-
-    finishChildrenSubtasks(subtaskId, result)
-    val event = FinishEventImpl(subtaskId, null, System.currentTimeMillis(), messageToDisplay, result)
-    taskView.onEvent(rootTask, event)
-
-    subtaskParentMap.remove(subtaskId)
-  }
-
-  private fun finishChildrenSubtasks(parentId: TaskId, result: EventResult) {
-    subtaskParentMap
-      .filterValues { it == parentId }
-      .keys
-      .forEach {
-        finishSubtask(it, null, result)
-      }
-  }
-
-  @Synchronized
-  override fun addDiagnosticMessage(
-    taskId: TaskId,
-    path: Path?,
-    line: Int,
-    column: Int,
-    message: String,
-    description: String?,
-    severity: MessageEvent.Kind,
-  ) {
-    if (message.isBlank()) return
-    val rootTaskId = findActiveRootTaskId(taskId) ?: return
-    val activeTaskId = findActiveTaskId(taskId) ?: return
-    val filePosition = path?.let { FilePosition(path, line, column) }
-    doAddDiagnosticMessage(rootTaskId, activeTaskId, filePosition, message, description, severity)
-  }
-
-  private fun doAddDiagnosticMessage(
-    taskId: TaskId,
-    subtaskId: TaskId,
-    filePosition: FilePosition?,
-    message: String,
-    description: String?,
-    severity: MessageEvent.Kind,
-  ) {
-    val event =
-      if (filePosition?.path == null) {
-        MessageEventImpl(
-          subtaskId,
-          severity,
-          null,
-          prepareTextToPrint(message),
-          description ?: prepareTextToPrint(message),
-        )
-      }
-      else {
-        FileMessageEventImpl(
-          subtaskId,
-          severity,
-          null,
-          prepareTextToPrint(message),
-          description,
-          filePosition,
-        )
-      }
-
-    taskView.onEvent(taskId, event)
-  }
-
-  @Synchronized
-  override fun addMessage(taskId: TaskId, message: String) {
-    if (message.isBlank()) return
-    val rootTaskId = findActiveRootTaskId(taskId) ?: return
-    val activeTaskId = findActiveTaskId(taskId) ?: return
-    doAddMessage(activeTaskId, message)
-  }
-
-  @Synchronized
-  override fun registerException(taskId: TaskId, ex: Throwable): Boolean {
-    val rootTaskId = findActiveRootTaskId(taskId) ?: return true
-    return taskFailures.getOrPut(rootTaskId) { mutableSetOf() }.add(ex)
-  }
-
-  private fun doAddMessage(taskId: TaskId, message: String) {
-    if (tasksInProgress.contains(taskId)) {
-      sendMessageEvent(taskId, message)
+    public static boolean isBuildInProgress(Project receiver) {
+        return ConsoleService.getInstance(receiver).getBuildConsole().hasTasksInProgress();
     }
-    else if (subtaskParentMap.containsKey(taskId)) {
-      sendMessageEvent(taskId, message)
-      sendMessageToAncestors(taskId, message)
-    }
-  }
-
-  private fun sendMessageToAncestors(taskId: TaskId, message: String) {
-    val parentTask = subtaskParentMap[taskId]
-    if (parentTask != null) {
-      sendMessageEvent(parentTask, message)
-      sendMessageToAncestors(parentTask, message)
-    }
-  }
-
-  private fun sendMessageEvent(taskId: TaskId, message: String) {
-    val subtaskId = if (tasksInProgress.contains(taskId)) null else taskId
-    val event = OutputBuildEventImpl(subtaskId, message, true)
-    findActiveRootTaskId(taskId)?.let { rootTaskId ->
-      taskView.onEvent(rootTaskId, event)
-    }
-  }
-
-  private fun findActiveTaskId(taskId: TaskId): TaskId? {
-    var id: TaskId? = taskId
-    while (id != null) {
-      if (subtaskParentMap.containsKey(id) || tasksInProgress.contains(id))
-        return id
-      id = id.parent
-    }
-    return null
-  }
-
-  private fun findActiveRootTaskId(taskId: TaskId): TaskId? {
-    var id: TaskId? = taskId
-    while (id != null) {
-      if (tasksInProgress.contains(id))
-        return id
-      id = id.parent
-    }
-    return null
-  }
-
-  private fun prepareTextToPrint(text: String): String = if (text.endsWith("\n")) text else text + "\n"
-
-  private inner class CancelAction(private val doCancelAction: () -> Unit, private val taskId: TaskId) :
-    DumbAwareAction({ BazelPluginBundle.message("cancel.action.text") }, AllIcons.Actions.Suspend) {
-    @Volatile
-    private var cancelActionActivated = false
-
-    init {
-      project.messageBus.connect().subscribe(
-        SyncStatusListener.TOPIC,
-        object : SyncStatusListener {
-          override fun syncStarted() {}
-
-          override fun syncFinished(canceled: Boolean) {}
-        },
-      )
-    }
-
-    override fun actionPerformed(e: AnActionEvent) {
-      cancelActionActivated = true
-      doCancelAction()
-    }
-
-    override fun update(e: AnActionEvent) {
-      e.presentation.isEnabled = !cancelActionActivated && tasksInProgress.contains(taskId)
-    }
-
-    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
-  }
 }
 
-internal class SyncTaskConsole(
-  taskView: BuildProgressListener,
-  basePath: String,
-  project: Project,
-) : BaseTaskConsole(taskView, basePath, project) {
-  override fun calculateRedoAction(redoAction: (suspend () -> Unit)?): AnAction =
-    object : SuspendableAction({ BazelPluginBundle.message("resync.action.text") }, AllIcons.Actions.Refresh) {
-      @Volatile
-      private var redoActionActivated = false
+class SyncTaskConsole extends TaskConsole.BaseTaskConsole {
+    SyncTaskConsole(
+        BuildProgressListener taskView,
+        String basePath,
+        Project project
+    ) {
+        super(taskView, basePath, project);
+    }
 
-      override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-        redoActionActivated = true
-        redoAction?.invoke()
-      }
+    @Override
+    protected AnAction calculateRedoAction(@Nullable Supplier<? extends CompletableFuture<?>> redoAction) {
+        return new SuspendableAction(BazelPluginLocalize.resyncActionText(), PlatformIconGroup.actionsRefresh()) {
+            private volatile boolean myRedoActionActivated = false;
 
-      override fun update(project: Project, e: AnActionEvent) {
-        e.presentation.isEnabled = !redoActionActivated && redoAction != null && !project.isSyncInProgress() && !project.isBuildInProgress()
-      }
+            @Override
+            protected CompletableFuture<?> actionPerformed(Project project, AnActionEvent e) {
+                myRedoActionActivated = true;
+                if (redoAction != null) {
+                    return redoAction.get();
+                }
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @Override
+            protected void update(Project project, AnActionEvent e) {
+                e.getPresentation().setEnabled(
+                    !myRedoActionActivated && redoAction != null && !SyncStatusService.isSyncInProgress(project) &&
+                        !TaskConsole.isBuildInProgress(project)
+                );
+            }
+        };
     }
 }
 
-internal class BuildTaskConsole(
-  taskView: BuildProgressListener,
-  basePath: String,
-  project: Project,
-) : BaseTaskConsole(taskView, basePath, project) {
-  override fun calculateRedoAction(redoAction: (suspend () -> Unit)?): AnAction =
-    object : SuspendableAction({ BazelPluginBundle.message("rebuild.action.text") }, AllIcons.Actions.Compile) {
-      @Volatile
-      private var redoActionActivated = false
+class BuildTaskConsole extends TaskConsole.BaseTaskConsole {
+    BuildTaskConsole(
+        BuildProgressListener taskView,
+        String basePath,
+        Project project
+    ) {
+        super(taskView, basePath, project);
+    }
 
-      override suspend fun actionPerformed(project: Project, e: AnActionEvent) {
-        redoActionActivated = true
-        redoAction?.invoke()
-      }
+    @Override
+    protected AnAction calculateRedoAction(@Nullable Supplier<? extends CompletableFuture<?>> redoAction) {
+        return new SuspendableAction(BazelPluginLocalize.rebuildActionText(), PlatformIconGroup.actionsCompile()) {
+            private volatile boolean myRedoActionActivated = false;
 
-      override fun update(project: Project, e: AnActionEvent) {
-        e.presentation.isEnabled = !redoActionActivated && redoAction != null && tasksInProgress.isEmpty()
-      }
+            @Override
+            protected CompletableFuture<?> actionPerformed(Project project, AnActionEvent e) {
+                myRedoActionActivated = true;
+                if (redoAction != null) {
+                    return redoAction.get();
+                }
+                return CompletableFuture.completedFuture(null);
+            }
 
-      override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+            @Override
+            protected void update(Project project, AnActionEvent e) {
+                e.getPresentation().setEnabled(!myRedoActionActivated && redoAction != null && myTasksInProgress.isEmpty());
+            }
+
+            // consulo: no getActionUpdateThread() (upstream: ActionUpdateThread.BGT)
+        };
     }
 }
-
-internal fun Project.isBuildInProgress() = ConsoleService.getInstance(this).buildConsole.hasTasksInProgress()

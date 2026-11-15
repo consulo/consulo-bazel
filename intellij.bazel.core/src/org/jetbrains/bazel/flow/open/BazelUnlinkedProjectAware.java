@@ -1,62 +1,72 @@
-package org.jetbrains.bazel.flow.open
+package org.jetbrains.bazel.flow.open;
 
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.externalSystem.autolink.ExternalSystemProjectLinkListener
-import com.intellij.openapi.externalSystem.autolink.ExternalSystemUnlinkedProjectAware
-import com.intellij.openapi.externalSystem.model.ProjectSystemId
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.StandardFileSystems
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginConstants
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.coroutines.BazelApplicationCoroutineScopeService
+import consulo.application.ReadAction;
+import consulo.externalSystem.model.ProjectSystemId;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.virtualFileSystem.LocalFileSystem;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.config.BazelPluginConstants;
+import org.jetbrains.bazel.coroutines.BazelApplicationCoroutineScopeService;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelUnlinkedProjectAware : ExternalSystemUnlinkedProjectAware {
-  companion object {
-    private val log = logger<BazelUnlinkedProjectAware>()
-  }
+import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 
-  override val systemId: ProjectSystemId = BazelPluginConstants.SYSTEM_ID
+// TODO consulo: ExternalSystemUnlinkedProjectAware (auto-link of unlinked projects) is missing in Consulo; the class is not
+// registered. ExternalSystemProjectLinkListener and the subscribe(...) override are dropped with it.
+public class BazelUnlinkedProjectAware {
+    private static final Logger LOG = Logger.getInstance(BazelUnlinkedProjectAware.class);
 
-  override fun isBuildFile(project: Project, buildFile: VirtualFile): Boolean =
-    buildFile.isBazelWorkspaceFile()
-
-  override fun isLinkedProject(project: Project, externalProjectPath: String): Boolean =
-    project.isBazelProject
-
-  override suspend fun linkAndLoadProjectAsync(project: Project, externalProjectPath: String) {
-    BazelApplicationCoroutineScopeService.getInstance().launch {
-      val file = readAction {
-        StandardFileSystems.local()
-          .findFileByPath(externalProjectPath)
-          ?.children
-          ?.firstOrNull { isBuildFile(project, it) }
-      }?.toNioPathOrNull()
-
-      if (file != null) {
-        closeAndReopenAsBazelProject(project, file)
-      } else {
-        log.warn("Unable to find Bazel project file for $externalProjectPath")
-        return@launch
-      }
+    public ProjectSystemId getSystemId() {
+        return BazelPluginConstants.SYSTEM_ID;
     }
-  }
 
-  override suspend fun unlinkProject(project: Project, externalProjectPath: String) {
-    // This method must be implemented as it is a part of an API.
-    // If was mandatory from the very beginning, this assertion sat in a parent.
-    TODO("Not yet implemented")
-  }
+    public boolean isBuildFile(Project project, VirtualFile buildFile) {
+        return utils.isBazelWorkspaceFile(buildFile);
+    }
 
-  override fun subscribe(
-    project: Project,
-    listener: ExternalSystemProjectLinkListener,
-    parentDisposable: Disposable,
-  ) {
-  }
+    public boolean isLinkedProject(Project project, String externalProjectPath) {
+        return org.jetbrains.bazel.config.project.isBazelProject(project);
+    }
+
+    public CompletableFuture<?> linkAndLoadProjectAsync(Project project, String externalProjectPath) {
+        return BazelApplicationCoroutineScopeService.getInstance().launch(() -> {
+            @Nullable Path file = ReadAction.<@Nullable Path, RuntimeException>compute(() -> {
+                VirtualFile projectDir = LocalFileSystem.getInstance().findFileByPath(externalProjectPath);
+                if (projectDir == null) {
+                    return null;
+                }
+                VirtualFile[] children = projectDir.getChildren();
+                if (children == null) {
+                    return null;
+                }
+                for (VirtualFile child : children) {
+                    if (isBuildFile(project, child)) {
+                        try {
+                            return child.toNioPath();
+                        }
+                        catch (UnsupportedOperationException e) {
+                            return null;
+                        }
+                    }
+                }
+                return null;
+            });
+
+            if (file != null) {
+                return utils.closeAndReopenAsBazelProject(project, file);
+            }
+            else {
+                LOG.warn("Unable to find Bazel project file for " + externalProjectPath);
+                return CompletableFuture.completedFuture(null);
+            }
+        });
+    }
+
+    public CompletableFuture<?> unlinkProject(Project project, String externalProjectPath) {
+        // This method must be implemented as it is a part of an API.
+        // If was mandatory from the very beginning, this assertion sat in a parent.
+        throw new UnsupportedOperationException("Not yet implemented");
+    }
 }

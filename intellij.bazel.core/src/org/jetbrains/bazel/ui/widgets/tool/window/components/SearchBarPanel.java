@@ -1,119 +1,201 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.components
+package org.jetbrains.bazel.ui.widgets.tool.window.components;
 
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.CommonShortcuts
-import com.intellij.openapi.keymap.KeymapUtil
-import com.intellij.ui.components.JBPanel
-import com.intellij.ui.components.fields.ExtendableTextField
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.ui.widgets.tool.window.utils.BspShortcuts
-import org.jetbrains.bazel.ui.widgets.tool.window.utils.SimpleAction
-import org.jetbrains.bazel.ui.widgets.tool.window.utils.SimpleDocumentListener
-import org.jetbrains.bazel.ui.widgets.tool.window.utils.TextComponentExtension
-import java.awt.BorderLayout
-import java.awt.event.KeyEvent
-import javax.swing.JComponent
+import consulo.application.dumb.DumbAware;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.localize.LocalizeValue;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.TextBox;
+import consulo.ui.TextBoxStyle;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.action.ActionPlaces;
+import consulo.ui.ex.action.ActionToolbar;
+import consulo.ui.ex.action.ActionToolbarFactory;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.CommonShortcuts;
+import consulo.ui.ex.action.DefaultActionGroup;
+import consulo.ui.ex.action.KeyboardShortcut;
+import consulo.ui.ex.action.Shortcut;
+import consulo.ui.ex.action.ShortcutSet;
+import consulo.ui.ex.action.ToggleAction;
+import consulo.ui.ex.awt.JBPanel;
+import consulo.ui.ex.awtUnsafe.TargetAWT;
+import consulo.ui.ex.keymap.util.KeymapUtil;
+import consulo.ui.image.Image;
+import consulo.util.lang.StringUtil;
+import org.jetbrains.bazel.ui.widgets.tool.window.utils.BspShortcuts;
+import org.jetbrains.bazel.ui.widgets.tool.window.utils.SimpleAction;
+import org.jetbrains.bazel.ui.widgets.tool.window.utils.TextComponentExtension;
+import org.jspecify.annotations.Nullable;
 
-internal class SearchBarPanel(private val model: BazelTargetsPanelModel) : JBPanel<SearchBarPanel>(BorderLayout()) {
-  private val textField = prepareTextField()
+import javax.swing.JComponent;
+import java.awt.BorderLayout;
+import java.awt.event.KeyEvent;
 
-  private val focusFindAction = SimpleAction { textField.requestFocus() }
-  private val toggleMatchCaseAction =
-    SimpleAction {
-      model.matchCase = !model.matchCase
+// consulo: IntelliJ's ExtendableTextField is replaced by the Consulo UI TextBox: the extensions are shown as an INPLACE
+// action toolbar in its suffix component (like the VCS log text filter), the clear extension is the TextBox clear button
+public class SearchBarPanel extends JBPanel<SearchBarPanel> {
+    private final BazelTargetsPanelModel myModel;
+
+    private final TextBox myTextField;
+
+    private final SimpleAction myFocusFindAction;
+    private final SimpleAction myToggleMatchCaseAction;
+    private final SimpleAction myToggleRegexAction;
+
+    @RequiredUIAccess
+    public SearchBarPanel(BazelTargetsPanelModel model) {
+        super(new BorderLayout());
+        myModel = model;
+        myTextField = prepareTextField();
+
+        myFocusFindAction = new SimpleAction(() -> myTextField.focus());
+        myToggleMatchCaseAction =
+            new SimpleAction(() -> {
+                myModel.setMatchCase(!myModel.getMatchCase());
+            });
+        myToggleRegexAction =
+            new SimpleAction(() -> {
+                myModel.setRegexMode(!myModel.getRegexMode());
+            });
+
+        add(TargetAWT.to(myTextField));
+        myToggleMatchCaseAction.registerCustomShortcutSet(BspShortcuts.matchCase, this);
+        myToggleRegexAction.registerCustomShortcutSet(BspShortcuts.regexMode, this);
     }
-  private val toggleRegexAction =
-    SimpleAction {
-      model.regexMode = !model.regexMode
+
+    @RequiredUIAccess
+    private TextBox prepareTextField() {
+        TextBox newField = TextBox.create();
+        // consulo: the switches repaint this panel (upstream: the text field), the TextBox is not a Swing component
+        TextComponentExtension.Switch matchCaseExtension =
+            new TextComponentExtension.Switch(
+                // MatchCaseHovered icon matches the ShowAsTree icon better than the normal Regex; on new UI both icons look the same
+                PlatformIconGroup.actionsMatchcasehovered(),
+                () -> myModel.getMatchCase(),
+                it -> myModel.setMatchCase(it),
+                this,
+                BazelPluginLocalize.widgetTargetSearchMatchCase(
+                    getFirstKeyboardShortcutText(BspShortcuts.matchCase)
+                ).get()
+            );
+        TextComponentExtension.Switch regexExtension =
+            new TextComponentExtension.Switch(
+                // RegexHovered icon matches the ShowAsTree icon better than the normal Regex; on new UI both icons look the same
+                PlatformIconGroup.actionsRegexhovered(),
+                () -> myModel.getRegexMode(),
+                it -> myModel.setRegexMode(it),
+                this,
+                BazelPluginLocalize.widgetTargetSearchRegex(getFirstKeyboardShortcutText(BspShortcuts.regexMode)).get()
+            );
+        TextComponentExtension.Switch treeExtension =
+            new TextComponentExtension.Switch(
+                PlatformIconGroup.actionsShowastree(),
+                () -> myModel.getDisplayAsTree(),
+                it -> myModel.setDisplayAsTree(it),
+                this,
+                BazelPluginLocalize.widgetTargetSearchDisplayAsTree().get()
+            );
+        // consulo: upstream TextComponentExtension.Clear (tooltip widget.target.search.clear) -> the TextBox clear button
+        newField.addStyle(TextBoxStyle.HAS_CLEAR_BUTTON);
+        newField.setPlaceholder(
+            BazelPluginLocalize.widgetTargetSearchHint(getFirstKeyboardShortcutText(CommonShortcuts.getFind()))
+        );
+
+        DefaultActionGroup extensions = new DefaultActionGroup();
+        extensions.add(new ExtensionAction(treeExtension));
+        extensions.add(new ExtensionAction(regexExtension));
+        extensions.add(new ExtensionAction(matchCaseExtension));
+        ActionToolbar toolbar = ActionToolbarFactory.getInstance()
+            .createActionToolbar(ActionPlaces.UNKNOWN, extensions, ActionToolbar.Style.INPLACE);
+        toolbar.setTargetUIComponent(newField);
+        newField.setSuffixComponent(toolbar.getUIComponent());
+
+        newField.addValueListener(event -> {
+            myModel.setSearchQuery(StringUtil.notNullize(event.getValue()));
+        });
+        return newField;
     }
 
-  init {
-    add(textField)
-    toggleMatchCaseAction.registerCustomShortcutSet(BspShortcuts.matchCase, this)
-    toggleRegexAction.registerCustomShortcutSet(BspShortcuts.regexMode, this)
-  }
-
-  private fun prepareTextField(): TextFieldWithKeyProcessing {
-    val newField = TextFieldWithKeyProcessing()
-    val matchCaseExtension =
-      TextComponentExtension.Switch(
-        // MatchCaseHovered icon matches the ShowAsTree icon better than the normal Regex; on new UI both icons look the same
-        icon = AllIcons.Actions.MatchCaseHovered,
-        valueGetter = { model.matchCase },
-        valueSetter = { model.matchCase = it },
-        parentComponent = newField,
-        tooltip =
-          BazelPluginBundle.message(
-            "widget.target.search.match.case",
-            KeymapUtil.getFirstKeyboardShortcutText(BspShortcuts.matchCase),
-          ),
-      )
-    val regexExtension =
-      TextComponentExtension.Switch(
-        // RegexHovered icon matches the ShowAsTree icon better than the normal Regex; on new UI both icons look the same
-        icon = AllIcons.Actions.RegexHovered,
-        valueGetter = { model.regexMode },
-        valueSetter = { model.regexMode = it },
-        parentComponent = newField,
-        tooltip = BazelPluginBundle.message("widget.target.search.regex", KeymapUtil.getFirstKeyboardShortcutText(BspShortcuts.regexMode)),
-      )
-    val treeExtension =
-      TextComponentExtension.Switch(
-        icon = AllIcons.Actions.ShowAsTree,
-        valueGetter = { model.displayAsTree },
-        valueSetter = { model.displayAsTree = it },
-        parentComponent = newField,
-        tooltip = BazelPluginBundle.message("widget.target.search.display.as.tree"),
-      )
-    val clearExtension =
-      TextComponentExtension.Clear(
-        isEmpty = { newField.text.isEmpty() },
-        clearAction = ::clearQuery,
-        tooltip = BazelPluginBundle.message("widget.target.search.clear"),
-      )
-    return newField.apply {
-      this.emptyText.text =
-        BazelPluginBundle.message("widget.target.search.hint", KeymapUtil.getFirstKeyboardShortcutText(CommonShortcuts.getFind()))
-      addExtension(treeExtension)
-      addExtension(regexExtension)
-      addExtension(matchCaseExtension)
-      addExtension(clearExtension)
-      this.document.addDocumentListener(
-        SimpleDocumentListener {
-          model.searchQuery = textField.text
-        },
-      )
+    @RequiredUIAccess
+    private void clearQuery() {
+        myTextField.setValue("");
     }
-  }
 
-  private fun clearQuery() {
-    textField.text = ""
-  }
+    @Override
+    @RequiredUIAccess
+    public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        myTextField.setEnabled(enabled);
+    }
 
-  override fun setEnabled(enabled: Boolean) {
-    super.setEnabled(enabled)
-    textField.isEnabled = enabled
-  }
+    public void registerSearchShortcutsOn(JComponent component) {
+        myFocusFindAction.registerCustomShortcutSet(CommonShortcuts.getFind(), component);
+        myToggleMatchCaseAction.registerCustomShortcutSet(BspShortcuts.matchCase, component);
+        myToggleRegexAction.registerCustomShortcutSet(BspShortcuts.regexMode, component);
+    }
 
-  fun registerSearchShortcutsOn(component: JComponent) {
-    focusFindAction.registerCustomShortcutSet(CommonShortcuts.getFind(), component)
-    toggleMatchCaseAction.registerCustomShortcutSet(BspShortcuts.matchCase, component)
-    toggleRegexAction.registerCustomShortcutSet(BspShortcuts.regexMode, component)
-  }
+    @Override
+    @RequiredUIAccess
+    public void requestFocus() {
+        myTextField.focus();
+    }
 
-  override fun requestFocus() {
-    textField.requestFocus()
-  }
+    // consulo: upstream forwards the typed key event to the text field; the TextBox gets the typed character appended
+    @Override
+    @RequiredUIAccess
+    public void processKeyEvent(KeyEvent event) {
+        char keyChar = event.getKeyChar();
+        if (keyChar == KeyEvent.CHAR_UNDEFINED || Character.isISOControl(keyChar)) {
+            return;
+        }
+        myTextField.setValue(StringUtil.notNullize(myTextField.getValue()) + keyChar);
+    }
 
-  public override fun processKeyEvent(event: KeyEvent) {
-    textField.onKeyPressed(event)
-  }
+    @RequiredUIAccess
+    public boolean isEmpty() {
+        return StringUtil.isEmpty(myTextField.getValue());
+    }
 
-  fun isEmpty(): Boolean = textField.text.isEmpty()
-}
+    // consulo: KeymapUtil.getFirstKeyboardShortcutText(ShortcutSet) does not exist in Consulo, same logic as IntelliJ's
+    private static String getFirstKeyboardShortcutText(ShortcutSet shortcutSet) {
+        for (Shortcut shortcut : shortcutSet.getShortcuts()) {
+            if (shortcut instanceof KeyboardShortcut) {
+                return KeymapUtil.getShortcutText(shortcut);
+            }
+        }
+        return "";
+    }
 
-private class TextFieldWithKeyProcessing : ExtendableTextField() {
-  fun onKeyPressed(e: KeyEvent) {
-    processKeyEvent(e)
-  }
+    // consulo: an extension of the upstream ExtendableTextField, shown in the suffix toolbar of the TextBox
+    private static final class ExtensionAction extends ToggleAction implements DumbAware {
+        private final TextComponentExtension myExtension;
+
+        private ExtensionAction(TextComponentExtension extension) {
+            super(LocalizeValue.ofNullable(extension.getTooltip()), LocalizeValue.empty(), extension.getIcon(false));
+            myExtension = extension;
+        }
+
+        @Override
+        public boolean isSelected(AnActionEvent e) {
+            return myExtension.isSelected();
+        }
+
+        @Override
+        @RequiredUIAccess
+        public void setSelected(AnActionEvent e, boolean state) {
+            Runnable actionOnClick = myExtension.getActionOnClick();
+            if (actionOnClick != null) {
+                actionOnClick.run();
+            }
+        }
+
+        @Override
+        @RequiredUIAccess
+        public void update(AnActionEvent e) {
+            super.update(e);
+            @Nullable Image icon = myExtension.getIcon(false);
+            e.getPresentation().setIcon(icon);
+            e.getPresentation().setVisible(icon != null);
+        }
+    }
 }

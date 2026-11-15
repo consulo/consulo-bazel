@@ -1,11 +1,12 @@
-package org.jetbrains.bazel.testing
+package org.jetbrains.bazel.testing;
 
-import org.jetbrains.annotations.ApiStatus
+public final class TestUtils {
+    private TestUtils() {
+    }
 
-@ApiStatus.Internal
-const val IS_IN_IDE_STARTER_TEST = "is.in.ide.starter.test"
+    public static final String IS_IN_IDE_STARTER_TEST = "is.in.ide.starter.test";
 
-@ApiStatus.Internal
-object TestUtils {
-  fun isInIdeStarterTest(): Boolean = System.getProperty(IS_IN_IDE_STARTER_TEST).toBoolean()
+    public static boolean isInIdeStarterTest() {
+        return Boolean.parseBoolean(System.getProperty(IS_IN_IDE_STARTER_TEST));
+    }
 }

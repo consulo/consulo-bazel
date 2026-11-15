@@ -1,46 +1,71 @@
-package org.jetbrains.bazel.languages.starlark.completion
+package org.jetbrains.bazel.languages.starlark.completion;
 
-import com.intellij.codeInsight.AutoPopupController
-import com.intellij.codeInsight.completion.PrioritizedLookupElement
-import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.codeInsight.lookup.LookupElementBuilder
-import org.jetbrains.annotations.ApiStatus
-import javax.swing.Icon
+import consulo.document.Document;
+import consulo.language.editor.AutoPopupController;
+import consulo.language.editor.completion.lookup.LookupElement;
+import consulo.language.editor.completion.lookup.LookupElementBuilder;
+import consulo.language.editor.completion.lookup.PrioritizedLookupElement;
+import consulo.ui.image.Image;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-fun getCompletionLookupElement(
-  name: String,
-  icon: Icon,
-  priority: Double = 0.0,
-  presentableText: String? = null,
-  tailText: String = "",
-  /**
-   * isExpressionFinished indicates whether the lookup element finishes the expression:
-   * `true` if the lookup element completes the entire expression (or its final part),
-   * `false` if the lookup element completes only a part of the expression (for example,
-   * when completing the package path to a class with subsequent subpackages)
-   */
-  isExpressionFinished: Boolean = true,
-): LookupElement =
-  PrioritizedLookupElement.withPriority(
-    LookupElementBuilder
-      .create("\"" + name + "\"")
-      .withIcon(icon)
-      .withPresentableText(presentableText ?: name)
-      .withTailText(tailText, true)
-      .withInsertHandler { context, _ ->
-        // This prevents inserting a duplicate quote at the end.
-        val document = context.document
-        val offset = context.tailOffset
-        if (offset < document.textLength && document.charsSequence[offset] == '"') {
-          document.deleteString(offset, offset + 1)
-        }
+public final class StarlarkCompletionLookupElement {
+    private StarlarkCompletionLookupElement() {
+    }
 
-        // If the expression is not finished, continue completion inside the quotation mark.
-        if (!isExpressionFinished) {
-          context.editor.caretModel.moveToOffset(offset - 1)
-          AutoPopupController.getInstance(context.project).scheduleAutoPopup(context.editor)
-        }
-      },
-    priority,
-  )
+    // consulo: overloads for the upstream default arguments
+    public static LookupElement getCompletionLookupElement(String name, Image icon) {
+        return getCompletionLookupElement(name, icon, 0.0);
+    }
+
+    public static LookupElement getCompletionLookupElement(String name, Image icon, double priority) {
+        return getCompletionLookupElement(name, icon, priority, null, "");
+    }
+
+    public static LookupElement getCompletionLookupElement(
+        String name,
+        Image icon,
+        double priority,
+        @Nullable String presentableText,
+        String tailText
+    ) {
+        return getCompletionLookupElement(name, icon, priority, presentableText, tailText, true);
+    }
+
+    /**
+     * @param isExpressionFinished isExpressionFinished indicates whether the lookup element finishes the expression:
+     *                             {@code true} if the lookup element completes the entire expression (or its final part),
+     *                             {@code false} if the lookup element completes only a part of the expression (for example,
+     *                             when completing the package path to a class with subsequent subpackages)
+     */
+    public static LookupElement getCompletionLookupElement(
+        String name,
+        Image icon,
+        double priority,
+        @Nullable String presentableText,
+        String tailText,
+        boolean isExpressionFinished
+    ) {
+        return PrioritizedLookupElement.withPriority(
+            LookupElementBuilder
+                .create("\"" + name + "\"")
+                .withIcon(icon)
+                .withPresentableText(presentableText != null ? presentableText : name)
+                .withTailText(tailText, true)
+                .withInsertHandler((context, item) -> {
+                    // This prevents inserting a duplicate quote at the end.
+                    Document document = context.getDocument();
+                    int offset = context.getTailOffset();
+                    if (offset < document.getTextLength() && document.getCharsSequence().charAt(offset) == '"') {
+                        document.deleteString(offset, offset + 1);
+                    }
+
+                    // If the expression is not finished, continue completion inside the quotation mark.
+                    if (!isExpressionFinished) {
+                        context.getEditor().getCaretModel().moveToOffset(offset - 1);
+                        AutoPopupController.getInstance(context.getProject()).scheduleAutoPopup(context.getEditor());
+                    }
+                }),
+            priority
+        );
+    }
+}

@@ -1,43 +1,61 @@
-package org.jetbrains.bazel.languages.starlark.findusages
+package org.jetbrains.bazel.languages.starlark.findusages;
 
-import com.intellij.find.findUsages.FindUsagesHandler
-import com.intellij.find.findUsages.FindUsagesHandlerFactory
-import com.intellij.find.findUsages.FindUsagesOptions
-import com.intellij.openapi.application.ReadAction
-import com.intellij.psi.PsiElement
-import com.intellij.psi.search.SearchScope
-import com.intellij.psi.search.searches.ReferencesSearch.SearchParameters
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.ReadAction;
+import consulo.content.scope.SearchScope;
+import consulo.find.FindUsagesHandler;
+import consulo.find.FindUsagesHandlerFactory;
+import consulo.find.FindUsagesOptions;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.search.ReferencesSearch.SearchParameters;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElement;
+import org.jspecify.annotations.Nullable;
 
-internal class StarlarkFindUsagesHandlerFactory : FindUsagesHandlerFactory() {
+@ExtensionImpl
+public class StarlarkFindUsagesHandlerFactory extends FindUsagesHandlerFactory {
+    @Override
+    public boolean canFindUsages(PsiElement element) {
+        return element instanceof StarlarkElement;
+    }
 
-  override fun canFindUsages(element: PsiElement): Boolean = element is StarlarkElement
-
-  override fun createFindUsagesHandler(
-    element: PsiElement,
-    forHighlightUsages: Boolean,
-  ): FindUsagesHandler = StarlarkFindUsagesHandler(element)
+    @Override
+    public FindUsagesHandler createFindUsagesHandler(
+        PsiElement element,
+        boolean forHighlightUsages
+    ) {
+        return new StarlarkFindUsagesHandler(element);
+    }
 }
 
-private class StarlarkFindUsagesHandler(element: PsiElement) : FindUsagesHandler(element) {
+class StarlarkFindUsagesHandler extends FindUsagesHandler {
+    StarlarkFindUsagesHandler(PsiElement element) {
+        super(element);
+    }
 
-  override fun isSearchForTextOccurrencesAvailable(psiElement: PsiElement, isSingleFile: Boolean): Boolean = false
+    @Override
+    protected boolean isSearchForTextOccurrencesAvailable(PsiElement psiElement, boolean isSingleFile) {
+        return false;
+    }
 
-  /**
-   * Effectively, limits the search scope to starlark files.
-   * Without this we might receive a search scope that is enlarged with [com.intellij.psi.search.UseScopeEnlarger],
-   * which leads to unnecessary noise like e.g., Markdown file results.
-   *
-   * Analogous limitation must be done in [org.jetbrains.bazel.languages.starlark.rename.StarlarkRenamePsiElementProcessor] for consistency.
-   */
-  override fun createSearchParameters(
-    target: PsiElement,
-    searchScope: SearchScope,
-    findUsagesOptions: FindUsagesOptions?,
-  ): SearchParameters {
-    val scope = ReadAction
-      .nonBlocking<SearchScope> { searchScope.intersectWith(target.useScope) }
-      .executeSynchronously()
-    return SearchParameters(target, scope, false, findUsagesOptions?.fastTrack)
-  }
+    /**
+     * Effectively, limits the search scope to starlark files.
+     * Without this we might receive a search scope that is enlarged with {@link consulo.language.psi.UseScopeEnlarger},
+     * which leads to unnecessary noise like e.g., Markdown file results.
+     * <p>
+     * Analogous limitation must be done in {@link org.jetbrains.bazel.languages.starlark.rename.StarlarkRenamePsiElementProcessor} for
+     * consistency.
+     */
+    // TODO consulo: Consulo's FindUsagesHandler has no createSearchParameters hook (processElementUsages and
+    //  findReferencesToHighlight build the SearchParameters inline), so this method is never called and the
+    //  search scope is not limited to starlark files
+    protected SearchParameters createSearchParameters(
+        PsiElement target,
+        SearchScope searchScope,
+        @Nullable FindUsagesOptions findUsagesOptions
+    ) {
+        SearchScope scope = ReadAction
+            .<SearchScope>nonBlocking(() -> searchScope.intersectWith(target.getUseScope()))
+            .executeSynchronously();
+        return new SearchParameters(target, scope, false, findUsagesOptions != null ? findUsagesOptions.fastTrack : null);
+    }
 }

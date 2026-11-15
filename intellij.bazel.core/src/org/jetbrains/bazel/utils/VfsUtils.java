@@ -1,11 +1,24 @@
-package org.jetbrains.bazel.utils
+package org.jetbrains.bazel.utils;
 
-import com.intellij.openapi.vfs.VirtualFile
+import consulo.virtualFileSystem.VirtualFile;
+import org.jspecify.annotations.Nullable;
 
-internal fun VirtualFile.findNearestParent(parents: Set<VirtualFile>): VirtualFile? {
-  var parent = this
-  while (true) {
-    if (parent in parents) return parent
-    parent = parent.parent ?: return null
-  }
+import java.util.Set;
+
+public final class VfsUtils {
+    private VfsUtils() {
+    }
+
+    public static @Nullable VirtualFile findNearestParent(VirtualFile receiver, Set<VirtualFile> parents) {
+        VirtualFile parent = receiver;
+        while (true) {
+            if (parents.contains(parent)) {
+                return parent;
+            }
+            parent = parent.getParent();
+            if (parent == null) {
+                return null;
+            }
+        }
+    }
 }

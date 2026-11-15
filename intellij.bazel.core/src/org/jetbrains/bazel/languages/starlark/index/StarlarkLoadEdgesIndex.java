@@ -1,9 +1,12 @@
-package org.jetbrains.bazel.languages.starlark.index
+package org.jetbrains.bazel.languages.starlark.index;
 
-import com.intellij.util.indexing.ID
-import org.jetbrains.annotations.ApiStatus
+import consulo.index.io.ID;
 
-@ApiStatus.Internal
-object StarlarkLoadEdgesIndex {
-  val NAME: ID<String, Collection<String>> = ID.create("starlark.load.edges")
+import java.util.Collection;
+
+public final class StarlarkLoadEdgesIndex {
+    private StarlarkLoadEdgesIndex() {
+    }
+
+    public static final ID<String, Collection<String>> NAME = ID.create("starlark.load.edges");
 }

@@ -1,116 +1,166 @@
-package org.jetbrains.bazel.languages.starlark.bazel.bzlmod.resolver
+package org.jetbrains.bazel.languages.starlark.bazel.bzlmod.resolver;
 
-import com.google.gson.Gson
-import com.intellij.openapi.application.ApplicationNamesInfo
-import com.intellij.openapi.components.service
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.future.await
-import kotlinx.coroutines.withContext
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.bazel.bzlmod.BazelModuleResolver
-import java.io.IOException
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.util.Base64
+import com.google.gson.Gson;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.http.HttpRequests;
+import consulo.http.HttpVersion;
+import consulo.logging.Logger;
+import consulo.project.Project;
+import consulo.util.lang.Pair;
+import org.jetbrains.bazel.languages.starlark.bazel.bzlmod.BazelModuleResolver;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelCentralRegistryModuleResolver : BazelModuleResolver {
-  override val id: String = ID
-  override val name: String = "Bazel Central Registry"
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 
-  override suspend fun getModuleNames(project: Project): List<String> {
-    val bcrCache = project.serviceAsync<BazelModuleBcrCacheService>()
-    return bcrCache.getOrFetch(MODULE_NAMES_KEY) {
-      fetchModuleNamesFromRegistry()
-    }
-  }
-
-  override suspend fun getModuleVersions(project: Project, moduleName: String): List<String> {
-    val bcrCache = project.serviceAsync<BazelModuleBcrCacheService>()
-    return bcrCache.getOrFetch(moduleName) {
-      fetchModuleVersionsFromRegistry(moduleName)
-    }
-  }
-
-  override suspend fun refreshModuleNames(project: Project) {
-    val cache = project.service<BazelModuleBcrCacheService>()
-    cache.invalidate(MODULE_NAMES_KEY)
-    getModuleNames(project)
-  }
-
-  private val gson = Gson()
-  private val githubApiUrl = "https://api.github.com/repos/bazelbuild/bazel-central-registry/contents/modules"
-  private val log = Logger.getInstance(BazelCentralRegistryModuleResolver::class.java)
-  private val httpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()
-
-  private data class GitHubContent(val name: String, val type: String)
-
-  private data class GitHubFileContent(val content: String?, val encoding: String?)
-
-  private data class ModuleMetadata(val versions: List<String>?)
-
-  private suspend fun fetchModuleNamesFromRegistry(): List<String>? =
-    try {
-      val json = performHttpRequest(githubApiUrl)
-      gson
-        .fromJson(json, Array<GitHubContent>::class.java)
-        // Note: the GitHub endpoint can return various item types (dir, file, symlink, submodule).
-        // Modules are directories, so we explicitly filter only type == "dir".
-        .filter { it.type == "dir" }
-        .map { it.name }
-        .sorted()
-    } catch (e: IOException) {
-      log.warn(StarlarkBundle.message("bzlmod.warning.fetching.module.names", e))
-      null
+@ExtensionImpl
+public class BazelCentralRegistryModuleResolver implements BazelModuleResolver {
+    @Override
+    public String getId() {
+        return ID;
     }
 
-  private suspend fun fetchModuleVersionsFromRegistry(moduleName: String): List<String>? =
-    try {
-      val url = "$githubApiUrl/$moduleName/metadata.json"
-      val json = performHttpRequest(url)
-      val file = gson.fromJson(json, GitHubFileContent::class.java)
-      val decoded =
-        if (file.content != null && file.encoding == "base64") {
-          String(Base64.getMimeDecoder().decode(file.content))
-        } else {
-          log.warn(StarlarkBundle.message("bzlmod.warning.encoding", moduleName))
-          return null
+    @Override
+    public String getName() {
+        return "Bazel Central Registry";
+    }
+
+    @Override
+    public CompletableFuture<@Nullable List<String>> getModuleNames(Project project) {
+        BazelModuleBcrCacheService bcrCache = project.getInstance(BazelModuleBcrCacheService.class);
+        return bcrCache.getOrFetch(MODULE_NAMES_KEY, this::fetchModuleNamesFromRegistry).<@Nullable List<String>>thenApply(it -> it);
+    }
+
+    @Override
+    public CompletableFuture<@Nullable List<String>> getModuleVersions(Project project, String moduleName) {
+        BazelModuleBcrCacheService bcrCache = project.getInstance(BazelModuleBcrCacheService.class);
+        return bcrCache.getOrFetch(moduleName, () -> fetchModuleVersionsFromRegistry(moduleName)).<@Nullable List<String>>thenApply(it -> it);
+    }
+
+    @Override
+    public CompletableFuture<?> refreshModuleNames(Project project) {
+        BazelModuleBcrCacheService cache = project.getInstance(BazelModuleBcrCacheService.class);
+        cache.invalidate(MODULE_NAMES_KEY);
+        return getModuleNames(project);
+    }
+
+    private final Gson myGson = new Gson();
+    private final String myGithubApiUrl = "https://api.github.com/repos/bazelbuild/bazel-central-registry/contents/modules";
+    private static final Logger LOG = Logger.getInstance(BazelCentralRegistryModuleResolver.class);
+    // consulo: upstream java.net.http.HttpClient (HTTP/2) is replaced by Consulo HttpRequests, see performHttpRequest()
+
+    private record GitHubContent(String name, String type) {
+    }
+
+    private record GitHubFileContent(@Nullable String content, @Nullable String encoding) {
+    }
+
+    private record ModuleMetadata(@Nullable List<String> versions) {
+    }
+
+    private CompletableFuture<@Nullable List<String>> fetchModuleNamesFromRegistry() {
+        return performHttpRequest(myGithubApiUrl).handle((json, error) -> {
+            if (error != null) {
+                Throwable cause = unwrap(error);
+                if (cause instanceof IOException e) {
+                    LOG.warn(StarlarkLocalize.bzlmodWarningFetchingModuleNames(e).get());
+                    return null;
+                }
+                throw new CompletionException(cause);
+            }
+            return Arrays.stream(myGson.fromJson(json, GitHubContent[].class))
+                // Note: the GitHub endpoint can return various item types (dir, file, symlink, submodule).
+                // Modules are directories, so we explicitly filter only type == "dir".
+                .filter(it -> "dir".equals(it.type()))
+                .map(GitHubContent::name)
+                .sorted()
+                .toList();
+        });
+    }
+
+    private CompletableFuture<@Nullable List<String>> fetchModuleVersionsFromRegistry(String moduleName) {
+        String url = myGithubApiUrl + "/" + moduleName + "/metadata.json";
+        return performHttpRequest(url).handle((json, error) -> {
+            if (error != null) {
+                Throwable cause = unwrap(error);
+                if (cause instanceof IOException e) {
+                    LOG.warn(StarlarkLocalize.bzlmodWarningFetchingModuleVersions(moduleName, e).get());
+                    return null;
+                }
+                throw new CompletionException(cause);
+            }
+            GitHubFileContent file = myGson.fromJson(json, GitHubFileContent.class);
+            String decoded;
+            String content = file.content();
+            if (content != null && "base64".equals(file.encoding())) {
+                decoded = new String(Base64.getMimeDecoder().decode(content), StandardCharsets.UTF_8);
+            }
+            else {
+                LOG.warn(StarlarkLocalize.bzlmodWarningEncoding(moduleName).get());
+                return null;
+            }
+            ModuleMetadata metadata = myGson.fromJson(decoded, ModuleMetadata.class);
+            List<String> versions = metadata.versions();
+            if (versions == null) {
+                return null;
+            }
+            List<String> reversed = new ArrayList<>(versions);
+            Collections.reverse(reversed);
+            return reversed;
+        });
+    }
+
+    // consulo: upstream withContext(Dispatchers.IO) + HttpClient.sendAsync(),
+    // Consulo HttpRequests is blocking and runs on a pooled thread
+    private CompletableFuture<String> performHttpRequest(String url) {
+        return CompletableFuture.supplyAsync(() -> {
+            Pair<Integer, String> response;
+            try {
+                response = HttpRequests.request(url)
+                    .header("accept", "application/vnd.github.v3+json")
+                    .header("User-Agent", Application.get().getName().get())
+                    .version(HttpVersion.HTTP_2)
+                    // consulo: the status code is checked below, like upstream
+                    .allowErrorCodes(true)
+                    .connect(request -> {
+                        int statusCode = request.statusCode();
+                        // consulo: the body is only read for a successful status, it is not used otherwise
+                        String body = statusCode >= 200 && statusCode <= 299 ? request.readString(null) : "";
+                        return Pair.create(statusCode, body);
+                    });
+            }
+            catch (Exception e) {
+                throw new CompletionException(new IOException(StarlarkLocalize.bzlmodExceptionHttpRequest(url, e).get()));
+            }
+
+            int statusCode = response.getFirst();
+            if (!(statusCode >= 200 && statusCode <= 299)) {
+                throw new CompletionException(new IOException(StarlarkLocalize.bzlmodExceptionHttpStatus(statusCode, url).get()));
+            }
+
+            return response.getSecond();
+        }, Application.get().getInstance(ApplicationConcurrency.class).executor());
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable cause = error;
+        while ((cause instanceof CompletionException || cause instanceof ExecutionException) && cause.getCause() != null) {
+            cause = cause.getCause();
         }
-      val metadata = gson.fromJson(decoded, ModuleMetadata::class.java)
-      metadata.versions?.toList()?.reversed()
-    } catch (e: IOException) {
-      log.warn(StarlarkBundle.message("bzlmod.warning.fetching.module.versions", moduleName, e))
-      null
+        return cause;
     }
 
-  private suspend fun performHttpRequest(url: String): String =
-    withContext(Dispatchers.IO) {
-      val request = HttpRequest.newBuilder(URI.create(url))
-        .header("accept", "application/vnd.github.v3+json")
-        .header("User-Agent", ApplicationNamesInfo.getInstance().fullProductName)
-        .build()
-
-      val response: HttpResponse<String> =
-        try {
-          httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-        }
-        catch (e: Exception) {
-          throw IOException(StarlarkBundle.message("bzlmod.exception.http.request", url, e))
-        }
-
-      if (response.statusCode() !in 200..299) {
-        throw IOException(StarlarkBundle.message("bzlmod.exception.http.status", response.statusCode(), url))
-      }
-
-      response.body()
-    }
-
-  companion object {
-    const val ID: String = "bcr"
-    private const val MODULE_NAMES_KEY = "___MODULE_NAMES___"
-  }
+    public static final String ID = "bcr";
+    private static final String MODULE_NAMES_KEY = "___MODULE_NAMES___";
 }

@@ -1,13 +1,27 @@
-package org.jetbrains.bazel.config
+package org.jetbrains.bazel.config;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.bazel.sync.environment.getProjectRootDirOrThrow
-import org.jetbrains.bazel.sync.environment.bazelProjectInfo
-import kotlin.DeprecationLevel.ERROR
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
 
 // TODO Remove when Scala plugin no longer uses these methods
-@Deprecated("Exists only for binary compatibility", level = ERROR)
-fun isBazelProject(project: Project): Boolean = project.bazelProjectInfo.isBazelProject
-@Deprecated("Exists only for binary compatibility", level = ERROR)
-fun getRootDir(project: Project): VirtualFile = project.bazelProjectInfo.getProjectRootDirOrThrow()
+public final class BazelProjectProperties {
+    private BazelProjectProperties() {
+    }
+
+    /**
+     * @deprecated Exists only for binary compatibility
+     */
+    @Deprecated
+    public static boolean isBazelProject(Project project) {
+        return BazelProjectInfoService.getBazelProjectInfo(project).isBazelProject();
+    }
+
+    /**
+     * @deprecated Exists only for binary compatibility
+     */
+    @Deprecated
+    public static VirtualFile getRootDir(Project project) {
+        return BazelProjectInfoService.getProjectRootDirOrThrow(BazelProjectInfoService.getBazelProjectInfo(project));
+    }
+}

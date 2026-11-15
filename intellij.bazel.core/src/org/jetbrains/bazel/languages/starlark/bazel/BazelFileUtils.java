@@ -1,37 +1,55 @@
-package org.jetbrains.bazel.languages.starlark.bazel
+package org.jetbrains.bazel.languages.starlark.bazel;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
-import org.jetbrains.bazel.label.Main
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bazel.languages.starlark.repomapping.calculateLabel
-import org.jetbrains.bazel.languages.starlark.repomapping.toApparentLabelOrThis
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.label.Label.Main;
+import org.jetbrains.bazel.label.Label.RepoType;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
+import org.jspecify.annotations.Nullable;
 
-private const val MAX_PATH_LENGTH = 25
-private const val MIN_SEGMENTS_NUMBER = 1
+import java.util.List;
 
-internal object BazelFileUtils {
-  fun getContainingDirectoryPresentablePath(project: Project, file: VirtualFile): String? {
-    val relativeDir = calculateLabel(project, file)?.toApparentLabelOrThis(project) as? ResolvedLabel ?: return null
-    if (relativeDir.repo is Main && relativeDir.packagePath.pathSegments.isEmpty()) return null
-    val presentablePath = truncatePathHead(relativeDir)
-    return "${file.nameWithoutExtension} ($presentablePath)"
-  }
+public final class BazelFileUtils {
+    private static final int MAX_PATH_LENGTH = 25;
+    private static final int MIN_SEGMENTS_NUMBER = 1;
 
-  private fun truncatePathHead(relativeDir: ResolvedLabel): String {
-    val segments = relativeDir.packagePath.pathSegments
-    var takenSegments = 0
-    var length = 0
-    val tailSegments =
-      segments.takeLastWhile { segment ->
-        length += segment.length
-        takenSegments++
-        length <= MAX_PATH_LENGTH || takenSegments <= MIN_SEGMENTS_NUMBER
-      }
-    val tailString = tailSegments.joinToString("/")
-    val repo = relativeDir.repo
-    val repoString = if (repo is Main) "" else repo.toString()
-    return if (tailSegments.size == segments.size) "$repoString//$tailString" else "$repoString//.../$tailString"
-  }
+    private BazelFileUtils() {
+    }
+
+    public static @Nullable String getContainingDirectoryPresentablePath(Project project, VirtualFile file) {
+        ResolvedLabel calculated = BazelRepoMappingUtils.calculateLabel(project, file);
+        Label apparent = calculated == null ? null : BazelRepoMappingUtils.toApparentLabelOrThis(calculated, project);
+        if (!(apparent instanceof ResolvedLabel relativeDir)) {
+            return null;
+        }
+        if (relativeDir.repo() instanceof Main && relativeDir.packagePath().pathSegments().isEmpty()) {
+            return null;
+        }
+        String presentablePath = truncatePathHead(relativeDir);
+        return file.getNameWithoutExtension() + " (" + presentablePath + ")";
+    }
+
+    private static String truncatePathHead(ResolvedLabel relativeDir) {
+        List<String> segments = relativeDir.packagePath().pathSegments();
+        int takenSegments = 0;
+        int length = 0;
+        // consulo: Kotlin takeLastWhile { }
+        int firstTaken = segments.size();
+        for (int i = segments.size() - 1; i >= 0; i--) {
+            String segment = segments.get(i);
+            length += segment.length();
+            takenSegments++;
+            if (!(length <= MAX_PATH_LENGTH || takenSegments <= MIN_SEGMENTS_NUMBER)) {
+                break;
+            }
+            firstTaken = i;
+        }
+        List<String> tailSegments = segments.subList(firstTaken, segments.size());
+        String tailString = String.join("/", tailSegments);
+        RepoType repo = relativeDir.repo();
+        String repoString = repo instanceof Main ? "" : repo.toString();
+        return tailSegments.size() == segments.size() ? repoString + "//" + tailString : repoString + "//.../" + tailString;
+    }
 }

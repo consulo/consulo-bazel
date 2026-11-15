@@ -1,25 +1,34 @@
-package org.jetbrains.bazel.ui.gutters
+package org.jetbrains.bazel.ui.gutters;
 
-import com.intellij.execution.Location
-import com.intellij.execution.lineMarker.ExecutorAction
-import com.intellij.execution.lineMarker.LineMarkerActionWrapper
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.DataSink
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bsp.protocol.BuildTarget
+import consulo.annotation.access.RequiredReadAction;
+import consulo.execution.action.Location;
+import consulo.execution.lineMarker.ExecutorAction;
+import consulo.project.Project;
+import consulo.ui.ex.action.AnAction;
+import org.jetbrains.bsp.protocol.BuildTarget;
 
-internal fun getExecutorActions(project: Project, target: BuildTarget): List<AnAction> =
-  getExecutorActions(BazelRunLocation(project, target))
+import java.util.List;
 
-@ApiStatus.Internal
-fun getExecutorActions(location: Location<*>): List<AnAction> {
-  val executorActions = ExecutorAction.getActions()
-  return executorActions.map { executorAction ->
-    object : LineMarkerActionWrapper(location.psiElement, executorAction) {
-      override fun dataSnapshot(sink: DataSink) {
-        sink[Location.DATA_KEY] = location
-      }
+public final class ExecutorActionsUtil {
+    private ExecutorActionsUtil() {
     }
-  }
+
+    @RequiredReadAction
+    public static List<AnAction> getExecutorActions(Project project, BuildTarget target) {
+        return getExecutorActions(new BazelRunLocation(project, target));
+    }
+
+    public static List<AnAction> getExecutorActions(Location<?> location) {
+        List<AnAction> executorActions = ExecutorAction.getActionList();
+        // TODO consulo: LineMarkerActionWrapper is internal API (consulo.execution.impl) and Consulo actions have no
+        //  dataSnapshot(DataSink); the executor actions are returned without providing the location as Location.DATA_KEY:
+        //  return executorActions.map { executorAction ->
+        //    object : LineMarkerActionWrapper(location.psiElement, executorAction) {
+        //      override fun dataSnapshot(sink: DataSink) {
+        //        sink[Location.DATA_KEY] = location
+        //      }
+        //    }
+        //  }
+        return executorActions;
+    }
 }

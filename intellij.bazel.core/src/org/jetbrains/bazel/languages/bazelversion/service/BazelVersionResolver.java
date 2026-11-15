@@ -1,18 +1,28 @@
-package org.jetbrains.bazel.languages.bazelversion.service
+package org.jetbrains.bazel.languages.bazelversion.service;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionLiteral
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import consulo.project.Project;
+import org.jetbrains.bazel.languages.bazelversion.psi.BazelVersionLiteral;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelVersionResolver {
-  val id: String
-  val name: String
+import java.util.concurrent.CompletableFuture;
 
-  suspend fun resolveLatestBazelVersion(project: Project, currentVersion: BazelVersionLiteral?): BazelVersionLiteral?
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelVersionResolver {
+    String getId();
 
-  companion object {
-    val ep = ExtensionPointName.create<BazelVersionResolver>("org.jetbrains.bazel.bazelVersionResolver")
-  }
+    String getName();
+
+    CompletableFuture<@Nullable BazelVersionLiteral> resolveLatestBazelVersion(
+        Project project,
+        @Nullable BazelVersionLiteral currentVersion
+    );
+
+    // consulo: upstream ExtensionPointName "org.jetbrains.bazel.bazelVersionResolver"
+    static ExtensionPoint<BazelVersionResolver> getEp() {
+        return Application.get().getExtensionPoint(BazelVersionResolver.class);
+    }
 }

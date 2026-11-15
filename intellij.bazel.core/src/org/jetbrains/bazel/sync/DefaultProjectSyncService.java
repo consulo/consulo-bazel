@@ -1,24 +1,42 @@
-package org.jetbrains.bazel.sync
+package org.jetbrains.bazel.sync;
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.sync.task.ProjectSyncTask
-import org.jetbrains.bsp.protocol.TaskId
+import consulo.annotation.component.ServiceImpl;
+import consulo.project.Project;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.sync.task.ProjectSyncTask;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jspecify.annotations.Nullable;
 
-@Service(Service.Level.PROJECT)
-internal class DefaultProjectSyncService(private val project: Project) : ProjectSyncService {
-  @Volatile
-  override var lastSyncTaskId: TaskId? = null
-    private set
+import java.util.concurrent.CompletableFuture;
 
-  override suspend fun sync(scope: ProjectSyncScope): ProjectSyncOutcome {
-    val task = ProjectSyncTask(
-      project = project,
-      scope = scope,
-      onSyncTaskStarted = { lastSyncTaskId = it },
-    )
-    val outcome = task.sync()
-    ProjectDirtyStateService.getInstance(project).finishSync(scope)
-    return outcome
-  }
+@ServiceImpl
+@Singleton
+public class DefaultProjectSyncService implements ProjectSyncService {
+    private final Project myProject;
+
+    private volatile @Nullable TaskId myLastSyncTaskId = null;
+
+    @Inject
+    public DefaultProjectSyncService(Project project) {
+        myProject = project;
+    }
+
+    @Override
+    public @Nullable TaskId getLastSyncTaskId() {
+        return myLastSyncTaskId;
+    }
+
+    @Override
+    public CompletableFuture<ProjectSyncOutcome> sync(ProjectSyncScope scope) {
+        ProjectSyncTask task = new ProjectSyncTask(
+            /* project = */ myProject,
+            /* scope = */ scope,
+            /* onSyncTaskStarted = */ it -> myLastSyncTaskId = it
+        );
+        return task.sync().thenApply(outcome -> {
+            ProjectDirtyStateService.getInstance(myProject).finishSync(scope);
+            return outcome;
+        });
+    }
 }

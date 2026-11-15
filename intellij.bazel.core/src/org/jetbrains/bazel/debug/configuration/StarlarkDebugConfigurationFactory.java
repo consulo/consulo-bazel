@@ -1,20 +1,27 @@
-package org.jetbrains.bazel.debug.configuration
+package org.jetbrains.bazel.debug.configuration;
 
-import com.intellij.execution.configurations.ConfigurationFactory
-import com.intellij.execution.configurations.ConfigurationType
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.openapi.components.BaseState
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
+import consulo.application.dumb.DumbAware;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.configuration.ConfigurationType;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.project.Project;
 
-internal class StarlarkDebugConfigurationFactory(type: ConfigurationType) :
-  ConfigurationFactory(type),
-  DumbAware {
-  override fun createTemplateConfiguration(project: Project): RunConfiguration = StarlarkDebugConfiguration(project, this, "")
+public class StarlarkDebugConfigurationFactory extends ConfigurationFactory implements DumbAware {
+    public StarlarkDebugConfigurationFactory(ConfigurationType type) {
+        super(type);
+    }
 
-  override fun getOptionsClass(): Class<out BaseState> = StarlarkDebugConfiguration.Options::class.java
+    @Override
+    public RunConfiguration createTemplateConfiguration(Project project) {
+        return new StarlarkDebugConfiguration(project, this, "");
+    }
 
-  override fun getId(): String = "StarlarkDebugFactory"
+    // consulo: ConfigurationFactory has no getOptionsClass(), StarlarkDebugConfiguration serializes its Options itself
 
-  override fun isEditableInDumbMode(): Boolean = true
+    @Override
+    public String getId() {
+        return "StarlarkDebugFactory";
+    }
+
+    // consulo: ConfigurationFactory has no isEditableInDumbMode() (upstream returns true)
 }

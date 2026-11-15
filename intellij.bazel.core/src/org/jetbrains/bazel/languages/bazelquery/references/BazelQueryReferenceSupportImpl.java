@@ -1,15 +1,30 @@
-package org.jetbrains.bazel.languages.bazelquery.references
+package org.jetbrains.bazel.languages.bazelquery.references;
 
-import com.intellij.model.psi.PsiSymbolReference
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryCommand
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlag
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryReferenceSupport
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryCommand;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlag;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryReferenceSupport;
 
-@Suppress("UnstableApiUsage")
-internal class BazelQueryReferenceSupportImpl : BazelQueryReferenceSupport {
-  override fun getOwnReferences(element: BazelQueryCommand): Collection<PsiSymbolReference> =
-    element.name?.let { listOf(BazelQueryFunctionReference(element)) } ?: emptyList()
+import java.util.Collection;
+import java.util.List;
 
-  override fun getOwnReferences(element: BazelQueryFlag): Collection<PsiSymbolReference> =
-    element.name?.let { listOf(BazelQueryFlagNameReference(element)) } ?: emptyList()
+// consulo: upstream PsiSymbolReference own references are classic references
+@ExtensionImpl
+class BazelQueryReferenceSupportImpl implements BazelQueryReferenceSupport {
+    public BazelQueryReferenceSupportImpl() {
+    }
+
+    @Override
+    @RequiredReadAction
+    public Collection<PsiReference> getOwnReferences(BazelQueryCommand element) {
+        return element.getNameElement() != null ? List.of(new BazelQueryFunctionReference(element)) : List.of();
+    }
+
+    @Override
+    @RequiredReadAction
+    public Collection<PsiReference> getOwnReferences(BazelQueryFlag element) {
+        return element.getNameElement() != null ? List.of(new BazelQueryFlagNameReference(element)) : List.of();
+    }
 }

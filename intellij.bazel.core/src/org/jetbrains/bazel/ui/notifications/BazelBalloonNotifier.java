@@ -1,83 +1,117 @@
-package org.jetbrains.bazel.ui.notifications
+package org.jetbrains.bazel.ui.notifications;
 
-import com.intellij.notification.Notification
-import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
-import org.jetbrains.annotations.ApiStatus
-import javax.swing.Icon
+import consulo.bazel.core.BazelNotificationGroupContributor;
+import consulo.localize.LocalizeValue;
+import consulo.project.ui.notification.NotificationService;
+import consulo.project.ui.notification.NotificationType;
+import consulo.ui.image.Image;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Facilitates displaying balloon notifications. Notifications will display as follows:
- * ```
+ * <pre>
  * --------------------------
- * | [icon] <build tool id>: [subtitle] |
+ * | [icon] &lt;build tool id&gt;: [subtitle] |
  * |        [content]       |
  * --------------------------
- * ```
- * Custom icons are used only in `info(...)`; Bazel icon is used by default.
- *
- * In `warn(...)` and `error(...)` default icons are used, because
+ * </pre>
+ * Custom icons are used only in {@code info(...)}; Bazel icon is used by default.
+ * <p>
+ * In {@code warn(...)} and {@code error(...)} default icons are used, because
  * the icon is the only difference between error, warning and information.
- *
- * If subtitle is empty, there will be no `':'` character after "Bazel".
+ * <p>
+ * If subtitle is empty, there will be no {@code ':'} character after "Bazel".
  */
-@ApiStatus.Internal
-object BazelBalloonNotifier {
-  /**
-   * Display an information as a balloon notification
-   *
-   * @param title title of the notification
-   * @param content main content of the notification
-   * @param subtitle subtitle of the notification (none by default)
-   * @param customIcon icon for the notification
-   */
-  public fun info(
-    title: String,
-    content: String,
-    subtitle: String = "",
-    customIcon: Icon,
-  ): Unit = notify(title, content, subtitle, NotificationType.INFORMATION, customIcon)
+public final class BazelBalloonNotifier {
+    private BazelBalloonNotifier() {
+    }
 
-  /**
-   * Display a warning as a balloon notification
-   *
-   * @param title title of the notification
-   * @param content main content of the notification
-   * @param subtitle subtitle of the notification (none by default)
-   */
-  public fun warn(
-    title: String,
-    content: String,
-    subtitle: String = "",
-  ): Unit = notify(title, content, subtitle, NotificationType.WARNING, null)
+    /**
+     * Display an information as a balloon notification
+     *
+     * @param title      title of the notification
+     * @param content    main content of the notification
+     * @param subtitle   subtitle of the notification (none by default)
+     * @param customIcon icon for the notification
+     */
+    public static void info(
+        LocalizeValue title,
+        LocalizeValue content,
+        LocalizeValue subtitle,
+        Image customIcon
+    ) {
+        notify(title, content, subtitle, NotificationType.INFORMATION, customIcon);
+    }
 
-  /**
-   * Display an error as a balloon notification
-   *
-   * @param title title of the notification
-   * @param content main content of the notification
-   * @param subtitle subtitle of the notification (none by default)
-   */
-  public fun error(
-    title: String,
-    content: String,
-    subtitle: String = "",
-  ): Unit = notify(title, content, subtitle, NotificationType.ERROR, null)
+    // consulo: overload for the upstream default argument subtitle = ""
+    public static void info(
+        LocalizeValue title,
+        LocalizeValue content,
+        Image customIcon
+    ) {
+        info(title, content, LocalizeValue.empty(), customIcon);
+    }
 
-  private fun notify(
-    title: String,
-    content: String,
-    subtitle: String,
-    notificationType: NotificationType,
-    customIcon: Icon?,
-  ) {
-    val notification =
-      Notification(BALLOON_ID, "<html>$content</html>", notificationType)
-        .setTitle(title)
-        .setSubtitle(subtitle)
-        .let { if (customIcon != null) it.setIcon(customIcon) else it }
-    Notifications.Bus.notify(notification)
-  }
+    /**
+     * Display a warning as a balloon notification
+     *
+     * @param title    title of the notification
+     * @param content  main content of the notification
+     * @param subtitle subtitle of the notification (none by default)
+     */
+    public static void warn(
+        LocalizeValue title,
+        LocalizeValue content,
+        LocalizeValue subtitle
+    ) {
+        notify(title, content, subtitle, NotificationType.WARNING, null);
+    }
+
+    // consulo: overload for the upstream default argument subtitle = ""
+    public static void warn(
+        LocalizeValue title,
+        LocalizeValue content
+    ) {
+        warn(title, content, LocalizeValue.empty());
+    }
+
+    /**
+     * Display an error as a balloon notification
+     *
+     * @param title    title of the notification
+     * @param content  main content of the notification
+     * @param subtitle subtitle of the notification (none by default)
+     */
+    public static void error(
+        LocalizeValue title,
+        LocalizeValue content,
+        LocalizeValue subtitle
+    ) {
+        notify(title, content, subtitle, NotificationType.ERROR, null);
+    }
+
+    // consulo: overload for the upstream default argument subtitle = ""
+    public static void error(
+        LocalizeValue title,
+        LocalizeValue content
+    ) {
+        error(title, content, LocalizeValue.empty());
+    }
+
+    private static void notify(
+        LocalizeValue title,
+        LocalizeValue content,
+        LocalizeValue subtitle,
+        NotificationType notificationType,
+        @Nullable Image customIcon
+    ) {
+        // consulo: BALLOON_ID ("BazelPlugin") is the group BazelNotificationGroupContributor.BAZEL_PLUGIN
+        NotificationService.getInstance()
+            .newOfType(BazelNotificationGroupContributor.BAZEL_PLUGIN, notificationType)
+            .content(content.map(it -> "<html>" + it + "</html>"))
+            .title(title)
+            .subtitle(subtitle)
+            .optionalIcon(customIcon)
+            .notify(null);
+    }
 }
-
-private const val BALLOON_ID = "BazelPlugin"

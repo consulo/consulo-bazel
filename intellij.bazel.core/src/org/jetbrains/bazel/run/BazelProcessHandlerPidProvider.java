@@ -1,10 +1,13 @@
-package org.jetbrains.bazel.run
+package org.jetbrains.bazel.run;
 
-import com.intellij.execution.impl.ProcessHandlerPidProvider
-import com.intellij.execution.process.ProcessHandler
-import kotlinx.coroutines.Deferred
+import consulo.process.ProcessHandler;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelProcessHandlerPidProvider : ProcessHandlerPidProvider {
-  override fun getPid(processHandler: ProcessHandler): Deferred<Long?>? =
-    (processHandler as? BazelProcessHandler)?.pid
+import java.util.concurrent.CompletableFuture;
+
+// TODO consulo: ProcessHandlerPidProvider (execution.processHandlerPidProvider) is missing in Consulo, the provider is not registered
+class BazelProcessHandlerPidProvider {
+    public @Nullable CompletableFuture<@Nullable Long> getPid(ProcessHandler processHandler) {
+        return processHandler instanceof BazelProcessHandler bazelProcessHandler ? bazelProcessHandler.getPid() : null;
+    }
 }

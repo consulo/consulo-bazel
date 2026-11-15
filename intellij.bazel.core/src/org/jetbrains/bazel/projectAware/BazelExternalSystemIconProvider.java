@@ -1,10 +1,22 @@
-package org.jetbrains.bazel.projectAware
+package org.jetbrains.bazel.projectAware;
 
-import com.intellij.openapi.externalSystem.ui.ExternalSystemIconProvider
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import javax.swing.Icon
+import consulo.annotation.component.ExtensionImpl;
+import consulo.externalSystem.model.ProjectSystemId;
+import consulo.externalSystem.ui.ExternalSystemIconProvider;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jetbrains.bazel.config.BazelPluginConstants;
 
-internal class BazelExternalSystemIconProvider : ExternalSystemIconProvider {
-  override val reloadIcon: Icon
-    get() = BazelPluginIcons.bazelReload
+@ExtensionImpl
+public class BazelExternalSystemIconProvider implements ExternalSystemIconProvider {
+    // consulo: upstream <externalIconProvider key="bazel">
+    @Override
+    public ProjectSystemId getSystemId() {
+        return BazelPluginConstants.SYSTEM_ID;
+    }
+
+    @Override
+    public Image getReloadIcon() {
+        return BazelPluginIcons.bazelReload();
+    }
 }

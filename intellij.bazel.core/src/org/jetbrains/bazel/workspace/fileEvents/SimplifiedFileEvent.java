@@ -1,172 +1,307 @@
-package org.jetbrains.bazel.workspace.fileEvents
+package org.jetbrains.bazel.workspace.fileEvents;
 
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectFileIndex
-import com.intellij.openapi.util.io.toNioPathOrNull
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
-import com.intellij.openapi.vfs.newvfs.events.VFileCopyEvent
-import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent
-import com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
-import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
-import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
-import com.intellij.util.concurrency.annotations.RequiresReadLock
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.ignore.BazelIgnoreService
-import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.extension
+import consulo.annotation.access.RequiredReadAction;
+import consulo.module.content.ProjectFileIndex;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.VirtualFileManager;
+import consulo.virtualFileSystem.event.VFileContentChangeEvent;
+import consulo.virtualFileSystem.event.VFileCopyEvent;
+import consulo.virtualFileSystem.event.VFileCreateEvent;
+import consulo.virtualFileSystem.event.VFileDeleteEvent;
+import consulo.virtualFileSystem.event.VFileEvent;
+import consulo.virtualFileSystem.event.VFileMoveEvent;
+import consulo.virtualFileSystem.event.VFilePropertyChangeEvent;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.ignore.BazelIgnoreService;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-sealed class SimplifiedFileEvent private constructor(
-  val fileRemoved: Path?,
-  val fileAdded: Path?,
-  val newVirtualFile: VirtualFile? = null,
-) {
-  private constructor(fileRemoved: String? = null, fileAdded: String? = null, newVirtualFile: VirtualFile? = null) : this(
-    fileRemoved = fileRemoved?.toNioPathOrNull(),
-    fileAdded = fileAdded?.toNioPathOrNull(),
-    newVirtualFile = newVirtualFile,
-  )
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
-  /** The paths that the event affects. A move or a rename affects two. */
-  fun affectedPaths(): List<Path> = listOfNotNull(fileRemoved, fileAdded)
+public abstract sealed class SimplifiedFileEvent permits SimplifiedFileEvent.Create, SimplifiedFileEvent.CreateDirectory,
+    SimplifiedFileEvent.Copy, SimplifiedFileEvent.ContentChange, SimplifiedFileEvent.Delete, SimplifiedFileEvent.Move,
+    SimplifiedFileEvent.Rename {
+    private final @Nullable Path myFileRemoved;
+    private final @Nullable Path myFileAdded;
+    private final @Nullable VirtualFile myNewVirtualFile;
 
-  /** Returns true if Bazel reads the file itself, for example a BUILD or a `.bzl` file. */
-  fun affectsBazelConfigFile(): Boolean =
-    this !is CreateDirectory && affectedPaths().any { isBazelConfigFile(it) }
-
-  /** Returns true if a Bazel target can own the file, so the workspace model may need an update. */
-  fun affectsSourceFile(project: Project): Boolean =
-    // the content of a source file never changes the target that owns it
-    this !is ContentChange && affectedPaths().any { it.isSourceFile(project) }
-
-  fun shouldBeProcessed(project: Project): Boolean {
-    val rootPath = project.rootDir.toNioPath()
-    if (affectedPaths().none { it.startsWith(rootPath) }) return false
-
-    // Check for ignored files
-    if (affectedPaths().all { BazelIgnoreService.getInstance(project).isIgnored(it) })
-      return false
-
-    // check for files under .bazelbsp
-    val bazelBsp = rootPath.resolve(Constants.DOT_BAZELBSP_DIR_NAME)
-    if (affectedPaths().all { it.startsWith(bazelBsp) })
-      return false
-
-    return this !is CreateDirectory || fileAdded != null && newVirtualFile?.isValid == true
-  }
-
-  private fun Path.isSourceFile(project: Project): Boolean =
-    LanguageClass.fromExtension(this.extension) != null &&
-    !BazelIgnoreService.getInstance(project).isIgnored(this)
-
-  fun doesAffectFolder(folderPath: Path): Boolean =
-    fileRemoved?.startsWith(folderPath) == true || fileAdded?.startsWith(folderPath) == true
-
-  @RequiresReadLock(generateAssertion = false /* IJPL-115548 */)
-  fun affectsExcludedFiles(fileIndex: ProjectFileIndex, fileManager: VirtualFileManager): Boolean =
-    newVirtualFile.isExcludedInFileIndex(fileIndex) ||
-    fileRemoved?.getFirstExistingAncestor()?.let { fileManager.findFileByNioPath(it) }.isExcludedInFileIndex(fileIndex)
-
-  private fun VirtualFile?.isExcludedInFileIndex(fileIndex: ProjectFileIndex): Boolean =
-    this?.let { fileIndex.isExcluded(it) } == true
-
-  private fun Path.getFirstExistingAncestor(): Path? {
-    var ancestor = parent
-    while (ancestor != null && !ancestor.exists()) {
-      ancestor = ancestor.parent
+    private SimplifiedFileEvent(
+        @Nullable Path fileRemoved,
+        @Nullable Path fileAdded,
+        @Nullable VirtualFile newVirtualFile
+    ) {
+        myFileRemoved = fileRemoved;
+        myFileAdded = fileAdded;
+        myNewVirtualFile = newVirtualFile;
     }
-    return ancestor
-  }
 
-  override fun equals(other: Any?): Boolean {
-    if (this === other) return true
-    if (other !is SimplifiedFileEvent) return false
+    private SimplifiedFileEvent(@Nullable String fileRemoved, @Nullable String fileAdded, @Nullable VirtualFile newVirtualFile) {
+        this(
+            /* fileRemoved = */ fileRemoved != null ? toNioPathOrNull(fileRemoved) : null,
+            /* fileAdded = */ fileAdded != null ? toNioPathOrNull(fileAdded) : null,
+            /* newVirtualFile = */ newVirtualFile
+        );
+    }
 
-    if (fileRemoved != other.fileRemoved) return false
-    if (fileAdded != other.fileAdded) return false
-    if (newVirtualFile != other.newVirtualFile) return false
+    public @Nullable Path getFileRemoved() {
+        return myFileRemoved;
+    }
 
-    return true
-  }
+    public @Nullable Path getFileAdded() {
+        return myFileAdded;
+    }
 
-  override fun hashCode(): Int {
-    var result = fileRemoved.hashCode()
-    result = 31 * result + fileAdded.hashCode()
-    result = 31 * result + newVirtualFile.hashCode()
-    return result
-  }
+    public @Nullable VirtualFile getNewVirtualFile() {
+        return myNewVirtualFile;
+    }
 
-  override fun toString(): String {
-    return "${javaClass.simpleName}(removed=$fileRemoved, added=$fileAdded)"
-  }
+    /**
+     * The paths that the event affects. A move or a rename affects two.
+     */
+    public List<Path> affectedPaths() {
+        List<Path> result = new ArrayList<>(2);
+        if (myFileRemoved != null) {
+            result.add(myFileRemoved);
+        }
+        if (myFileAdded != null) {
+            result.add(myFileAdded);
+        }
+        return result;
+    }
 
-  class Create(path: String, vFile: VirtualFile?)
-    : SimplifiedFileEvent(fileAdded = path, newVirtualFile = vFile) {
-    constructor(originalEvent: VFileCreateEvent): this(originalEvent.path, originalEvent.file)
-  }
+    /**
+     * Returns true if Bazel reads the file itself, for example a BUILD or a `.bzl` file.
+     */
+    public boolean affectsBazelConfigFile() {
+        return !(this instanceof CreateDirectory) && affectedPaths().stream().anyMatch(SimplifiedFileEvent::isBazelConfigFile);
+    }
 
-  class CreateDirectory(originalEvent: VFileCreateEvent) :
-    SimplifiedFileEvent(fileAdded = originalEvent.path, newVirtualFile = originalEvent.file)
+    /**
+     * Returns true if a Bazel target can own the file, so the workspace model may need an update.
+     */
+    public boolean affectsSourceFile(Project project) {
+        // the content of a source file never changes the target that owns it
+        return !(this instanceof ContentChange) && affectedPaths().stream().anyMatch(it -> isSourceFile(it, project));
+    }
 
-  class Copy(originalEvent: VFileCopyEvent)
-    : SimplifiedFileEvent(fileAdded = originalEvent.path, newVirtualFile = originalEvent.findCreatedFile())
-
-  /**
-   * A change of the file content, in practice a save.
-   *
-   * Bazel reads the new content of a configuration file, so the plugin must see the save. The path
-   * goes into [fileAdded], because the file is present after the event. [affectsSourceFile] is
-   * always false, so such an event never reaches the workspace model update.
-   */
-  class ContentChange(originalEvent: VFileContentChangeEvent)
-    : SimplifiedFileEvent(fileAdded = originalEvent.path, newVirtualFile = originalEvent.file)
-
-  class Delete(originalEvent: VFileDeleteEvent) : SimplifiedFileEvent(fileRemoved = originalEvent.path)
-
-  class Move(originalEvent: VFileMoveEvent)
-    : SimplifiedFileEvent(fileRemoved = originalEvent.oldPath, fileAdded = originalEvent.newPath, newVirtualFile = originalEvent.file)
-
-  class Rename(originalEvent: VFilePropertyChangeEvent)
-    : SimplifiedFileEvent(fileRemoved = originalEvent.oldPath, fileAdded = originalEvent.newPath, newVirtualFile = originalEvent.file)
-
-  companion object {
-    fun from(event: VFileEvent): SimplifiedFileEvent? =
-      when (event) {
-        is VFileCreateEvent ->
-          if (event.isDirectory) {
-            CreateDirectory(event)
-          }
-          else {
-            Create(event)
-          }
-        is VFileCopyEvent -> Copy(event)
-        is VFileContentChangeEvent -> ContentChange(event)
-        is VFileDeleteEvent -> Delete(event)
-        is VFileMoveEvent -> Move(event)
-        is VFilePropertyChangeEvent -> {
-          if (event.propertyName == VirtualFile.PROP_NAME) { // file rename
-            Rename(event)
-          } else { // property change other than file rename
-            null
-          }
+    public boolean shouldBeProcessed(Project project) {
+        Path rootPath = org.jetbrains.bazel.config.project.getRootDir(project).toNioPath();
+        if (affectedPaths().stream().noneMatch(it -> it.startsWith(rootPath))) {
+            return false;
         }
 
-        else -> null
-      }
+        // Check for ignored files
+        if (affectedPaths().stream().allMatch(it -> BazelIgnoreService.getInstance(project).isIgnored(it))) {
+            return false;
+        }
 
-    val SUPPORTED_CONFIG_FILE_NAMES: Set<String> = Constants.SUPPORTED_CONFIG_FILE_NAMES.toSet()
+        // check for files under .bazelbsp
+        Path bazelBsp = rootPath.resolve(Constants.DOT_BAZELBSP_DIR_NAME);
+        if (affectedPaths().stream().allMatch(it -> it.startsWith(bazelBsp))) {
+            return false;
+        }
 
-    /** Returns true if [file] names a Bazel configuration file. */
-    fun isBazelConfigFile(file: Path): Boolean {
-      return file.fileName.toString() in SUPPORTED_CONFIG_FILE_NAMES ||
-             file.extension in Constants.SUPPORTED_EXTENSIONS
+        return !(this instanceof CreateDirectory) || myFileAdded != null && myNewVirtualFile != null && myNewVirtualFile.isValid();
     }
-  }
+
+    private boolean isSourceFile(Path receiver, Project project) {
+        return LanguageClass.fromExtension(extension(receiver)) != null &&
+            !BazelIgnoreService.getInstance(project).isIgnored(receiver);
+    }
+
+    public boolean doesAffectFolder(Path folderPath) {
+        return myFileRemoved != null && myFileRemoved.startsWith(folderPath) || myFileAdded != null && myFileAdded.startsWith(folderPath);
+    }
+
+    @RequiredReadAction
+    public boolean affectsExcludedFiles(ProjectFileIndex fileIndex, VirtualFileManager fileManager) {
+        if (isExcludedInFileIndex(myNewVirtualFile, fileIndex)) {
+            return true;
+        }
+        Path firstExistingAncestor = myFileRemoved != null ? getFirstExistingAncestor(myFileRemoved) : null;
+        VirtualFile ancestorFile = firstExistingAncestor != null ? fileManager.findFileByNioPath(firstExistingAncestor) : null;
+        return isExcludedInFileIndex(ancestorFile, fileIndex);
+    }
+
+    private static boolean isExcludedInFileIndex(@Nullable VirtualFile receiver, ProjectFileIndex fileIndex) {
+        return receiver != null && fileIndex.isExcluded(receiver);
+    }
+
+    private static @Nullable Path getFirstExistingAncestor(Path receiver) {
+        Path ancestor = receiver.getParent();
+        while (ancestor != null && !Files.exists(ancestor)) {
+            ancestor = ancestor.getParent();
+        }
+        return ancestor;
+    }
+
+    @Override
+    public boolean equals(@Nullable Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof SimplifiedFileEvent otherEvent)) {
+            return false;
+        }
+
+        if (!Objects.equals(myFileRemoved, otherEvent.myFileRemoved)) {
+            return false;
+        }
+        if (!Objects.equals(myFileAdded, otherEvent.myFileAdded)) {
+            return false;
+        }
+        if (!Objects.equals(myNewVirtualFile, otherEvent.myNewVirtualFile)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hashCode(myFileRemoved);
+        result = 31 * result + Objects.hashCode(myFileAdded);
+        result = 31 * result + Objects.hashCode(myNewVirtualFile);
+        return result;
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getSimpleName() + "(removed=" + myFileRemoved + ", added=" + myFileAdded + ")";
+    }
+
+    public static final class Create extends SimplifiedFileEvent {
+        public Create(String path, @Nullable VirtualFile vFile) {
+            super((String) null, /* fileAdded = */ path, /* newVirtualFile = */ vFile);
+        }
+
+        public Create(VFileCreateEvent originalEvent) {
+            this(originalEvent.getPath(), originalEvent.getFile());
+        }
+    }
+
+    public static final class CreateDirectory extends SimplifiedFileEvent {
+        public CreateDirectory(VFileCreateEvent originalEvent) {
+            super((String) null, /* fileAdded = */ originalEvent.getPath(), /* newVirtualFile = */ originalEvent.getFile());
+        }
+    }
+
+    public static final class Copy extends SimplifiedFileEvent {
+        public Copy(VFileCopyEvent originalEvent) {
+            super((String) null, /* fileAdded = */ originalEvent.getPath(), /* newVirtualFile = */ originalEvent.findCreatedFile());
+        }
+    }
+
+    /**
+     * A change of the file content, in practice a save.
+     * <p>
+     * Bazel reads the new content of a configuration file, so the plugin must see the save. The path
+     * goes into {@code fileAdded}, because the file is present after the event. {@link #affectsSourceFile} is
+     * always false, so such an event never reaches the workspace model update.
+     */
+    public static final class ContentChange extends SimplifiedFileEvent {
+        public ContentChange(VFileContentChangeEvent originalEvent) {
+            super((String) null, /* fileAdded = */ originalEvent.getPath(), /* newVirtualFile = */ originalEvent.getFile());
+        }
+    }
+
+    public static final class Delete extends SimplifiedFileEvent {
+        public Delete(VFileDeleteEvent originalEvent) {
+            super(/* fileRemoved = */ originalEvent.getPath(), (String) null, null);
+        }
+    }
+
+    public static final class Move extends SimplifiedFileEvent {
+        public Move(VFileMoveEvent originalEvent) {
+            super(
+                /* fileRemoved = */ originalEvent.getOldPath(),
+                /* fileAdded = */ originalEvent.getNewPath(),
+                /* newVirtualFile = */ originalEvent.getFile()
+            );
+        }
+    }
+
+    public static final class Rename extends SimplifiedFileEvent {
+        public Rename(VFilePropertyChangeEvent originalEvent) {
+            super(
+                /* fileRemoved = */ originalEvent.getOldPath(),
+                /* fileAdded = */ originalEvent.getNewPath(),
+                /* newVirtualFile = */ originalEvent.getFile()
+            );
+        }
+    }
+
+    public static @Nullable SimplifiedFileEvent from(VFileEvent event) {
+        if (event instanceof VFileCreateEvent createEvent) {
+            if (createEvent.isDirectory()) {
+                return new CreateDirectory(createEvent);
+            }
+            else {
+                return new Create(createEvent);
+            }
+        }
+        else if (event instanceof VFileCopyEvent copyEvent) {
+            return new Copy(copyEvent);
+        }
+        else if (event instanceof VFileContentChangeEvent contentChangeEvent) {
+            return new ContentChange(contentChangeEvent);
+        }
+        else if (event instanceof VFileDeleteEvent deleteEvent) {
+            return new Delete(deleteEvent);
+        }
+        else if (event instanceof VFileMoveEvent moveEvent) {
+            return new Move(moveEvent);
+        }
+        else if (event instanceof VFilePropertyChangeEvent propertyChangeEvent) {
+            if (VirtualFile.PROP_NAME.equals(propertyChangeEvent.getPropertyName())) { // file rename
+                return new Rename(propertyChangeEvent);
+            }
+            else { // property change other than file rename
+                return null;
+            }
+        }
+        else {
+            return null;
+        }
+    }
+
+    public static final Set<String> SUPPORTED_CONFIG_FILE_NAMES = Set.copyOf(Arrays.asList(Constants.SUPPORTED_CONFIG_FILE_NAMES));
+
+    /**
+     * Returns true if {@code file} names a Bazel configuration file.
+     */
+    public static boolean isBazelConfigFile(Path file) {
+        Path fileName = file.getFileName();
+        return fileName != null && SUPPORTED_CONFIG_FILE_NAMES.contains(fileName.toString()) ||
+            Arrays.asList(Constants.SUPPORTED_EXTENSIONS).contains(extension(file));
+    }
+
+    // consulo: IntelliJ String.toNioPathOrNull()
+    private static @Nullable Path toNioPathOrNull(String path) {
+        try {
+            return Path.of(path);
+        }
+        catch (InvalidPathException e) {
+            return null;
+        }
+    }
+
+    // consulo: Kotlin Path.extension
+    private static String extension(Path path) {
+        Path fileName = path.getFileName();
+        if (fileName == null) {
+            return "";
+        }
+        String name = fileName.toString();
+        int index = name.lastIndexOf('.');
+        return index < 0 ? "" : name.substring(index + 1);
+    }
 }

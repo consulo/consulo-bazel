@@ -1,37 +1,100 @@
-package org.jetbrains.bazel.languages.starlark.inspection
+package org.jetbrains.bazel.languages.starlark.inspection;
 
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.constants.Constants
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import consulo.util.collection.ArrayUtil;
+import org.jetbrains.bazel.commons.constants.Constants;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkFunctionDeclaration;
+import org.jspecify.annotations.Nullable;
 
 
-@ApiStatus.Internal
-class StarlarkFunctionDeclarationInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is StarlarkFileType
-
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor =
-    if (holder.file.name in AVAILABLE_FILE_NAMES) FunctionVisitor(holder)
-    else PsiElementVisitor.EMPTY_VISITOR
-
-  class FunctionVisitor(private val holder: ProblemsHolder) : StarlarkElementVisitor() {
-    override fun visitFunctionDeclaration(node: StarlarkFunctionDeclaration) {
-      val description = when (holder.file.name) {
-        Constants.MODULE_BAZEL_FILE_NAME -> StarlarkBundle.message("inspection.description.function.declaration.in.module.file")
-        in Constants.BUILD_FILE_NAMES -> StarlarkBundle.message("inspection.description.function.declaration.in.build.file")
-        else -> StarlarkBundle.message("inspection.description.function.declaration.in.workspace.file")
-      }
-      holder.registerProblem(node, description)
+@ExtensionImpl
+public class StarlarkFunctionDeclarationInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof StarlarkLanguage.StarlarkFileType;
     }
-  }
 
-  companion object {
-    private val AVAILABLE_FILE_NAMES = Constants.BUILD_FILE_NAMES + Constants.WORKSPACE_FILE_NAMES
-  }
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        if (ArrayUtil.contains(holder.getFile().getName(), AVAILABLE_FILE_NAMES)) {
+            return new FunctionVisitor(holder);
+        }
+        else {
+            return PsiElementVisitor.EMPTY_VISITOR;
+        }
+    }
+
+    public static class FunctionVisitor extends StarlarkElementVisitor {
+        private final ProblemsHolder myHolder;
+
+        public FunctionVisitor(ProblemsHolder holder) {
+            myHolder = holder;
+        }
+
+        @Override
+        public void visitFunctionDeclaration(StarlarkFunctionDeclaration node) {
+            String fileName = myHolder.getFile().getName();
+            LocalizeValue description;
+            if (fileName.equals(Constants.MODULE_BAZEL_FILE_NAME)) {
+                description = StarlarkLocalize.inspectionDescriptionFunctionDeclarationInModuleFile();
+            }
+            else if (ArrayUtil.contains(fileName, Constants.BUILD_FILE_NAMES)) {
+                description = StarlarkLocalize.inspectionDescriptionFunctionDeclarationInBuildFile();
+            }
+            else {
+                description = StarlarkLocalize.inspectionDescriptionFunctionDeclarationInWorkspaceFile();
+            }
+            myHolder.newProblem(description).range(node).create();
+        }
+    }
+
+    private static final String[] AVAILABLE_FILE_NAMES = ArrayUtil.mergeArrays(Constants.BUILD_FILE_NAMES, Constants.WORKSPACE_FILE_NAMES);
+
+    // consulo: registration attributes of <localInspection> in intellij.bazel.core.xml
+    @Override
+    public @Nullable Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    @Override
+    public String getShortName() {
+        return "StarlarkFunctionDeclaration";
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameStarlarkFunctionDeclarationCheck();
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.starlarkInspectionGroupName();
+    }
+
+    // consulo: upstream groupPath="Bazel"
+    @Override
+    public LocalizeValue[] getGroupPath() {
+        return new LocalizeValue[]{BazelPluginLocalize.bazelInspectionGroupName(), getGroupDisplayName()};
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }

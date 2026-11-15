@@ -1,21 +1,24 @@
-package org.jetbrains.bazel.languages.starlark.bazel.bzlmod
+package org.jetbrains.bazel.languages.starlark.bazel.bzlmod;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.project.Project;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface BazelModuleResolver {
-  val id: String
-  val name: String
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
-  suspend fun getModuleNames(project: Project): List<String>?
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelModuleResolver {
+    String getId();
 
-  suspend fun getModuleVersions(project: Project, moduleName: String): List<String>?
+    String getName();
 
-  suspend fun refreshModuleNames(project: Project)
+    CompletableFuture<@Nullable List<String>> getModuleNames(Project project);
 
-  companion object {
-    val EP_NAME: ExtensionPointName<BazelModuleResolver> = ExtensionPointName.create("org.jetbrains.bazel.bzlmodResolver")
-  }
+    CompletableFuture<@Nullable List<String>> getModuleVersions(Project project, String moduleName);
+
+    CompletableFuture<?> refreshModuleNames(Project project);
+
+    // consulo: upstream companion EP_NAME is Application.get().getExtensionList(BazelModuleResolver.class)
 }

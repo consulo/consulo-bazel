@@ -1,23 +1,48 @@
-package org.jetbrains.bazel.languages.bazelquery.references
+package org.jetbrains.bazel.languages.bazelquery.references;
 
-import com.intellij.model.Symbol
-import com.intellij.model.psi.PsiSymbolReference
-import com.intellij.openapi.util.TextRange
-import com.intellij.psi.PsiElement
-import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlag
-import org.jetbrains.bazel.languages.bazelrc.flags.BazelFlagSymbol
-import org.jetbrains.bazel.languages.bazelrc.flags.Flag
+import consulo.annotation.access.RequiredReadAction;
+import consulo.bazel.documentation.BazelDocumentationElement;
+import consulo.document.util.TextRange;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReferenceBase;
+import org.jetbrains.bazel.languages.bazelquery.psi.BazelQueryFlag;
+import org.jetbrains.bazel.languages.bazelrc.flags.BazelFlagSymbol;
+import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("UnstableApiUsage")
-internal class BazelQueryFlagNameReference(val element: BazelQueryFlag) : PsiSymbolReference {
-  val textRange = element.name?.textRangeInParent ?: element.textRange!!
+import java.util.Collection;
+import java.util.List;
 
-  override fun getElement(): PsiElement = element
+// consulo: upstream PsiSymbolReference (IntelliJ symbol API) -> classic soft reference resolving to a documentation element;
+// the upstream property `element` is PsiReferenceBase.getElement()
+class BazelQueryFlagNameReference extends PsiReferenceBase<BazelQueryFlag> {
+    @RequiredReadAction
+    BazelQueryFlagNameReference(BazelQueryFlag element) {
+        super(element, textRange(element), true);
+    }
 
-  override fun getRangeInElement(): TextRange = textRange
+    @RequiredReadAction
+    private static TextRange textRange(BazelQueryFlag element) {
+        PsiElement name = element.getNameElement();
+        return name != null ? name.getTextRangeInParent() : element.getTextRange();
+    }
 
-  override fun resolveReference(): Collection<Symbol> =
-    Flag
-      .byName(rangeInElement.substring(element.text))
-      ?.let { listOf(BazelFlagSymbol(it, element.project)) } ?: listOf()
+    public TextRange getTextRange() {
+        return getRangeInElement();
+    }
+
+    @RequiredReadAction
+    public Collection<BazelFlagSymbol> resolveReference() {
+        BazelQueryFlag element = getElement();
+        Flag flag = Flag.byName(getRangeInElement().substring(element.getText()));
+        return flag != null ? List.of(new BazelFlagSymbol(flag, element.getProject())) : List.of();
+    }
+
+    // consulo: the flag symbol is resolved to a light element carrying its documentation target
+    @Override
+    @RequiredReadAction
+    public @Nullable PsiElement resolve() {
+        Collection<BazelFlagSymbol> symbols = resolveReference();
+        return symbols.isEmpty() ? null : new BazelDocumentationElement(getElement(), symbols.iterator().next().getDocumentationTarget());
+    }
 }

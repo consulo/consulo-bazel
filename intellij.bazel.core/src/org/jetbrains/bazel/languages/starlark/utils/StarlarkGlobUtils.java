@@ -1,43 +1,51 @@
-package org.jetbrains.bazel.languages.starlark.utils
+package org.jetbrains.bazel.languages.starlark.utils;
 
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes
-import org.jetbrains.bazel.languages.starlark.globbing.getGlob
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkBinaryExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression
+import consulo.language.psi.PsiElement;
+import org.jetbrains.bazel.languages.starlark.elements.StarlarkTokenTypes;
+import org.jetbrains.bazel.languages.starlark.globbing.StarlarkGlob;
+import org.jetbrains.bazel.languages.starlark.globbing.StarlarkGlobExpressionGlob;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkBinaryExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkGlobExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkStringLiteralExpression;
 
-/**
- * Heuristically checks if the given "srcs = ..." expression positively matches the source file
- */
-@ApiStatus.Internal
-fun srcsExpressionMatchPath(expr: PsiElement, relativePath: String): Boolean {
-  if (expr is StarlarkCallExpression) {
-    return expr.getCalledExpression()?.let { srcsExpressionMatchPath(it, relativePath) } ?: false
-  }
+// consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name
+public final class StarlarkGlobUtils {
+    private StarlarkGlobUtils() {
+    }
 
-  if (expr is StarlarkGlobExpression) {
-    return expr.getGlob()?.match(relativePath) == true
-  }
+    /**
+     * Heuristically checks if the given "srcs = ..." expression positively matches the source file
+     */
+    public static boolean srcsExpressionMatchPath(PsiElement expr, String relativePath) {
+        if (expr instanceof StarlarkCallExpression callExpression) {
+            PsiElement calledExpression = callExpression.getCalledExpression();
+            return calledExpression != null && srcsExpressionMatchPath(calledExpression, relativePath);
+        }
 
-  if (expr is StarlarkStringLiteralExpression) {
-    val value = expr.getStringContents()
-    // TODO: support label refs
-    if (value.contains(":") || value.startsWith("@") || value.startsWith("//"))
-      return false
-    return value == relativePath
-  }
+        if (expr instanceof StarlarkGlobExpression globExpression) {
+            StarlarkGlob glob = StarlarkGlobExpressionGlob.getGlob(globExpression);
+            return glob != null && glob.match(relativePath);
+        }
 
-  if (expr is StarlarkListLiteralExpression) {
-    return expr.getElements().any { srcsExpressionMatchPath(it, relativePath) }
-  }
+        if (expr instanceof StarlarkStringLiteralExpression stringLiteralExpression) {
+            String value = stringLiteralExpression.getStringContents();
+            // TODO: support label refs
+            if (value.contains(":") || value.startsWith("@") || value.startsWith("//")) {
+                return false;
+            }
+            return value.equals(relativePath);
+        }
 
-  if (expr is StarlarkBinaryExpression && expr.getOperator() == StarlarkTokenTypes.PLUS) {
-    return expr.getOperands().any { srcsExpressionMatchPath(it, relativePath) }
-  }
+        if (expr instanceof StarlarkListLiteralExpression listLiteralExpression) {
+            return listLiteralExpression.getElements().stream().anyMatch(it -> srcsExpressionMatchPath(it, relativePath));
+        }
 
-  return false
+        if (expr instanceof StarlarkBinaryExpression binaryExpression && binaryExpression.getOperator() == StarlarkTokenTypes.PLUS) {
+            return binaryExpression.getOperands().stream().anyMatch(it -> srcsExpressionMatchPath(it, relativePath));
+        }
+
+        return false;
+    }
 }

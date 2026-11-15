@@ -1,70 +1,130 @@
-package org.jetbrains.bazel.languages.starlark.utils
+package org.jetbrains.bazel.languages.starlark.utils;
 
-import com.intellij.psi.PsiElement
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkUtils.nearestRelevantBeforeOperator
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkSubscriptionExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.getSimpleNameOrNull
-import org.jetbrains.bazel.languages.starlark.psi.expressions.isSimpleNameExpression
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAugAssignmentStatement
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiReference;
+import org.jetbrains.bazel.languages.starlark.StarlarkUtils;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkQualifiableExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkSubscriptionExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAugAssignmentStatement;
+import org.jetbrains.bazel.languages.starlark.utils.StarlarkStaticValueUtils.StarlarkStaticValueKind;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-object StarlarkMutationUtils {
-  data class Mutation(
-    val target: PsiElement,
-    val problemElement: PsiElement,
-    val kind: Kind,
-    val methodName: String? = null,
-  ) {
-    enum class Kind { METHOD_CALL, SUBSCRIPTION_ASSIGNMENT, AUGMENTED_ASSIGNMENT }
-  }
+public final class StarlarkMutationUtils {
+    private StarlarkMutationUtils() {
+    }
 
-  fun mutationOrNull(element: PsiElement): Mutation? =
-    getMutatingCall(element)
-    ?: getMutatingAssignment(element)
-    ?: getMutatingAugAssignment(element)
+    public record Mutation(
+        PsiElement target,
+        PsiElement problemElement,
+        Kind kind,
+        @Nullable String methodName
+    ) {
+        // consulo: upstream default argument (methodName = null)
+        public Mutation(PsiElement target, PsiElement problemElement, Kind kind) {
+            this(target, problemElement, kind, null);
+        }
 
-  fun areReferencesEqual(left: PsiElement, right: PsiElement): Boolean {
-    val leftResolved = left.reference?.resolve()
-    val rightResolved = right.reference?.resolve()
-    if (leftResolved != null && rightResolved != null) return leftResolved == rightResolved
+        public enum Kind {
+            METHOD_CALL, SUBSCRIPTION_ASSIGNMENT, AUGMENTED_ASSIGNMENT
+        }
+    }
 
-    val leftName = left.getSimpleNameOrNull() ?: return false
-    val rightName = right.getSimpleNameOrNull() ?: return false
-    return leftName == rightName
-  }
+    public static @Nullable Mutation mutationOrNull(PsiElement element) {
+        Mutation mutation = getMutatingCall(element);
+        if (mutation != null) {
+            return mutation;
+        }
+        mutation = getMutatingAssignment(element);
+        if (mutation != null) {
+            return mutation;
+        }
+        return getMutatingAugAssignment(element);
+    }
 
-  fun isKnownMutatingMethod(name: String): Boolean = name in StarlarkStaticValueKind.KNOWN_MUTATING_METHODS
+    public static boolean areReferencesEqual(PsiElement left, PsiElement right) {
+        PsiReference leftReference = left.getReference();
+        PsiElement leftResolved = leftReference == null ? null : leftReference.resolve();
+        PsiReference rightReference = right.getReference();
+        PsiElement rightResolved = rightReference == null ? null : rightReference.resolve();
+        if (leftResolved != null && rightResolved != null) {
+            return leftResolved.equals(rightResolved);
+        }
 
-  private fun getMutatingCall(element: PsiElement): Mutation? {
-    val call = element as? StarlarkCallExpression ?: return null
-    val calledExpression = call.getCalledExpression() as? StarlarkReferenceExpression ?: return null
-    val methodName = calledExpression.name ?: return null
-    if (!isKnownMutatingMethod(methodName)) return null
+        String leftName = StarlarkQualifiableExpression.getSimpleNameOrNull(left);
+        if (leftName == null) {
+            return false;
+        }
+        String rightName = StarlarkQualifiableExpression.getSimpleNameOrNull(right);
+        if (rightName == null) {
+            return false;
+        }
+        return leftName.equals(rightName);
+    }
 
-    val target = calledExpression.getQualifierExpression()?.takeIf { it.isSimpleNameExpression() } ?: return null
-    return Mutation(target, calledExpression, Mutation.Kind.METHOD_CALL, methodName)
-  }
+    public static boolean isKnownMutatingMethod(String name) {
+        return StarlarkStaticValueKind.KNOWN_MUTATING_METHODS.contains(name);
+    }
 
-  private fun getMutatingAssignment(element: PsiElement): Mutation? {
-    val assignment = element as? StarlarkAssignmentStatement ?: return null
-    val lhs = assignment.leftHandSide() ?: return null
-    val target = extractSubscriptionReceiver(lhs) ?: return null
-    return Mutation(target, lhs, Mutation.Kind.SUBSCRIPTION_ASSIGNMENT)
-  }
+    private static @Nullable Mutation getMutatingCall(PsiElement element) {
+        if (!(element instanceof StarlarkCallExpression call)) {
+            return null;
+        }
+        if (!(call.getCalledExpression() instanceof StarlarkReferenceExpression calledExpression)) {
+            return null;
+        }
+        String methodName = calledExpression.getName();
+        if (methodName == null) {
+            return null;
+        }
+        if (!isKnownMutatingMethod(methodName)) {
+            return null;
+        }
 
-  private fun getMutatingAugAssignment(element: PsiElement): Mutation? {
-    val assignment = element as? StarlarkAugAssignmentStatement ?: return null
-    val lhs = assignment.leftHandSide() ?: return null
-    val target = lhs.takeIf { it.isSimpleNameExpression() } ?: extractSubscriptionReceiver(lhs) ?: return null
-    return Mutation(target, lhs, Mutation.Kind.AUGMENTED_ASSIGNMENT)
-  }
+        PsiElement target = calledExpression.getQualifierExpression();
+        if (target == null || !StarlarkQualifiableExpression.isSimpleNameExpression(target)) {
+            return null;
+        }
+        return new Mutation(target, calledExpression, Mutation.Kind.METHOD_CALL, methodName);
+    }
 
-  private fun extractSubscriptionReceiver(element: PsiElement?): PsiElement? {
-    val subscription = element as? StarlarkSubscriptionExpression ?: return null
-    return nearestRelevantBeforeOperator(subscription.firstChild)?.takeIf { it.isSimpleNameExpression() }
-  }
+    private static @Nullable Mutation getMutatingAssignment(PsiElement element) {
+        if (!(element instanceof StarlarkAssignmentStatement assignment)) {
+            return null;
+        }
+        PsiElement lhs = assignment.leftHandSide();
+        if (lhs == null) {
+            return null;
+        }
+        PsiElement target = extractSubscriptionReceiver(lhs);
+        if (target == null) {
+            return null;
+        }
+        return new Mutation(target, lhs, Mutation.Kind.SUBSCRIPTION_ASSIGNMENT);
+    }
+
+    private static @Nullable Mutation getMutatingAugAssignment(PsiElement element) {
+        if (!(element instanceof StarlarkAugAssignmentStatement assignment)) {
+            return null;
+        }
+        PsiElement lhs = assignment.leftHandSide();
+        if (lhs == null) {
+            return null;
+        }
+        PsiElement target = StarlarkQualifiableExpression.isSimpleNameExpression(lhs) ? lhs : extractSubscriptionReceiver(lhs);
+        if (target == null) {
+            return null;
+        }
+        return new Mutation(target, lhs, Mutation.Kind.AUGMENTED_ASSIGNMENT);
+    }
+
+    private static @Nullable PsiElement extractSubscriptionReceiver(@Nullable PsiElement element) {
+        if (!(element instanceof StarlarkSubscriptionExpression subscription)) {
+            return null;
+        }
+        PsiElement receiver = StarlarkUtils.nearestRelevantBeforeOperator(subscription.getFirstChild());
+        return receiver != null && StarlarkQualifiableExpression.isSimpleNameExpression(receiver) ? receiver : null;
+    }
 }

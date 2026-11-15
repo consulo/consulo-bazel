@@ -1,65 +1,95 @@
-package org.jetbrains.bazel.run.state
+package org.jetbrains.bazel.run.state;
 
-import com.intellij.execution.ui.CommonParameterFragments
-import com.intellij.execution.ui.NestedGroupFragment
-import com.intellij.execution.ui.SettingsEditorFragment
-import com.intellij.openapi.externalSystem.service.execution.configuration.fragments.SettingsEditorLabeledComponent
-import com.intellij.ui.components.JBTextField
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.execution.ui.CommonParameterFragments;
+import consulo.bazel.execution.ui.NestedGroupFragment;
+import consulo.bazel.execution.ui.SettingsEditorFragment;
+import consulo.bazel.execution.ui.SettingsEditorLabeledComponent;
+import consulo.localize.LocalizeValue;
+import consulo.ui.ex.awt.JBTextField;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-interface HasCoverageInstrumentationFilter {
-  var coverageInstrumentationFilter: String?
+import java.util.List;
+import java.util.function.BooleanSupplier;
+
+// consulo: upstream Kotlin top-level declarations of CoverageWithBazel.kt; the interface and the fragment are nested here
+public final class CoverageWithBazel {
+    private CoverageWithBazel() {
+    }
+
+    public interface HasCoverageInstrumentationFilter {
+        @Nullable String getCoverageInstrumentationFilter();
+
+        void setCoverageInstrumentationFilter(@Nullable String coverageInstrumentationFilter);
+    }
+
+    public static class CoverageWithBazelFragment extends NestedGroupFragment<BazelRunConfiguration> {
+        private BooleanSupplier myIsAvailableWhen = () -> true;
+
+        public CoverageWithBazelFragment() {
+            super(
+                "bazelCoverage",
+                BazelPluginLocalize.runconfigCoverageName(),
+                BazelPluginLocalize.runconfigCoverageGroup(),
+                configuration -> false
+            );
+        }
+
+        @Override
+        protected List<SettingsEditorFragment<BazelRunConfiguration, ?>> createChildren() {
+            return List.of(coverageInstrumentationFilterFragment());
+        }
+
+        @Override
+        public boolean isAvailable() {
+            return myIsAvailableWhen.getAsBoolean() && super.isAvailable();
+        }
+
+        public void availableWhen(BooleanSupplier condition) {
+            myIsAvailableWhen = condition;
+        }
+    }
+
+    private static SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JBTextField>>
+    coverageInstrumentationFilterFragment() {
+        JBTextField filterField = new JBTextField();
+        CommonParameterFragments.setMonospaced(filterField);
+        LocalizeValue message = BazelPluginLocalize.runconfigCoverageInstrumentationFilter();
+        filterField.getAccessibleContext().setAccessibleName(message.get());
+        filterField.getEmptyText().setText(BazelPluginLocalize.runconfigCoverageInstrumentationFilterEmptyText());
+        SettingsEditorLabeledComponent<JBTextField> labeled = new SettingsEditorLabeledComponent<>(message, filterField);
+        SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JBTextField>> fragment =
+            new SettingsEditorFragment<>(
+                "bazelCoverageInstrumentationFilter",
+                message,
+                BazelPluginLocalize.runconfigCoverageGroup(),
+                labeled,
+                (configuration, component) -> {
+                    HasCoverageInstrumentationFilter state = getCoverageInstrumentationFilterState(configuration);
+                    String filter = state == null ? null : state.getCoverageInstrumentationFilter();
+                    component.getComponent().setText(filter == null ? "" : filter);
+                },
+                (configuration, component) -> {
+                    HasCoverageInstrumentationFilter state = getCoverageInstrumentationFilterState(configuration);
+                    if (state != null) {
+                        String text = component.getComponent().getText();
+                        state.setCoverageInstrumentationFilter(text.isBlank() ? null : text);
+                    }
+                },
+                configuration -> {
+                    HasCoverageInstrumentationFilter state = getCoverageInstrumentationFilterState(configuration);
+                    String filter = state == null ? null : state.getCoverageInstrumentationFilter();
+                    return filter != null && !filter.isBlank();
+                }
+            );
+        fragment.setHint(BazelPluginLocalize.runconfigCoverageInstrumentationFilterHint());
+        return fragment;
+    }
+
+    private static @Nullable HasCoverageInstrumentationFilter getCoverageInstrumentationFilterState(BazelRunConfiguration receiver) {
+        BazelRunHandler handler = receiver.getHandler();
+        return handler != null && handler.getState() instanceof HasCoverageInstrumentationFilter filterState ? filterState : null;
+    }
 }
-
-@ApiStatus.Internal
-class CoverageWithBazelFragment : NestedGroupFragment<BazelRunConfiguration>(
-    "bazelCoverage",
-    BazelPluginBundle.message("runconfig.coverage.name"),
-    BazelPluginBundle.message("runconfig.coverage.group"),
-    { false },
-  ) {
-  private var isAvailableWhen: () -> Boolean = { true }
-
-  override fun createChildren(): List<SettingsEditorFragment<BazelRunConfiguration, *>> =
-    listOf(coverageInstrumentationFilterFragment())
-
-  override fun isAvailable(): Boolean = isAvailableWhen() && super.isAvailable()
-
-  fun availableWhen(condition: () -> Boolean) {
-    this.isAvailableWhen = condition
-  }
-}
-
-private fun coverageInstrumentationFilterFragment():
-  SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JBTextField>> {
-  val filterField = JBTextField()
-  CommonParameterFragments.setMonospaced(filterField)
-  val message = BazelPluginBundle.message("runconfig.coverage.instrumentation.filter")
-  filterField.accessibleContext.accessibleName = message
-  filterField.emptyText.text = BazelPluginBundle.message("runconfig.coverage.instrumentation.filter.empty.text")
-  val labeled = SettingsEditorLabeledComponent(message, filterField)
-  val fragment =
-    SettingsEditorFragment<BazelRunConfiguration, SettingsEditorLabeledComponent<JBTextField>>(
-      "bazelCoverageInstrumentationFilter",
-      message,
-      BazelPluginBundle.message("runconfig.coverage.group"),
-      labeled,
-      { configuration, component ->
-        component.component.text = configuration.coverageInstrumentationFilterState?.coverageInstrumentationFilter.orEmpty()
-      },
-      { configuration, component ->
-        configuration
-          .coverageInstrumentationFilterState
-          ?.coverageInstrumentationFilter = component.component.text.takeIf { it.isNotBlank() }
-      },
-      { configuration -> !configuration.coverageInstrumentationFilterState?.coverageInstrumentationFilter.isNullOrBlank() },
-    )
-  fragment.setHint(BazelPluginBundle.message("runconfig.coverage.instrumentation.filter.hint"))
-  return fragment
-}
-
-private val BazelRunConfiguration.coverageInstrumentationFilterState: HasCoverageInstrumentationFilter?
-  get() = handler?.state as? HasCoverageInstrumentationFilter

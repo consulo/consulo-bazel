@@ -1,20 +1,25 @@
-package org.jetbrains.bazel.languages.starlark.findusages
+package org.jetbrains.bazel.languages.starlark.findusages;
 
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.usages.impl.rules.UsageType
-import com.intellij.usages.impl.rules.UsageTypeProvider
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.util.PsiTreeUtil;
+import consulo.usage.UsageType;
+import consulo.usage.UsageTypeProvider;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement;
 
-private val CODE_USAGE = UsageType { BazelPluginBundle.message("findusages.starlark.code.usages") }
-private val LOAD_USAGE = UsageType { BazelPluginBundle.message("findusages.starlark.load.usages") }
+@ExtensionImpl
+public class StarlarkUsageTypeProvider implements UsageTypeProvider {
+    private static final UsageType CODE_USAGE = new UsageType(BazelPluginLocalize.findusagesStarlarkCodeUsages());
+    private static final UsageType LOAD_USAGE = new UsageType(BazelPluginLocalize.findusagesStarlarkLoadUsages());
 
-internal class StarlarkUsageTypeProvider : UsageTypeProvider {
-  override fun getUsageType(element: PsiElement): UsageType =
-    if (PsiTreeUtil.getParentOfType(element, StarlarkLoadStatement::class.java) != null) {
-      LOAD_USAGE
-    } else {
-      CODE_USAGE
+    @Override
+    public UsageType getUsageType(PsiElement element) {
+        if (PsiTreeUtil.getParentOfType(element, StarlarkLoadStatement.class) != null) {
+            return LOAD_USAGE;
+        }
+        else {
+            return CODE_USAGE;
+        }
     }
 }

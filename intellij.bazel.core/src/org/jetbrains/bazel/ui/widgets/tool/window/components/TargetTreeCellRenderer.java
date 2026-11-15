@@ -1,47 +1,66 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.components
+package org.jetbrains.bazel.ui.widgets.tool.window.components;
 
-import com.intellij.ui.components.JBLabel
-import com.intellij.util.PlatformIcons
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import org.jetbrains.bazel.config.BazelPluginBundle
-import java.awt.Component
-import javax.swing.JTree
-import javax.swing.SwingConstants
-import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.TreeCellRenderer
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.ex.awt.JBLabel;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
+import org.jspecify.annotations.Nullable;
 
-internal class TargetTreeCellRenderer(val labelHighlighter: (String) -> String) : TreeCellRenderer {
-  override fun getTreeCellRendererComponent(
-    tree: JTree?,
-    value: Any?,
-    selected: Boolean,
-    expanded: Boolean,
-    leaf: Boolean,
-    row: Int,
-    hasFocus: Boolean,
-  ): Component =
-    when (val userObject = (value as? DefaultMutableTreeNode)?.userObject) {
-      is DirectoryNodeData ->
-        JBLabel(
-          labelHighlighter(userObject.name),
-          PlatformIcons.FOLDER_ICON,
-          SwingConstants.LEFT,
-        )
+import javax.swing.JTree;
+import javax.swing.SwingConstants;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreeCellRenderer;
+import java.awt.Component;
+import java.util.function.Function;
 
-      is TargetNodeData ->
-        JBLabel(
-          labelHighlighter(userObject.displayName),
-          BazelPluginIcons.bazel,
-          SwingConstants.LEFT,
-        )
+public class TargetTreeCellRenderer implements TreeCellRenderer {
+    private final Function<String, String> myLabelHighlighter;
 
-      else ->
-        JBLabel(
-          BazelPluginBundle.message("widget.no.renderable.component"),
-          PlatformIcons.ERROR_INTRODUCTION_ICON,
-          SwingConstants.LEFT,
-        )
+    public TargetTreeCellRenderer(Function<String, String> labelHighlighter) {
+        myLabelHighlighter = labelHighlighter;
     }
 
-  private fun labelStrikethrough(text: String): String = "<html><s>$text</s><html>"
+    public Function<String, String> getLabelHighlighter() {
+        return myLabelHighlighter;
+    }
+
+    @Override
+    public Component getTreeCellRendererComponent(
+        @Nullable JTree tree,
+        @Nullable Object value,
+        boolean selected,
+        boolean expanded,
+        boolean leaf,
+        int row,
+        boolean hasFocus
+    ) {
+        Object userObject = value instanceof DefaultMutableTreeNode node ? node.getUserObject() : null;
+        if (userObject instanceof DirectoryNodeData directoryNodeData) {
+            return new JBLabel(
+                myLabelHighlighter.apply(directoryNodeData.name()),
+                // consulo: PlatformIcons.FOLDER_ICON
+                PlatformIconGroup.nodesFolder(),
+                SwingConstants.LEFT
+            );
+        }
+        else if (userObject instanceof TargetNodeData targetNodeData) {
+            return new JBLabel(
+                myLabelHighlighter.apply(targetNodeData.displayName()),
+                BazelPluginIcons.bazel(),
+                SwingConstants.LEFT
+            );
+        }
+        else {
+            return new JBLabel(
+                BazelPluginLocalize.widgetNoRenderableComponent().get(),
+                // consulo: PlatformIcons.ERROR_INTRODUCTION_ICON (AllIcons.Nodes.ErrorIntroduction) does not exist, closest icon
+                PlatformIconGroup.nodesErrormark(),
+                SwingConstants.LEFT
+            );
+        }
+    }
+
+    private String labelStrikethrough(String text) {
+        return "<html><s>" + text + "</s><html>";
+    }
 }

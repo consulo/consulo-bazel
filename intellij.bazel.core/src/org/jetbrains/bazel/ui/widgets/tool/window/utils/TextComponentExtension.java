@@ -1,87 +1,194 @@
-package org.jetbrains.bazel.ui.widgets.tool.window.utils
+package org.jetbrains.bazel.ui.widgets.tool.window.utils;
 
-import com.intellij.icons.AllIcons
-import com.intellij.ui.components.fields.ExtendableTextComponent
-import javax.swing.Icon
-import javax.swing.JComponent
+import consulo.platform.base.icon.PlatformIconGroup;
+import consulo.ui.image.Image;
+import org.jspecify.annotations.Nullable;
 
-internal sealed class TextComponentExtension(private val tooltip: String?, private val beforeText: Boolean) :
-  ExtendableTextComponent.Extension {
-  override fun isIconBeforeText(): Boolean = beforeText
+import javax.swing.JComponent;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
-  override fun getTooltip(): String? = tooltip
+/**
+ * consulo: upstream implements {@code ExtendableTextComponent.Extension}, which is not in the Consulo API (desktop-awt-ui-impl only).
+ * The class declares the same methods (with the interface defaults of {@code getActionOnClick} and {@code isSelected}),
+ * {@code SearchBarPanel}'s text field shows them.
+ */
+public abstract class TextComponentExtension {
+    private final @Nullable String myTooltip;
+    private final boolean myBeforeText;
 
-  /**
-   * Non-clickable extension, showing one of two icons based on the given predicate.
-   *
-   * @property trueIcon The icon to display when the predicate evaluates to `true`
-   * @property falseIcon The icon to display when the predicate evaluates to `false`
-   * @property predicate The predicate function to determine the icon to display
-   * @property tooltip The tooltip text to display when hovering over the indicator
-   * @property beforeText `true` if the extension should appear before the text
-   */
-  public class Indicator(
-    private val trueIcon: Icon,
-    private val falseIcon: Icon,
-    private val predicate: () -> Boolean,
-    tooltip: String? = null,
-    beforeText: Boolean = false,
-  ) : TextComponentExtension(tooltip, beforeText) {
-    override fun getIcon(hovered: Boolean): Icon = if (predicate()) trueIcon else falseIcon
+    private TextComponentExtension(@Nullable String tooltip, boolean beforeText) {
+        myTooltip = tooltip;
+        myBeforeText = beforeText;
+    }
 
-    override fun getActionOnClick(): Runnable? = null
+    public boolean isIconBeforeText() {
+        return myBeforeText;
+    }
 
-    override fun isSelected(): Boolean = false
-  }
+    public @Nullable String getTooltip() {
+        return myTooltip;
+    }
 
-  /**
-   * Clickable extension toggling a boolean variable.
-   *
-   * @property icon The icon to display in the switch component
-   * @property valueGetter A function that retrieves the current value of the boolean
-   * @property valueSetter A function that sets the value of the boolean
-   * @property parentComponent The parent component of the switch (will be repainted after every value change)
-   * @property tooltip The tooltip text to display when hovering over the switch
-   * @property beforeText `true` if the extension should appear before the text
-   */
-  public class Switch(
-    private val icon: Icon,
-    private val valueGetter: () -> Boolean,
-    private val valueSetter: (Boolean) -> Unit,
-    private val parentComponent: JComponent,
-    tooltip: String? = null,
-    beforeText: Boolean = false,
-  ) : TextComponentExtension(tooltip, beforeText) {
-    override fun getIcon(hovered: Boolean): Icon = icon
+    public abstract @Nullable Image getIcon(boolean hovered);
 
-    override fun getActionOnClick(): Runnable =
-      Runnable {
-        valueSetter(!valueGetter())
-        parentComponent.repaint() // button selection will not update otherwise
-      }
+    // consulo: ExtendableTextComponent.Extension default
+    public @Nullable Runnable getActionOnClick() {
+        return null;
+    }
 
-    override fun isSelected(): Boolean = valueGetter()
-  }
+    // consulo: ExtendableTextComponent.Extension default
+    public boolean isSelected() {
+        return false;
+    }
 
-  /**
-   * Clickable extension clearing a text component.
-   *
-   * @property isEmpty A function that checks if the text component is empty
-   * @property clearAction A function to be executed when the clear button is clicked
-   * @property tooltip The tooltip text to display when hovering over the clear button
-   */
-  public class Clear(
-    private val isEmpty: () -> Boolean,
-    private val clearAction: () -> Unit,
-    tooltip: String,
-  ) : TextComponentExtension(tooltip, false) {
-    override fun getIcon(hovered: Boolean): Icon? =
-      when {
-        isEmpty() -> null
-        hovered -> AllIcons.Actions.CloseHovered
-        else -> AllIcons.Actions.Close
-      }
+    /**
+     * Non-clickable extension, showing one of two icons based on the given predicate.
+     * <p>
+     * trueIcon The icon to display when the predicate evaluates to `true`
+     * falseIcon The icon to display when the predicate evaluates to `false`
+     * predicate The predicate function to determine the icon to display
+     * tooltip The tooltip text to display when hovering over the indicator
+     * beforeText `true` if the extension should appear before the text
+     */
+    public static class Indicator extends TextComponentExtension {
+        private final Image myTrueIcon;
+        private final Image myFalseIcon;
+        private final BooleanSupplier myPredicate;
 
-    override fun getActionOnClick(): Runnable = Runnable(clearAction)
-  }
+        // consulo: upstream default arguments (tooltip = null, beforeText = false)
+        public Indicator(Image trueIcon, Image falseIcon, BooleanSupplier predicate) {
+            this(trueIcon, falseIcon, predicate, null, false);
+        }
+
+        public Indicator(
+            Image trueIcon,
+            Image falseIcon,
+            BooleanSupplier predicate,
+            @Nullable String tooltip,
+            boolean beforeText
+        ) {
+            super(tooltip, beforeText);
+            myTrueIcon = trueIcon;
+            myFalseIcon = falseIcon;
+            myPredicate = predicate;
+        }
+
+        @Override
+        public Image getIcon(boolean hovered) {
+            return myPredicate.getAsBoolean() ? myTrueIcon : myFalseIcon;
+        }
+
+        @Override
+        public @Nullable Runnable getActionOnClick() {
+            return null;
+        }
+
+        @Override
+        public boolean isSelected() {
+            return false;
+        }
+    }
+
+    /**
+     * Clickable extension toggling a boolean variable.
+     * <p>
+     * icon The icon to display in the switch component
+     * valueGetter A function that retrieves the current value of the boolean
+     * valueSetter A function that sets the value of the boolean
+     * parentComponent The parent component of the switch (will be repainted after every value change)
+     * tooltip The tooltip text to display when hovering over the switch
+     * beforeText `true` if the extension should appear before the text
+     */
+    public static class Switch extends TextComponentExtension {
+        private final Image myIcon;
+        private final BooleanSupplier myValueGetter;
+        private final Consumer<Boolean> myValueSetter;
+        private final JComponent myParentComponent;
+
+        // consulo: upstream default argument (beforeText = false)
+        public Switch(
+            Image icon,
+            BooleanSupplier valueGetter,
+            Consumer<Boolean> valueSetter,
+            JComponent parentComponent,
+            @Nullable String tooltip
+        ) {
+            this(icon, valueGetter, valueSetter, parentComponent, tooltip, false);
+        }
+
+        public Switch(
+            Image icon,
+            BooleanSupplier valueGetter,
+            Consumer<Boolean> valueSetter,
+            JComponent parentComponent,
+            @Nullable String tooltip,
+            boolean beforeText
+        ) {
+            super(tooltip, beforeText);
+            myIcon = icon;
+            myValueGetter = valueGetter;
+            myValueSetter = valueSetter;
+            myParentComponent = parentComponent;
+        }
+
+        @Override
+        public Image getIcon(boolean hovered) {
+            return myIcon;
+        }
+
+        @Override
+        public Runnable getActionOnClick() {
+            return () -> {
+                myValueSetter.accept(!myValueGetter.getAsBoolean());
+                myParentComponent.repaint(); // button selection will not update otherwise
+            };
+        }
+
+        @Override
+        public boolean isSelected() {
+            return myValueGetter.getAsBoolean();
+        }
+    }
+
+    /**
+     * Clickable extension clearing a text component.
+     * <p>
+     * isEmpty A function that checks if the text component is empty
+     * clearAction A function to be executed when the clear button is clicked
+     * tooltip The tooltip text to display when hovering over the clear button
+     */
+    public static class Clear extends TextComponentExtension {
+        private final BooleanSupplier myIsEmpty;
+        private final Runnable myClearAction;
+
+        public Clear(
+            BooleanSupplier isEmpty,
+            Runnable clearAction,
+            String tooltip
+        ) {
+            super(tooltip, false);
+            myIsEmpty = isEmpty;
+            myClearAction = clearAction;
+        }
+
+        @Override
+        public @Nullable Image getIcon(boolean hovered) {
+            if (myIsEmpty.getAsBoolean()) {
+                return null;
+            }
+            else if (hovered) {
+                // consulo: AllIcons.Actions.CloseHovered does not exist, Close is used for both states
+                return PlatformIconGroup.actionsClose();
+            }
+            else {
+                return PlatformIconGroup.actionsClose();
+            }
+        }
+
+        @Override
+        public Runnable getActionOnClick() {
+            return myClearAction;
+        }
+    }
 }

@@ -1,69 +1,101 @@
-package org.jetbrains.bazel.debug.platform
+package org.jetbrains.bazel.debug.platform;
 
-import com.intellij.execution.ui.ExecutionConsole
-import com.intellij.xdebugger.XDebugProcess
-import com.intellij.xdebugger.XDebugSession
-import com.intellij.xdebugger.breakpoints.XBreakpointHandler
-import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
-import com.intellij.xdebugger.frame.XSuspendContext
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.debug.connector.StarlarkDebugMessenger
-import org.jetbrains.bazel.debug.connector.StarlarkSocketConnector
-import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos as SDP
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.Stepping;
+import consulo.execution.debug.XDebugProcess;
+import consulo.execution.debug.XDebugSession;
+import consulo.execution.debug.breakpoint.XBreakpointHandler;
+import consulo.execution.debug.evaluation.XDebuggerEditorsProvider;
+import consulo.execution.debug.frame.XExecutionStack;
+import consulo.execution.debug.frame.XSuspendContext;
+import consulo.execution.ui.ExecutionConsole;
+import org.jetbrains.bazel.debug.connector.StarlarkDebugMessenger;
+import org.jetbrains.bazel.debug.connector.StarlarkSocketConnector;
+import org.jspecify.annotations.Nullable;
 
-@Suppress("TooManyFunctions")
-@ApiStatus.Internal
-class StarlarkDebugProcess(
-  connector: StarlarkSocketConnector,
-  session: XDebugSession,
-  breakpointHandler: XBreakpointHandler<*>,
-  private val console: ExecutionConsole,
-) : XDebugProcess(session) {
-  init {
-    session.setPauseActionSupported(true)
-  }
+public class StarlarkDebugProcess extends XDebugProcess {
+    private final ExecutionConsole myConsole;
 
-  private val messenger = StarlarkDebugMessenger(connector, session)
-  private val breakpointHandler = arrayOf(breakpointHandler)
+    private final StarlarkDebugMessenger myMessenger;
+    private final XBreakpointHandler<?>[] myBreakpointHandler;
 
-  override fun sessionInitialized() {
-    messenger.startDebugging()
-  }
-
-  override fun startPausing() {
-    messenger.pauseAllThreads()
-  }
-
-  override fun getEditorsProvider(): XDebuggerEditorsProvider = StarlarkDebuggerEditorsProvider()
-
-  override fun getBreakpointHandlers(): Array<XBreakpointHandler<*>> = breakpointHandler
-
-  override fun stop() {
-    messenger.close()
-  }
-
-  override fun resume(context: XSuspendContext?) {
-    messenger.resumeAllThreads()
-  }
-
-  override fun startStepInto(context: XSuspendContext?) = startStep(context, SDP.Stepping.INTO)
-
-  override fun startStepOver(context: XSuspendContext?) = startStep(context, SDP.Stepping.OVER)
-
-  override fun startStepOut(context: XSuspendContext?) = startStep(context, SDP.Stepping.OUT)
-
-  private fun startStep(context: XSuspendContext?, steppingType: SDP.Stepping) {
-    val topActiveFrame = context?.activeExecutionStack?.topFrame as? StarlarkStackFrame
-    topActiveFrame?.let {
-      messenger.resumeThread(it.threadId, steppingType)
+    public StarlarkDebugProcess(
+        StarlarkSocketConnector connector,
+        XDebugSession session,
+        XBreakpointHandler<?> breakpointHandler,
+        ExecutionConsole console
+    ) {
+        super(session);
+        myConsole = console;
+        session.setPauseActionSupported(true);
+        myMessenger = new StarlarkDebugMessenger(connector, session);
+        myBreakpointHandler = new XBreakpointHandler<?>[]{breakpointHandler};
     }
-  }
 
-  override fun createConsole(): ExecutionConsole = console
+    @Override
+    public void sessionInitialized() {
+        myMessenger.startDebugging();
+    }
 
-  fun isSuspended(): Boolean =
-    this.session
-      // if the top frame is not available, it is not a normal suspension
-      ?.let { it.isPaused && !it.isStopped && it.suspendContext?.activeExecutionStack?.topFrame != null }
-      ?: true
+    @Override
+    public void startPausing() {
+        myMessenger.pauseAllThreads();
+    }
+
+    @Override
+    public XDebuggerEditorsProvider getEditorsProvider() {
+        return new StarlarkDebuggerEditorsProvider();
+    }
+
+    @Override
+    public XBreakpointHandler<?>[] getBreakpointHandlers() {
+        return myBreakpointHandler;
+    }
+
+    @Override
+    public void stop() {
+        myMessenger.close();
+    }
+
+    @Override
+    public void resume(@Nullable XSuspendContext context) {
+        myMessenger.resumeAllThreads();
+    }
+
+    @Override
+    public void startStepInto(@Nullable XSuspendContext context) {
+        startStep(context, Stepping.INTO);
+    }
+
+    @Override
+    public void startStepOver(@Nullable XSuspendContext context) {
+        startStep(context, Stepping.OVER);
+    }
+
+    @Override
+    public void startStepOut(@Nullable XSuspendContext context) {
+        startStep(context, Stepping.OUT);
+    }
+
+    private void startStep(@Nullable XSuspendContext context, Stepping steppingType) {
+        XExecutionStack activeExecutionStack = context != null ? context.getActiveExecutionStack() : null;
+        if (activeExecutionStack != null && activeExecutionStack.getTopFrame() instanceof StarlarkStackFrame topActiveFrame) {
+            myMessenger.resumeThread(topActiveFrame.getThreadId(), steppingType);
+        }
+    }
+
+    @Override
+    public ExecutionConsole createConsole() {
+        return myConsole;
+    }
+
+    public boolean isSuspended() {
+        XDebugSession it = this.getSession();
+        // if the top frame is not available, it is not a normal suspension
+        if (it == null) {
+            return true;
+        }
+        XSuspendContext suspendContext = it.getSuspendContext();
+        XExecutionStack activeExecutionStack = suspendContext != null ? suspendContext.getActiveExecutionStack() : null;
+        return it.isPaused() && !it.isStopped() && activeExecutionStack != null && activeExecutionStack.getTopFrame() != null;
+    }
 }

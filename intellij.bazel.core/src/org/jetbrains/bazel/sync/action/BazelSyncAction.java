@@ -1,55 +1,71 @@
-package org.jetbrains.bazel.sync.action
+package org.jetbrains.bazel.sync.action;
 
-import com.intellij.ide.trustedProjects.TrustedProjects
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.DumbAwareAction
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.action.saveAllFiles
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.coroutines.BazelCoroutineService
-import org.jetbrains.bazel.sync.ProjectSyncScope
-import org.jetbrains.bazel.sync.ProjectSyncService
-import org.jetbrains.bazel.sync.status.isSyncInProgress
-import org.jetbrains.bazel.ui.console.isBuildInProgress
-import javax.swing.Icon
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import consulo.ui.annotation.RequiredUIAccess;
+import consulo.ui.ex.action.AnActionEvent;
+import consulo.ui.ex.action.AnActionWithSyncUpdate;
+import consulo.ui.ex.action.DumbAwareAction;
+import consulo.ui.image.Image;
+import org.jetbrains.bazel.action.SaveAllFiles;
+import org.jetbrains.bazel.coroutines.BazelCoroutineService;
+import org.jetbrains.bazel.sync.ProjectSyncScope;
+import org.jetbrains.bazel.sync.ProjectSyncService;
+import org.jetbrains.bazel.sync.status.SyncStatusService;
+import org.jspecify.annotations.Nullable;
 
-internal abstract class BazelSyncAction : DumbAwareAction {
-  constructor() : super()
-  constructor(text: () -> String, icon: Icon?) : super(text, icon)
-
-  protected abstract fun computeScope(project: Project, e: AnActionEvent): ProjectSyncScope?
-
-  override fun actionPerformed(e: AnActionEvent) {
-    val project = e.project ?: return
-    val scope = computeScope(project, e) ?: return
-    BazelCoroutineService.getInstance(project).start {
-      saveAllFiles()
-      project.service<ProjectSyncService>().sync(scope)
+public abstract class BazelSyncAction extends DumbAwareAction implements AnActionWithSyncUpdate {
+    public BazelSyncAction() {
+        super();
     }
-  }
 
-  override fun update(e: AnActionEvent) {
-    val project = e.project
-    if (project == null || !project.isBazelProject) {
-      e.presentation.isEnabledAndVisible = false
-      return
+    // consulo: upstream takes a `() -> String` text supplier, LocalizeValue is computed lazily too
+    public BazelSyncAction(LocalizeValue text, @Nullable Image icon) {
+        super(text, LocalizeValue.empty(), icon);
     }
-    val visible = shouldBeVisible(project, e)
-    e.presentation.isVisible = visible
-    e.presentation.isEnabled = visible &&
-                               TrustedProjects.isProjectTrusted(project) &&
-                               !project.isSyncInProgress() &&
-                               !project.isBuildInProgress()
-    if (visible) {
-      updatePresentation(project, e)
+
+    protected abstract @Nullable ProjectSyncScope computeScope(Project project, AnActionEvent e);
+
+    @RequiredUIAccess
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+        if (project == null) {
+            return;
+        }
+        ProjectSyncScope scope = computeScope(project, e);
+        if (scope == null) {
+            return;
+        }
+        BazelCoroutineService.getInstance(project).start(() ->
+            SaveAllFiles.saveAllFiles().thenCompose(ignored -> project.getInstance(ProjectSyncService.class).sync(scope))
+        );
     }
-  }
 
-  protected open fun shouldBeVisible(project: Project, e: AnActionEvent): Boolean = true
+    @Override
+    public void update(AnActionEvent e) {
+        Project project = e.getData(Project.KEY);
+        if (project == null || !org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            e.getPresentation().setEnabledAndVisible(false);
+            return;
+        }
+        boolean visible = shouldBeVisible(project, e);
+        e.getPresentation().setVisible(visible);
+        // consulo: Consulo has no trusted projects (upstream TrustedProjects.isProjectTrusted(project))
+        e.getPresentation().setEnabled(visible &&
+            !SyncStatusService.isSyncInProgress(project) &&
+            !org.jetbrains.bazel.ui.console.TaskConsole.isBuildInProgress(project));
+        if (visible) {
+            updatePresentation(project, e);
+        }
+    }
 
-  protected open fun updatePresentation(project: Project, e: AnActionEvent) {}
+    protected boolean shouldBeVisible(Project project, AnActionEvent e) {
+        return true;
+    }
 
-  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+    protected void updatePresentation(Project project, AnActionEvent e) {
+    }
+
+    // consulo: AnActionWithSyncUpdate always updates in background (upstream ActionUpdateThread.BGT)
 }

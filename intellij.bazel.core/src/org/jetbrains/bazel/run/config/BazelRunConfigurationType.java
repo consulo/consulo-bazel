@@ -1,39 +1,41 @@
-package org.jetbrains.bazel.run.config
+package org.jetbrains.bazel.run.config;
 
-import com.intellij.execution.configurations.ConfigurationFactory
-import com.intellij.execution.configurations.ConfigurationTypeUtil
-import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.execution.configurations.SimpleConfigurationType
-import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.NotNullLazyValue
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.assets.BazelPluginIcons
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.config.BazelPluginConstants.BAZEL_DISPLAY_NAME
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.dumb.DumbAware;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.configuration.ConfigurationFactory;
+import consulo.execution.configuration.ConfigurationTypeUtil;
+import consulo.execution.configuration.RunConfiguration;
+import consulo.execution.configuration.SimpleConfigurationType;
+import consulo.localize.LocalizeValue;
+import consulo.project.Project;
+import org.jetbrains.bazel.assets.BazelPluginIcons;
 
-@ApiStatus.Internal
-class BazelRunConfigurationType :
-  SimpleConfigurationType(
-    id = ID,
-    icon =
-      NotNullLazyValue.createValue {
-        BazelPluginIcons.bazel
-      },
-    name = BAZEL_DISPLAY_NAME,
-    description = BazelPluginBundle.message("runconfig.run.description", BAZEL_DISPLAY_NAME),
-  ),
-  DumbAware {
-  override fun createTemplateConfiguration(project: Project): RunConfiguration = BazelRunConfiguration(project, "", this)
+import static org.jetbrains.bazel.config.BazelPluginConstants.BAZEL_DISPLAY_NAME;
 
-  override fun isEditableInDumbMode(): Boolean = true
+@ExtensionImpl
+public class BazelRunConfigurationType extends SimpleConfigurationType implements DumbAware {
+    public static final String ID = "BazelRunConfigurationType";
 
-  companion object {
-    const val ID: String = "BazelRunConfigurationType"
+    public BazelRunConfigurationType() {
+        super(
+            /* id = */ ID,
+            /* name = */ LocalizeValue.of(BAZEL_DISPLAY_NAME),
+            /* description = */ BazelPluginLocalize.runconfigRunDescription(BAZEL_DISPLAY_NAME),
+            // consulo: upstream passes a NotNullLazyValue, Consulo takes the (lazily loaded) image
+            /* icon = */ BazelPluginIcons.bazel()
+        );
+    }
 
-  }
+    @Override
+    public RunConfiguration createTemplateConfiguration(Project project) {
+        return new BazelRunConfiguration(project, "", this);
+    }
+
+    // consulo: ConfigurationFactory has no isEditableInDumbMode(), ConfigurationType.isDumbAware() is true by default
+    // override fun isEditableInDumbMode(): Boolean = true
+
+    public static ConfigurationFactory getBazelRunConfigurationFactory() {
+        return ConfigurationTypeUtil.findConfigurationType(BazelRunConfigurationType.class).getConfigurationFactories()[0];
+    }
 }
-
-@get:ApiStatus.Internal
-val bazelRunConfigurationFactory: ConfigurationFactory
-  get() = ConfigurationTypeUtil.findConfigurationType(BazelRunConfigurationType::class.java).configurationFactories.first()

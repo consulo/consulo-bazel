@@ -1,81 +1,160 @@
-package org.jetbrains.bazel.languages.starlark.inspection
+package org.jetbrains.bazel.languages.starlark.inspection;
 
-import com.intellij.codeInspection.LocalInspectionTool
-import com.intellij.codeInspection.ProblemsHolder
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementVisitor
-import com.intellij.psi.PsiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.languages.starlark.StarlarkBundle
-import org.jetbrains.bazel.languages.starlark.StarlarkFileType
-import org.jetbrains.bazel.languages.starlark.StarlarkUtils.nearestRelevantBeforeOperator
-import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkParenthesizedExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkSubscriptionExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression
-import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTupleExpression
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAugAssignmentStatement
-import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkForStatement
+import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.languages.localize.StarlarkLocalize;
+import consulo.language.Language;
+import consulo.language.editor.inspection.LocalInspectionTool;
+import consulo.language.editor.inspection.ProblemsHolder;
+import consulo.language.editor.rawHighlight.HighlightDisplayLevel;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiElementVisitor;
+import consulo.language.psi.PsiFile;
+import consulo.localize.LocalizeValue;
+import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
+import org.jetbrains.bazel.languages.starlark.psi.StarlarkElementVisitor;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkListLiteralExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkParenthesizedExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkReferenceExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkSubscriptionExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTargetExpression;
+import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkTupleExpression;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAssignmentStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkAugAssignmentStatement;
+import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkForStatement;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class StarlarkInvalidAssignmentTargetInspection : LocalInspectionTool() {
-  override fun isAvailableForFile(file: PsiFile): Boolean = file.fileType is StarlarkFileType
+import java.util.List;
 
-  override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = InvalidAssignmentTargetVisitor(holder)
+import static org.jetbrains.bazel.languages.starlark.StarlarkUtils.nearestRelevantBeforeOperator;
 
-  private class InvalidAssignmentTargetVisitor(private val holder: ProblemsHolder) : StarlarkElementVisitor() {
-    override fun visitAssignmentStatement(node: StarlarkAssignmentStatement) {
-      node.leftHandSide()?.let(::searchForInvalidTargetAndReport)
+@ExtensionImpl
+public class StarlarkInvalidAssignmentTargetInspection extends LocalInspectionTool {
+    @Override
+    public boolean isAvailableForFile(PsiFile file) {
+        return file.getFileType() instanceof StarlarkLanguage.StarlarkFileType;
     }
 
-    override fun visitAugAssignmentStatement(node: StarlarkAugAssignmentStatement) {
-      val lhs = node.leftHandSide() ?: return
-      if (lhs is StarlarkTupleExpression || lhs is StarlarkListLiteralExpression || (lhs is StarlarkParenthesizedExpression && lhs.getTuple() != null)) {
-        holder.registerProblem(lhs, StarlarkBundle.message("inspection.description.assignment.target.augmented.sequence"))
-        return
-      }
-      searchForInvalidTargetAndReport(lhs)
+    @Override
+    public PsiElementVisitor buildVisitor(ProblemsHolder holder, boolean isOnTheFly) {
+        return new InvalidAssignmentTargetVisitor(holder);
     }
 
-    override fun visitForStatement(node: StarlarkForStatement) {
-      val loopVars = node.getLoopVariables()
-      if (loopVars.isNotEmpty()) loopVars.forEach(::searchForInvalidTargetAndReport)
-      else node.leftHandSide()?.let(::searchForInvalidTargetAndReport)
-    }
+    private static class InvalidAssignmentTargetVisitor extends StarlarkElementVisitor {
+        private final ProblemsHolder myHolder;
 
-    private fun searchForInvalidTargetAndReport(target: PsiElement) {
-      val invalid = firstInvalidTarget(target) ?: return
-      holder.registerProblem(
-        invalid,
-        StarlarkBundle.message("inspection.description.assignment.target.invalid", invalid.text),
-      )
-    }
-
-    private fun firstInvalidTarget(target: PsiElement): PsiElement? =
-      when (target) {
-        is StarlarkTargetExpression,
-        is StarlarkSubscriptionExpression,
-        is StarlarkReferenceExpression -> null
-
-        is StarlarkParenthesizedExpression -> {
-          val tuple = target.getTuple()
-          if (tuple != null) firstInvalidTarget(tuple) else target
+        InvalidAssignmentTargetVisitor(ProblemsHolder holder) {
+            myHolder = holder;
         }
 
-        is StarlarkTupleExpression,
-        is StarlarkListLiteralExpression -> {
-          var elem = nearestRelevantBeforeOperator(target.firstChild)
-          while (elem != null) {
-            firstInvalidTarget(elem)?.let{ return it }
-            elem = nearestRelevantBeforeOperator(elem.nextSibling)
-          }
-          return null
+        @Override
+        public void visitAssignmentStatement(StarlarkAssignmentStatement node) {
+            PsiElement lhs = node.leftHandSide();
+            if (lhs != null) {
+                searchForInvalidTargetAndReport(lhs);
+            }
         }
 
-        else -> target
-      }
-  }
+        @Override
+        public void visitAugAssignmentStatement(StarlarkAugAssignmentStatement node) {
+            PsiElement lhs = node.leftHandSide();
+            if (lhs == null) {
+                return;
+            }
+            if (lhs instanceof StarlarkTupleExpression ||
+                lhs instanceof StarlarkListLiteralExpression ||
+                (lhs instanceof StarlarkParenthesizedExpression parenthesizedExpression && parenthesizedExpression.getTuple() != null)) {
+                myHolder.newProblem(StarlarkLocalize.inspectionDescriptionAssignmentTargetAugmentedSequence()).range(lhs).create();
+                return;
+            }
+            searchForInvalidTargetAndReport(lhs);
+        }
+
+        @Override
+        public void visitForStatement(StarlarkForStatement node) {
+            List<StarlarkTargetExpression> loopVars = node.getLoopVariables();
+            if (!loopVars.isEmpty()) {
+                loopVars.forEach(this::searchForInvalidTargetAndReport);
+            }
+            else {
+                PsiElement lhs = node.leftHandSide();
+                if (lhs != null) {
+                    searchForInvalidTargetAndReport(lhs);
+                }
+            }
+        }
+
+        private void searchForInvalidTargetAndReport(PsiElement target) {
+            PsiElement invalid = firstInvalidTarget(target);
+            if (invalid == null) {
+                return;
+            }
+            myHolder.newProblem(StarlarkLocalize.inspectionDescriptionAssignmentTargetInvalid(invalid.getText()))
+                .range(invalid)
+                .create();
+        }
+
+        private @Nullable PsiElement firstInvalidTarget(PsiElement target) {
+            if (target instanceof StarlarkTargetExpression ||
+                target instanceof StarlarkSubscriptionExpression ||
+                target instanceof StarlarkReferenceExpression) {
+                return null;
+            }
+            else if (target instanceof StarlarkParenthesizedExpression parenthesizedExpression) {
+                StarlarkTupleExpression tuple = parenthesizedExpression.getTuple();
+                return tuple != null ? firstInvalidTarget(tuple) : target;
+            }
+            else if (target instanceof StarlarkTupleExpression || target instanceof StarlarkListLiteralExpression) {
+                PsiElement elem = nearestRelevantBeforeOperator(target.getFirstChild());
+                while (elem != null) {
+                    PsiElement invalid = firstInvalidTarget(elem);
+                    if (invalid != null) {
+                        return invalid;
+                    }
+                    elem = nearestRelevantBeforeOperator(elem.getNextSibling());
+                }
+                return null;
+            }
+            else {
+                return target;
+            }
+        }
+    }
+
+    // consulo: registration attributes of <localInspection> in intellij.bazel.core.xml
+    @Override
+    public @Nullable Language getLanguage() {
+        return StarlarkLanguage.INSTANCE;
+    }
+
+    @Override
+    public String getShortName() {
+        return "StarlarkInvalidAssignmentTarget";
+    }
+
+    @Override
+    public LocalizeValue getDisplayName() {
+        return BazelPluginLocalize.inspectionDisplayNameStarlarkInvalidAssignmentTargetCheck();
+    }
+
+    @Override
+    public LocalizeValue getGroupDisplayName() {
+        return BazelPluginLocalize.starlarkInspectionGroupName();
+    }
+
+    // consulo: upstream groupPath="Bazel"
+    @Override
+    public LocalizeValue[] getGroupPath() {
+        return new LocalizeValue[]{BazelPluginLocalize.bazelInspectionGroupName(), getGroupDisplayName()};
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public HighlightDisplayLevel getDefaultLevel() {
+        return HighlightDisplayLevel.ERROR;
+    }
 }
