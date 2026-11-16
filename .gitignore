@@ -1,3 +1,4 @@
+.consulo/
 .engflow-enabled.bazelrc
 .bazelrc.user
 .DS_Store
