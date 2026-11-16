@@ -155,9 +155,11 @@ public class BazelAllTargetsWidgetFactory implements
         updateRequests.setCollector(
             () -> updateVisibleTargets(targetStorage, project, model, targetPanel)
         );
+        // consulo: the listener is added before the first collection, otherwise a snapshot loaded in between is missed
+        // (upstream StateFlow collection always starts with the current value)
+        Runnable removeViewsListener = targetStorage.getViews().addListener(view -> updateRequests.run());
         // update immediately, avoid any delays
         updateRequests.collectNow();
-        Runnable removeViewsListener = targetStorage.getViews().addListener(view -> updateRequests.run());
         Disposer.register(toolWindow.getContentManager(), () -> {
             removeViewsListener.run();
             updateRequests.dispose();
