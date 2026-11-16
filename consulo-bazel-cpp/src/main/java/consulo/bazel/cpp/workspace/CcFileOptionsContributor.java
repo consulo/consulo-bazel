@@ -15,6 +15,8 @@
  */
 package consulo.bazel.cpp.workspace;
 
+import java.util.ArrayList;
+import org.jetbrains.bazel.clion.workspace.CcDebugSessionChooser;
 import consulo.annotation.component.ExtensionImpl;
 import consulo.cpp.moduleAware.CFileOptions;
 import consulo.cpp.moduleAware.CFileOptionsContributor;
@@ -46,11 +48,17 @@ public class CcFileOptionsContributor implements CFileOptionsContributor {
             return null;
         }
 
-        // TODO consulo: CLion lets resolve configuration choosers pick one of the configurations of a file (upstream
-        //  CcRunConfigurationChooser of clion.core, the one of the selected run configuration); consulo-cpp gives a file
-        //  one set of options, the first configuration is used
-        List<CcWorkspaceModel.Configuration> configurations = workspace.getConfigurationsForFile(file);
-        for (CcWorkspaceModel.Configuration configuration : configurations) {
+        // consulo: CLion lets resolve configuration choosers pick one of the configurations of a file; consulo-cpp gives a file one
+        //   set of options, so the configuration of the last debug session wins (upstream CcDebugSessionChooser), else the first one
+        List<CcWorkspaceModel.Configuration> configurations = new ArrayList<>();
+        for (CcWorkspaceModel.Configuration configuration : workspace.getConfigurationsForFile(file)) {
+            if (configuration.getSourceCompilerSettings(file.getUrl()) != null) {
+                configurations.add(configuration);
+            }
+        }
+        if (!configurations.isEmpty()) {
+            CcWorkspaceModel.Configuration chosen = new CcDebugSessionChooser().selectPreselectedResolveConfiguration(project, configurations);
+            CcWorkspaceModel.Configuration configuration = chosen != null ? chosen : configurations.get(0);
             CcWorkspaceModel.CompilerSettings settings = configuration.getSourceCompilerSettings(file.getUrl());
             if (settings != null) {
                 return settings.getFileOptions();

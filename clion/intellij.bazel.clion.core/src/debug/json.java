@@ -15,6 +15,7 @@ import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jetbrains.bsp.protocol.StringsCollection;
 import org.jspecify.annotations.Nullable;
 
 import java.io.File;
@@ -41,6 +42,7 @@ final class json {
         registerSerializer(builder, CcResolveConfiguration.Identifier.class, json::serializeCcIdentifier);
         registerSerializer(builder, File.class, json::serializeFile);
         registerSerializer(builder, VirtualFile.class, json::serializeVirtualFile);
+        registerSerializer(builder, StringsCollection.class, json::serializeStringsCollection);
         return builder.create();
     }
 
@@ -141,5 +143,13 @@ final class json {
 
     private static void serializeVirtualFile(JsonWriter writer, VirtualFile value) throws IOException {
         writer.value(value.getPath());
+    }
+
+    private static void serializeStringsCollection(JsonWriter writer, StringsCollection value) throws IOException {
+        writer.beginArray();
+        for (String it : value.asList()) {
+            writer.value(it);
+        }
+        writer.endArray();
     }
 }

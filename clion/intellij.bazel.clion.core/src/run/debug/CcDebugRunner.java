@@ -1,5 +1,9 @@
 package org.jetbrains.bazel.clion.run.debug;
 
+import java.util.ArrayList;
+import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.TargetIdeInfo;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
+import org.jetbrains.bazel.clion.workspace.CcDebugSessionConfigurations;
 import consulo.annotation.component.ExtensionImpl;
 import consulo.application.Application;
 import consulo.bazel.cpp.localize.BazelCLionCoreLocalize;
@@ -235,6 +239,14 @@ public class CcDebugRunner extends AsyncProgramRunner<RunnerSettings> {
                     })
             )
         ).<@Nullable Void>thenApply(prepared -> {
+            // the debug build is the latest evidence of the configuration that the user works in
+            List<WorkspaceConfigurationId> configurations = new ArrayList<>();
+            configurations.add(prepared.targetInfo().target().getKey().configuration());
+            for (TargetIdeInfo it : prepared.build().targets()) {
+                configurations.add(WorkspaceConfigurationId.of(it.getKey().getConfiguration()));
+            }
+            CcDebugSessionConfigurations.getInstance(project).update(configurations);
+
             state.setTargetInfo(prepared.targetInfo());
             state.setExecutionInfo(prepared.build().executable());
             return null;
