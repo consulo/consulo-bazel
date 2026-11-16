@@ -7,6 +7,12 @@ The Starlark sources in this directory, and the protos in `../protobuf/sdk/proto
 (`git_override` of `intellij_aspect_sdk`). Always vendor the commit that `MODULE.bazel` pins, so the aspect output
 matches what the ported plugin code reads.
 
+Our fork adds Rust on top of that commit (fork commit `edbec1d`, "Merge intellij-aspect 326afd3c", over `2ee9e50`
+"Add the Rust module"): `modules/rust_info.bzl`, `RustInfo` in `common/provider.bzl`, `rust_info` in the `MODULES` of
+`intellij/modules.bzl`, the `RustCrateInfo` / `RustToolchainInfo` / `RustCrateLocation` messages and the
+`rust_crate_info = 1000` field in `ide_info.proto`, and `Rules.RUST` in the SDK library (`aspectchoice.kt`). Vendor
+the fork commit that merged the pinned upstream commit, not upstream itself, or the Rust module is lost.
+
 They are the inputs of upstream's `//:archive_ide` target (`pkg_zip` of the `aspect_lib` targets `//common`,
 `//intellij` and `//modules`). The Maven build (`maven-antrun-plugin`, `generate-resources`) zips this directory
 into `archive_ide.zip` at the root of the `consulo-aspect-sdk` jar, which `com.intellij.aspect.lib.Deploy`

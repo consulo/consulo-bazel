@@ -298,8 +298,27 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `golang/*` | `consulo.bazel.go` (`consulo-bazel-go/`, optional library, needs consulo.google.go) | converted, builds, sync, import resolution and run tested (needs GoPackage/GoImportResolver of consulo-google-go; no Delve debugger, coverage) |
 | `python/*` | optional library, needs consulo-python | not started |
 | `clion/*` | `consulo.bazel.cpp` (`consulo-bazel-cpp/`, optional library, needs consulo.cpp from consulo/consulo-cpp) | converted, builds, sync tested; per-file options via `CFileOptionsContributor`, debug via consulo-native-dev; no compiler detection or test frameworks |
+| `rust/intellij.bazel.rust.sync` (Consulo-only, see [Rust](#rust)) | `consulo.bazel.rust` (`consulo-bazel-rust/`, optional library, needs consulo.rust) | restored and written, javac-checked; aspect output verified with Bazel 9.3.2; not yet built with Maven or tested in the IDE |
 
 Order: `languages` -> `commons` -> `projectview` -> `backend` -> `core` -> language integrations.
+
+### Rust
+
+Upstream has no Rust support any more (removed in `4699fc65a` "[maintenance] remove rust support"; it was BSP-server only,
+the IDE side lived in intellij-rust). `rust/intellij.bazel.rust.sync` is therefore **Consulo-only code**, not an upstream
+folder, and is not touched by merges:
+
+- `org.jetbrains.bazel.rust.protocol` and `org.jetbrains.bazel.rust.sync` are restored from `4699fc65a^`
+  (`protocol/.../bsp/protocol/Rust*.kt` and `server/server/.../sync/languages/rust/*.kt`), ported faithfully and adapted to the
+  aspect-based sync: `RustLanguagePlugin` reads `RustCrateInfo` (incl. `cfg_options` and the crate's toolchain) of our aspect
+  fork into the snapshot data `RustModule` / `RustToolchain`, and `Module` stands in for the removed BSP server model.
+- `org.jetbrains.bazel.rust.workspace` is new: `RustBazelWorkspaceImporter` (+`Factory`) creates a `.rust-workspace` module
+  whose content roots are the Bazel packages of the crates, and attaches the crates to consulo-rust as an external Cargo project
+  (`CargoProjectsService.attachExternalCargoProject`): `BazelRustWorkspace` computes upstream's `RustWorkspaceResult` from the
+  snapshot and translates it into a `CargoWorkspaceData` plus an `ExternalRustToolchain` (rustc and sysroot of the crate's
+  Rustc action, resolved against the execution root). consulo-rust does not persist external projects, so
+  `RustCargoProjectStartupActivity` attaches the project again from the persisted snapshot when the project is opened.
+- The `rust_info` aspect module only exists in our fork (see [Aspect](#aspect)).
 
 ## Replaced files
 
@@ -373,5 +392,8 @@ repo mapping; `BazelBspAspectsManager.deployIntelliJAspect`/`resolveAspectLabel`
 Rules for our changes in the fork:
 
 - New languages (Zig, D, Rust, .NET) are new files in `modules/`.
+- Rust: `modules/rust_info.bzl` (fork commits `2ee9e50`, merged with upstream `326afd3c` in `edbec1d`) reads the crate from
+  rules_rust's `CrateInfo` and the toolchain from the crate's own `Rustc` action instead of toolchain resolution, so a
+  workspace without Rust does not download the Rust toolchain. `consulo-aspect-sdk` vendors the fork commit.
 - Our new fields in `ide_info.proto` use field numbers **1000 and up**, so they never clash with upstream.
 - Bug fixes are also sent upstream as pull requests, so our diff shrinks over time.

@@ -25,6 +25,7 @@ public enum Rules {
     KOTLIN("@rules_kotlin"),
     SCALA("@rules_scala"),
     GO("@rules_go"),
+    RUST("@rules_rust"), // Consulo fork
     PROTO("@protobuf"),
     LEGACY_RULES_PROTO("@rules_proto"),
     PLATFORMS("@platforms");

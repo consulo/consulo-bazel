@@ -22,6 +22,7 @@
     <depends optional="true">consulo.java</depends>
     <depends optional="true">consulo.cpp</depends>
     <depends optional="true">consulo.google.go</depends>
+    <depends optional="true">consulo.rust</depends>
     <description>Bazel support: Starlark, .bazelrc, Bazel query and .bazelversion languages. Based on the JetBrains Bazel plugin (hirschgarten).</description>
     <tags>
         <tag>custom.language</tag>

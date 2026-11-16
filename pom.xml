@@ -50,6 +50,7 @@
         <module>consulo-bazel-java</module>
         <module>consulo-bazel-cpp</module>
         <module>consulo-bazel-go</module>
+        <module>consulo-bazel-rust</module>
         <module>consulo-plugin</module>
     </modules>
 </project>

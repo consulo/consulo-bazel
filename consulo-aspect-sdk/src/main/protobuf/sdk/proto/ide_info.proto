@@ -276,6 +276,55 @@ message GoTargetInfo {
   reserved 3, 4, 5;
 }
 
+// Consulo fork: Rust (rules_rust) crate information, see modules/rust_info.bzl.
+// Restored from the RustCrateInfo of the Bazel BSP aspect (JetBrains/hirschgarten
+// bsp_target_info.proto, removed upstream in 4699fc65a).
+enum RustCrateLocation {
+  WORKSPACE_DIR = 0;
+  EXEC_ROOT = 1;
+}
+
+// Consulo fork: the Rust toolchain a crate is compiled with, not part of the BSP
+// message. The aspect does not resolve the rules_rust toolchain type itself
+// (that downloaded the toolchain for every workspace), the fields are read from
+// the Rustc action of the crate.
+message RustToolchainInfo {
+  // rustc of the (generated) sysroot
+  ArtifactLocation rustc = 1;
+  // cargo of the sysroot, unset if the toolchain does not ship it
+  ArtifactLocation cargo = 2;
+  // exec root relative path of the sysroot directory
+  string sysroot = 3;
+  // value of rustc's --target: a target triple or the path of a target json
+  string target_triple = 4;
+  // Never filled: rules_rust's ToolchainInfo.version is only available to rules
+  // resolving the toolchain type, ask `rustc --version` instead.
+  string version = 5;
+  // Never filled: rules_rust's ToolchainInfo.default_edition, a crate's
+  // `edition` already falls back to it.
+  string default_edition = 6;
+}
+
+message RustCrateInfo {
+  string crate_id = 1;
+  RustCrateLocation location = 2;
+  bool from_workspace = 3;
+  string name = 4;
+  string kind = 5;
+  string edition = 6;
+  string out_dir = 7;
+  repeated string crate_features = 8;
+  repeated string dependencies_crate_ids = 9;
+  string crate_root = 10;
+  string version = 11;
+  repeated string proc_macro_artifacts = 12;
+
+  // Consulo fork: not part of the BSP message
+  RustToolchainInfo toolchain = 1000;
+  // `--cfg` options of the Rustc action, including the `feature="..."` ones
+  repeated string cfg_options = 1001;
+}
+
 message TestInfo {
   string size = 1;
 }
@@ -356,4 +405,7 @@ message TargetIdeInfo {
   GoTargetInfo go_target_info = 210;
 
   ExtraRule extra_rule = 220;
+
+  // Consulo fork
+  RustCrateInfo rust_crate_info = 1000;
 }

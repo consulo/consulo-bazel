@@ -1,0 +1,4 @@
+console.task.model.attach.rust.workspace:
+    text: "Attach the Rust workspace"
+console.task.model.rust.importer:
+    text: "Rust importer"
