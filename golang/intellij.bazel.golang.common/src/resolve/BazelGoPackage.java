@@ -17,6 +17,7 @@
 package org.jetbrains.bazel.golang.resolve;
 
 import com.goide.psi.GoFile;
+import com.goide.psi.impl.GoPackage;
 import consulo.annotation.access.RequiredReadAction;
 import consulo.language.content.FileIndexFacade;
 import consulo.language.psi.PsiDirectory;
@@ -53,37 +54,26 @@ import java.util.function.Predicate;
  * - {@link #files} will not necessarily return all files under {@code GoPackage.getDirectories}.
  * - {@link #navigate}s to the corresponding go rule instead of a directory.
  */
-// TODO consulo: com.goide.psi.impl.GoPackage is missing in consulo-google-go (its packages are plain directories), so
-//  BazelGoPackage has no supertype; the arguments of the upstream super constructor (package name, directories) are kept as fields
-public class BazelGoPackage /* : GoPackage */ {
+public class BazelGoPackage extends GoPackage {
     private final Project myProject;
     private final BazelGoPackageEntity myEntity;
-
-    private final String myName;
-    private final VirtualFile[] myDirectories;
 
     @RequiredReadAction
     public BazelGoPackage(
         Project project,
         BazelGoPackageEntity entity
     ) {
+        super(
+            project,
+            getPackageName(project, sources(entity), entity.importPath()),
+            sources(entity).stream()
+                .map(VirtualFile::getParent)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toArray(VirtualFile[]::new)
+        );
         myProject = project;
         myEntity = entity;
-        // consulo: upstream GoPackage(project, name, *directories)
-        myName = getPackageName(project, sources(entity), entity.importPath());
-        myDirectories = sources(entity).stream()
-            .map(VirtualFile::getParent)
-            .filter(Objects::nonNull)
-            .distinct()
-            .toArray(VirtualFile[]::new);
-    }
-
-    public String getName() {
-        return myName;
-    }
-
-    public VirtualFile[] getDirectories() {
-        return myDirectories;
     }
 
     /**
@@ -279,6 +269,7 @@ public class BazelGoPackage /* : GoPackage */ {
         return result;
     }
 
+    @Override
     @RequiredReadAction
     public Collection<PsiFile> files() {
         PsiManager psiManager = PsiManager.getInstance(myProject);
@@ -288,11 +279,13 @@ public class BazelGoPackage /* : GoPackage */ {
             .toList();
     }
 
+    @Override
     @RequiredReadAction
     // consulo: com.intellij.util.Processor -> Predicate
     public boolean processFiles(Predicate<? super PsiFile> processor, Predicate<VirtualFile> virtualFileFilter) {
-        // TODO consulo: GoPackage.isValid is missing
-        // if (!isValid) return true
+        if (!isValid()) {
+            return true;
+        }
         FileIndexFacade fileIndexFacade = FileIndexFacade.getInstance(myProject);
         for (PsiFile file : files()) {
             VirtualFile virtualFile = file.getVirtualFile();
@@ -307,6 +300,7 @@ public class BazelGoPackage /* : GoPackage */ {
         return true;
     }
 
+    @Override
     @RequiredReadAction
     public void navigate(boolean requestFocus) {
         PsiElement navigable = getNavigableElement();
@@ -315,11 +309,13 @@ public class BazelGoPackage /* : GoPackage */ {
         }
     }
 
+    @Override
     @RequiredReadAction
     public boolean canNavigate() {
         return getNavigableElement() instanceof Navigatable;
     }
 
+    @Override
     /**
      * navigates to the target in the BUILD file or just the BUILD file
      */
@@ -354,14 +350,17 @@ public class BazelGoPackage /* : GoPackage */ {
         return labels.isEmpty() ? null : labels.get(0);
     }
 
+    @Override
     public String getCanonicalImport(@Nullable Module contextModule) {
         return myEntity.importPath();
     }
 
+    @Override
     public String getImportPath(boolean withVendoring) {
         return myEntity.importPath();
     }
 
+    @Override
     public List<String> getAllImportPaths(boolean withVendoring) {
         return List.of(myEntity.importPath());
     }

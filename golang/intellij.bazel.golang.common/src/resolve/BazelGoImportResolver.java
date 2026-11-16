@@ -17,6 +17,8 @@
 package org.jetbrains.bazel.golang.resolve;
 
 import com.goide.psi.impl.imports.GoImportReference;
+import com.goide.psi.impl.imports.GoImportResolver;
+import consulo.annotation.component.ExtensionImpl;
 import com.google.common.collect.ImmutableList;
 import consulo.annotation.access.RequiredReadAction;
 import consulo.ide.impl.idea.codeInsight.navigation.CtrlMouseHandler;
@@ -45,9 +47,10 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
-// TODO consulo: not registered (upstream com.goide importResolver id="Bazel.ImportResolver", order="first"). The GoImportResolver
-//  extension point and GoPackage are missing in consulo-google-go, its import references resolve to directories only
-public class BazelGoImportResolver /* : GoImportResolver */ {
+// consulo: upstream id="Bazel.ImportResolver", order="first"; the order is restricted to the plugin owning the extension point
+@ExtensionImpl
+public class BazelGoImportResolver implements GoImportResolver {
+    @Override
     @RequiredReadAction
     public @Nullable Collection<BazelGoPackage> resolve(
         String importPath,
@@ -62,6 +65,7 @@ public class BazelGoImportResolver /* : GoImportResolver */ {
         return goPackage != null ? ImmutableList.of(goPackage) : null;
     }
 
+    @Override
     public ThreeState supportsRelativeImportPaths(Project project, @Nullable Module module) {
         if (!supportsGo(project)) {
             return ThreeState.UNSURE;
@@ -69,6 +73,7 @@ public class BazelGoImportResolver /* : GoImportResolver */ {
         return ThreeState.NO;
     }
 
+    @Override
     public ThreeState supportsInternalPackages(Project project, @Nullable Module module) {
         if (!supportsGo(project)) {
             return ThreeState.UNSURE;
@@ -76,6 +81,7 @@ public class BazelGoImportResolver /* : GoImportResolver */ {
         return ThreeState.NO;
     }
 
+    @Override
     public ThreeState supportsSdkInternalPackages(Project project, @Nullable Module module) {
         if (!supportsGo(project)) {
             return ThreeState.UNSURE;
@@ -83,6 +89,7 @@ public class BazelGoImportResolver /* : GoImportResolver */ {
         return ThreeState.NO;
     }
 
+    @Override
     @RequiredReadAction
     public ResolveResult @Nullable [] resolve(GoImportReference reference) {
         Project project = reference.getElement().getProject();

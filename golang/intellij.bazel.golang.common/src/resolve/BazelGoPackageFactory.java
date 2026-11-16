@@ -17,6 +17,8 @@
 package org.jetbrains.bazel.golang.resolve;
 
 import com.goide.psi.GoFile;
+import com.goide.psi.impl.GoPackageFactory;
+import consulo.annotation.component.ExtensionImpl;
 import consulo.language.psi.PsiDirectory;
 import consulo.project.Project;
 import consulo.virtualFileSystem.VirtualFile;
@@ -24,9 +26,10 @@ import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil.GoPackageEntit
 import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity;
 import org.jspecify.annotations.Nullable;
 
-// TODO consulo: not registered (upstream com.goide packageFactory, order="first"). The GoPackageFactory extension point and
-//  GoPackage are missing in consulo-google-go
-public class BazelGoPackageFactory /* : GoPackageFactory */ {
+// consulo: upstream order="first"; the order is restricted to the plugin owning the extension point
+@ExtensionImpl
+public class BazelGoPackageFactory implements GoPackageFactory {
+    @Override
     public @Nullable BazelGoPackage createPackage(GoFile goFile) {
         Project project = goFile.getProject();
         if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
@@ -39,6 +42,7 @@ public class BazelGoPackageFactory /* : GoPackageFactory */ {
         return new BazelGoPackage(project, goPackageEntity);
     }
 
+    @Override
     public @Nullable BazelGoPackage createPackage(String packageName, PsiDirectory... directories) {
         return null;
     }

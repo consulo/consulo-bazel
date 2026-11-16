@@ -295,7 +295,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `java/intellij.bazel.java.{common,sync,core,coverage}` | `consulo.bazel.java` (`consulo-bazel-java/`, optional library, needs consulo.java) | converted, builds |
 | `java/intellij.bazel.java.profiler` | - | not ported (IntelliJ Ultimate profiler API), stays `.kt` |
 | `kotlin/*` | optional library, needs consulo-kotlin | not started |
-| `golang/*` | `consulo.bazel.go` (`consulo-bazel-go/`, optional library, needs consulo.google.go) | converted, builds (no Delve debugger, import resolver, coverage) |
+| `golang/*` | `consulo.bazel.go` (`consulo-bazel-go/`, optional library, needs consulo.google.go) | converted, builds, sync, import resolution and run tested (needs GoPackage/GoImportResolver of consulo-google-go; no Delve debugger, coverage) |
 | `python/*` | optional library, needs consulo-python | not started |
 | `clion/*` | `consulo.bazel.cpp` (`consulo-bazel-cpp/`, optional library, needs consulo.cpp from consulo/consulo-cpp) | converted, builds, sync tested; per-file options via `CFileOptionsContributor`, debug via consulo-native-dev; no compiler detection or test frameworks |
 

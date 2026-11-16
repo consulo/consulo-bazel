@@ -322,8 +322,13 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
     // }
 
     public void setBeforeRunTasksFromHandler(List<BeforeRunTask> value) {
-        // consulo: upstream calls super.setBeforeRunTasks(value), Consulo keeps the before run tasks in RunManager
-        RunManager.getInstance(getProject()).setBeforeRunTasks(this, value, false);
+        // consulo: upstream calls super.setBeforeRunTasks(value), Consulo keeps the before run tasks in RunManager.
+        //   Producers create configurations while executor actions update in parallel in the background, and RunManagerImpl's
+        //   before run task map is not thread-safe there (fixed in the platform by a concurrent map), so the writes are serialized
+        RunManager runManager = RunManager.getInstance(getProject());
+        synchronized (runManager) {
+            runManager.setBeforeRunTasks(this, value, false);
+        }
     }
 
     @Override
