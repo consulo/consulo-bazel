@@ -296,7 +296,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `java/intellij.bazel.java.profiler` | - | not ported (IntelliJ Ultimate profiler API), stays `.kt` |
 | `kotlin/*` | optional library, needs consulo-kotlin | not started |
 | `golang/*` | `consulo.bazel.go` (`consulo-bazel-go/`, optional library, needs consulo.google.go) | converted, builds, sync, import resolution and run tested (needs GoPackage/GoImportResolver of consulo-google-go; no Delve debugger, coverage) |
-| `python/*` | optional library, needs consulo-python | not started |
+| `python/backend`, `python/intellij.bazel.python.common` | `consulo.bazel.python` (`consulo-bazel-python/`, optional library, needs consulo.python) | converted, builds, sync and import resolution tested; packaging API, module renderer, canonical path provider and stub files missing in consulo-python |
 | `clion/*` | `consulo.bazel.cpp` (`consulo-bazel-cpp/`, optional library, needs consulo.cpp from consulo/consulo-cpp) | converted, builds, sync tested; per-file options via `CFileOptionsContributor`, debug via consulo-native-dev; no compiler detection or test frameworks |
 | `rust/intellij.bazel.rust.sync` (Consulo-only, see [Rust](#rust)) | `consulo.bazel.rust` (`consulo-bazel-rust/`, optional library, needs consulo.rust) | restored and written, javac-checked; aspect output verified with Bazel 9.3.2; not yet built with Maven or tested in the IDE |
 
@@ -361,6 +361,9 @@ classes under other names, the Java file is renamed. Upstream diffs of the left 
 | `java/intellij.bazel.java.core/.../fastbuild/ToolchainInfoSyncHook.kt` (the service) | `ToolchainInfoSyncHook.java` + `JvmToolchainInfoService.java` |
 | `java/intellij.bazel.java.core/.../jvm/run/JvmRunHandler.kt` (the provider) | `JvmRunHandler.java` + `JvmRunHandlerProvider.java` |
 | `java/intellij.bazel.java.core/.../jvm/run/JvmTestHandler.kt` (the provider) | `JvmTestHandler.java` + `JvmTestHandlerProvider.java` |
+| `python/backend/.../BazelPythonWorkspaceImporter.kt` (`Factory`) | `BazelPythonWorkspaceImporter.java` + `BazelPythonWorkspaceImporterFactory.java` |
+| `python/intellij.bazel.python.common/.../run/PythonBazelRunHandler.kt` (the provider) | `PythonBazelRunHandler.java` + `PythonBazelRunHandlerProvider.java` |
+| `python/intellij.bazel.python.common/.../run/PythonBazelTestHandler.kt` (the provider) | `PythonBazelTestHandler.java` + `PythonBazelTestHandlerProvider.java` |
 | `golang/intellij.bazel.golang.common/.../sync/GoWorkspaceImporter.kt` (`Factory`) | `GoWorkspaceImporter.java` + `GoWorkspaceImporterFactory.java` |
 | `golang/intellij.bazel.golang.common/.../debug/BazelGoRunHandler.kt` (the provider) | `BazelGoRunHandler.java` + `BazelGoRunHandlerProvider.java` |
 | `golang/intellij.bazel.golang.common/.../debug/BazelGoTestHandler.kt` (the provider) | `BazelGoTestHandler.java` + `BazelGoTestHandlerProvider.java` |

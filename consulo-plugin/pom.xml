@@ -127,6 +127,12 @@
         </dependency>
         <dependency>
             <groupId>consulo.plugin</groupId>
+            <artifactId>consulo.bazel.python</artifactId>
+            <version>${project.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>consulo.plugin</groupId>
             <artifactId>consulo.bazel.rust</artifactId>
             <version>${project.version}</version>
             <scope>runtime</scope>

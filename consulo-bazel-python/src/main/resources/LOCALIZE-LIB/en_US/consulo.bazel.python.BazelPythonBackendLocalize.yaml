@@ -1,0 +1,22 @@
+console.task.model.calculate.python.sdks:
+    text: "Calculate all python sdk infos"
+console.task.model.calculate.python.source.deps:
+    text: "Calculate python dependencies"
+element.presentation.location.string.in.class.stub:
+    text: "({0} in {1} stub)"
+element.presentation.location.string.in.class:
+    text: "({0} in {1})"
+element.presentation.location.string.module.stub:
+    text: "({0} stub)"
+element.presentation.location.string.module:
+    text: "({0})"
+progress.bar.calculate.python.sdk.infos:
+    text: "Calculating all unique Python SDK infos"
+progress.bar.calculate.python.source.deps:
+    text: "Calculating Python dependencies"
+python.cant.create.sdk:
+    text: "Sdk for Python ''{0}'' could not be created because of ''{1}''"
+python.not.found:
+    text: "No Python interpreter found on the system"
+python.workspace.importer:
+    text: "Python importer"

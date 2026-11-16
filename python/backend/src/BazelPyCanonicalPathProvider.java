@@ -1,25 +1,40 @@
-package com.intellij.bazel.python.backend
+package com.intellij.bazel.python.backend;
 
-import com.intellij.openapi.components.service
-import com.intellij.psi.PsiElement
-import com.intellij.psi.util.PsiUtilCore
-import com.intellij.psi.util.QualifiedName
-import com.jetbrains.python.psi.resolve.PyCanonicalPathProvider
-import com.jetbrains.python.psi.resolve.QualifiedNameFinder
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
+import com.jetbrains.python.impl.psi.resolve.QualifiedNameFinder;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiUtilCore;
+import consulo.language.psi.util.QualifiedName;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelPyCanonicalPathProvider : PyCanonicalPathProvider {
-  override fun getCanonicalPath(symbol: PsiElement?, qName: QualifiedName, foothold: PsiElement?): QualifiedName? {
-    val project = (foothold ?: symbol)?.project ?: return null
-    if (!project.isBazelProject) return null
+// TODO consulo: not registered (upstream Pythonid.canonicalPathProvider). The Consulo PyCanonicalPathProvider is
+//  getCanonicalPath(qName, foothold) without the symbol, and it is only asked for a symbol that already has an importable
+//  qualified name; the upstream computation needs the file of the symbol, so the class does not implement the interface
+public class BazelPyCanonicalPathProvider /* : PyCanonicalPathProvider */ {
+    public @Nullable QualifiedName getCanonicalPath(@Nullable PsiElement symbol, QualifiedName qName, @Nullable PsiElement foothold) {
+        PsiElement element = foothold != null ? foothold : symbol;
+        if (element == null) {
+            return null;
+        }
+        Project project = element.getProject();
+        if (!org.jetbrains.bazel.config.project.isBazelProject(project)) {
+            return null;
+        }
 
-    val virtualFile = PsiUtilCore.getVirtualFile(symbol) ?: return null
-    return project.service<PythonResolveIndexService>().findShortestQualifiedName(virtualFile)
-  }
+        VirtualFile virtualFile = PsiUtilCore.getVirtualFile(symbol);
+        if (virtualFile == null) {
+            return null;
+        }
+        return project.getInstance(PythonResolveIndexService.class).findShortestQualifiedName(virtualFile);
+    }
+
+    // consulo: upstream internal top-level function of BazelPyCanonicalPathProvider.kt
+
+    /**
+     * Returns {@code true} if PyCharm is capable of generating an import for symbol
+     */
+    public static boolean isImportableByPyCharm(PsiElement symbol, @Nullable PsiElement foothold) {
+        return QualifiedNameFinder.findCanonicalImportPath(symbol, foothold) != null;
+    }
 }
-
-/** Returns `true` if PyCharm is capable of generating an import for symbol */
-internal fun isImportableByPyCharm(symbol: PsiElement, foothold: PsiElement?): Boolean =
-  QualifiedNameFinder.findCanonicalImportPath(symbol, foothold) != null

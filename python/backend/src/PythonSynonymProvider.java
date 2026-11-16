@@ -1,25 +1,32 @@
-package com.intellij.bazel.python.backend
+package com.intellij.bazel.python.backend;
 
-import com.intellij.openapi.extensions.ExtensionPointName
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.application.Application;
+import org.jspecify.annotations.Nullable;
 
-/** Use this extension point if resolving Python imports require a custom change in their qualified names */
-@ApiStatus.Internal
-interface PythonSynonymProvider {
-  /**
-   * Creates a synonym for a Python import.
-   * Qualified name returned from here (a "synonym") is searched in the project root when the original name was not found.
-   * For example, if in Pythin code a library is referenced as `aaa.bbb`, but its file system location is `src/python/aaa/bbb.py`,
-   * then the override might look as follows:
-   * ```
-   * return listOf("src", "python") + qualifiedNameComponents
-   * ```
-   *
-   * If for a given qualified name, no synonym should be provided, return `null`
-   */
-  fun getSynonym(qualifiedNameComponents: List<String>): List<String>?
+import java.util.List;
 
-  companion object {
-    val ep = ExtensionPointName.create<PythonSynonymProvider>("org.jetbrains.bazel.python.synonymProvider")
-  }
+/**
+ * Use this extension point if resolving Python imports require a custom change in their qualified names
+ */
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface PythonSynonymProvider {
+    /**
+     * Creates a synonym for a Python import.
+     * Qualified name returned from here (a "synonym") is searched in the project root when the original name was not found.
+     * For example, if in Pythin code a library is referenced as {@code aaa.bbb}, but its file system location is {@code src/python/aaa/bbb.py},
+     * then the override might look as follows:
+     * <pre>
+     * return listOf("src", "python") + qualifiedNameComponents
+     * </pre>
+     * <p>
+     * If for a given qualified name, no synonym should be provided, return {@code null}
+     */
+    @Nullable List<String> getSynonym(List<String> qualifiedNameComponents);
+
+    // consulo: upstream companion `val ep = ExtensionPointName.create("org.jetbrains.bazel.python.synonymProvider")`
+    static List<PythonSynonymProvider> getEp() {
+        return Application.get().getExtensionList(PythonSynonymProvider.class);
+    }
 }

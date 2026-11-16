@@ -1,14 +1,21 @@
-package com.intellij.bazel.python.backend.sync
+package com.intellij.bazel.python.backend.sync;
 
-import com.intellij.openapi.project.Project
-import org.jetbrains.bazel.python.lang.PythonBuildTarget
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor
-import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeEntry
-import org.jetbrains.bazel.sync.workspace.persistence.type
+import consulo.annotation.component.ExtensionImpl;
+import consulo.project.Project;
+import org.jetbrains.bazel.python.lang.PythonBuildTarget;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor;
+import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor.WorkspaceTypeEntry;
 
-internal class PythonWorkspaceTypeContributor : WorkspaceTypeContributor {
-  override fun contribute(project: Project): List<WorkspaceTypeEntry> = buildList {
-    type<PythonBuildTarget>()
-    type<PythonWorkspaceSyncConfig>()
-  }
+import java.util.ArrayList;
+import java.util.List;
+
+@ExtensionImpl
+public class PythonWorkspaceTypeContributor implements WorkspaceTypeContributor {
+    @Override
+    public List<WorkspaceTypeEntry> contribute(Project project) {
+        List<WorkspaceTypeEntry> result = new ArrayList<>();
+        WorkspaceTypeContributor.type(result, PythonBuildTarget.class);
+        WorkspaceTypeContributor.type(result, PythonWorkspaceSyncConfig.class);
+        return result;
+    }
 }

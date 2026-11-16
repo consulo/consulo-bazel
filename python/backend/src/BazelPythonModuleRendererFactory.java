@@ -1,100 +1,130 @@
-package com.intellij.bazel.python.backend
+package com.intellij.bazel.python.backend;
 
-import com.intellij.ide.util.ModuleRendererFactory
-import com.intellij.openapi.components.service
-import com.intellij.openapi.util.io.FileUtilRt
-import com.intellij.openapi.util.text.StringUtil
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiFile
-import com.intellij.psi.util.QualifiedName
-import com.intellij.util.TextWithIcon
-import com.jetbrains.python.PyNames
-import com.jetbrains.python.PyPsiBundle
-import com.jetbrains.python.codeInsight.typing.convertStubToRuntimePackageName
-import com.jetbrains.python.psi.PyClass
-import com.jetbrains.python.psi.PyElement
-import com.jetbrains.python.psi.PyPossibleClassMember
-import com.jetbrains.python.psi.impl.PyElementPresentation
-import com.jetbrains.python.pyi.PyiFile
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.config.isBazelProject
-import org.jetbrains.bazel.config.rootDir
-import java.nio.file.Path
+import com.jetbrains.python.PyNames;
+import com.jetbrains.python.impl.psi.impl.PyElementPresentation;
+import com.jetbrains.python.psi.PyClass;
+import com.jetbrains.python.psi.PyElement;
+import com.jetbrains.python.psi.PyPossibleClassMember;
+import consulo.annotation.access.RequiredReadAction;
+import consulo.bazel.python.localize.BazelPythonBackendLocalize;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.util.QualifiedName;
+import consulo.util.io.FileUtil;
+import consulo.util.lang.StringUtil;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jspecify.annotations.Nullable;
 
-@ApiStatus.Internal
-class BazelPythonModuleRendererFactory : ModuleRendererFactory() {
-  override fun handles(element: Any?): Boolean =
-    element is PyElement && element.project.isBazelProject
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
-  override fun rendersLocationString(): Boolean = true
-
-  override fun getModuleTextWithIcon(element: Any?): TextWithIcon? {
-    val locationString = (element as? PyElement)?.bazelPythonLocationString() ?: return null
-    return TextWithIcon(locationString, null)
-  }
-}
-
-internal fun PyElement.bazelPythonLocationString(): String? {
-  val containingFile = containingFile ?: return null
-  val packageForFile = getBazelPackageForFile(containingFile) ?: return null
-  val isPyiFile = containingFile is PyiFile
-
-  val containingClass: PyClass? = (this as? PyPossibleClassMember)?.containingClass
-  if (containingClass != null) {
-    return if (isPyiFile) {
-      PyPsiBundle.message("element.presentation.location.string.in.class.stub", containingClass.name, packageForFile)
+// TODO consulo: not registered (upstream moduleRendererFactory, order="before platform"). Consulo has no ModuleRendererFactory
+//  extension point (the right part of PsiElementListCellRenderer is always PsiElementModuleRenderer) and no TextWithIcon, so
+//  the class does not extend it; the location string computation is kept
+public class BazelPythonModuleRendererFactory /* : ModuleRendererFactory() */ {
+    @RequiredReadAction
+    public boolean handles(@Nullable Object element) {
+        return element instanceof PyElement pyElement && org.jetbrains.bazel.config.project.isBazelProject(pyElement.getProject());
     }
-    else {
-      PyPsiBundle.message("element.presentation.location.string.in.class", containingClass.name, packageForFile)
+
+    public boolean rendersLocationString() {
+        return true;
     }
-  }
 
-  return if (isPyiFile) {
-    PyPsiBundle.message("element.presentation.location.string.module.stub", packageForFile)
-  }
-  else {
-    PyPsiBundle.message("element.presentation.location.string.module", packageForFile)
-  }
-}
+    // consulo: upstream returns TextWithIcon(locationString, null)
+    @RequiredReadAction
+    public @Nullable String getModuleTextWithIcon(@Nullable Object element) {
+        return element instanceof PyElement pyElement ? bazelPythonLocationString(pyElement) : null;
+    }
 
-private fun PyElement.getBazelPackageForFile(containingFile: PsiFile): String? {
-  val nativePackage = PyElementPresentation.getPackageForFile(containingFile)
-  if (nativePackage != null) return nativePackage
+    // consulo: upstream top-level extensions of BazelPythonModuleRendererFactory.kt
 
-  val vFile = containingFile.virtualFile ?: return null
-  val indexedPackage = findIndexedPackageForFile(vFile)
-  if (indexedPackage != null) return indexedPackage
+    @RequiredReadAction
+    public static @Nullable String bazelPythonLocationString(PyElement receiver) {
+        PsiFile containingFile = receiver.getContainingFile();
+        if (containingFile == null) {
+            return null;
+        }
+        String packageForFile = getBazelPackageForFile(receiver, containingFile);
+        if (packageForFile == null) {
+            return null;
+        }
+        // TODO consulo: consulo-python has no stub files support (PyiFile is missing)
+        // val isPyiFile = containingFile is PyiFile
+        boolean isPyiFile = false;
 
-  return getProjectRootQualifiedName(vFile)
-}
+        PyClass containingClass = receiver instanceof PyPossibleClassMember member ? member.getContainingClass() : null;
+        // consulo: the PyPsiBundle element.presentation.location.string.* messages are missing in consulo-python, they are in
+        // BazelPythonBackendLocalize with the same keys
+        if (containingClass != null) {
+            if (isPyiFile) {
+                return BazelPythonBackendLocalize.elementPresentationLocationStringInClassStub(String.valueOf(containingClass.getName()), packageForFile).get();
+            }
+            else {
+                return BazelPythonBackendLocalize.elementPresentationLocationStringInClass(String.valueOf(containingClass.getName()), packageForFile).get();
+            }
+        }
 
-private fun PyElement.findIndexedPackageForFile(vFile: VirtualFile): String? {
-  val path = Path.of(vFile.path)
-  return project.service<PythonResolveIndexService>().findShortestQualifiedName(path)?.toString()
-}
+        if (isPyiFile) {
+            return BazelPythonBackendLocalize.elementPresentationLocationStringModuleStub(packageForFile).get();
+        }
+        else {
+            return BazelPythonBackendLocalize.elementPresentationLocationStringModule(packageForFile).get();
+        }
+    }
 
-private fun PyElement.getProjectRootQualifiedName(vFile: VirtualFile): String? {
-  val root = project.rootDir
-  val relativePath = VfsUtilCore.getRelativePath(vFile, root, VfsUtilCore.VFS_SEPARATOR_CHAR)
-  return relativePath?.toQualifiedName(vFile.isDirectory)
-}
+    private static @Nullable String getBazelPackageForFile(PyElement receiver, PsiFile containingFile) {
+        // consulo: the Consulo PyElementPresentation.getPackageForFile returns "" instead of null when there is no package
+        String nativePackage = PyElementPresentation.getPackageForFile(containingFile);
+        if (!nativePackage.isEmpty()) {
+            return nativePackage;
+        }
 
-private fun String.toQualifiedName(isDirectory: Boolean): String? {
-  val components = StringUtil.split(this, VfsUtilCore.VFS_SEPARATOR).toMutableList()
-  if (components.isEmpty()) return null
+        VirtualFile vFile = containingFile.getVirtualFile();
+        if (vFile == null) {
+            return null;
+        }
+        String indexedPackage = findIndexedPackageForFile(receiver, vFile);
+        if (indexedPackage != null) {
+            return indexedPackage;
+        }
 
-  val lastIndex = components.lastIndex
-  val nameWithoutExtension = FileUtilRt.getNameWithoutExtension(components[lastIndex])
-  if (!isDirectory && nameWithoutExtension == PyNames.INIT) {
-    components.removeAt(lastIndex)
-  }
-  else {
-    components[lastIndex] = nameWithoutExtension
-  }
+        return getProjectRootQualifiedName(receiver, vFile);
+    }
 
-  if (components.isEmpty() || components.any { it.contains(".") || !PyNames.isIdentifier(it) }) {
-    return null
-  }
-  return convertStubToRuntimePackageName(QualifiedName.fromComponents(components)).toString()
+    private static @Nullable String findIndexedPackageForFile(PyElement receiver, VirtualFile vFile) {
+        Path path = Path.of(vFile.getPath());
+        QualifiedName qualifiedName = receiver.getProject().getInstance(PythonResolveIndexService.class).findShortestQualifiedName(path);
+        return qualifiedName != null ? qualifiedName.toString() : null;
+    }
+
+    private static @Nullable String getProjectRootQualifiedName(PyElement receiver, VirtualFile vFile) {
+        VirtualFile root = org.jetbrains.bazel.config.project.getRootDir(receiver.getProject());
+        String relativePath = VirtualFileUtil.getRelativePath(vFile, root, VirtualFileUtil.VFS_SEPARATOR_CHAR);
+        return relativePath != null ? toQualifiedName(relativePath, vFile.isDirectory()) : null;
+    }
+
+    private static @Nullable String toQualifiedName(String receiver, boolean isDirectory) {
+        List<String> components = new ArrayList<>(StringUtil.split(receiver, String.valueOf(VirtualFileUtil.VFS_SEPARATOR_CHAR)));
+        if (components.isEmpty()) {
+            return null;
+        }
+
+        int lastIndex = components.size() - 1;
+        String nameWithoutExtension = FileUtil.getNameWithoutExtension(components.get(lastIndex));
+        if (!isDirectory && nameWithoutExtension.equals(PyNames.INIT)) {
+            components.remove(lastIndex);
+        }
+        else {
+            components.set(lastIndex, nameWithoutExtension);
+        }
+
+        if (components.isEmpty() || components.stream().anyMatch(it -> it.contains(".") || !PyNames.isIdentifier(it))) {
+            return null;
+        }
+        // TODO consulo: convertStubToRuntimePackageName (stub packages, `-stubs` suffix) is missing in consulo-python
+        // return convertStubToRuntimePackageName(QualifiedName.fromComponents(components)).toString()
+        return QualifiedName.fromComponents(components).toString();
+    }
 }

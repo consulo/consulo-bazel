@@ -1,564 +1,748 @@
-package com.intellij.bazel.python.backend
+package com.intellij.bazel.python.backend;
 
-import com.jetbrains.python.sdk.withSdkConfigurationLock
-import org.jetbrains.bazel.workspacemodel.entities.targetKey
-import com.intellij.workspaceModel.ide.legacyBridge.findModule
-import com.intellij.platform.backend.workspace.workspaceModel
-import com.jetbrains.python.onFailure
-import com.jetbrains.python.project.PyProject.Companion.asPyProject
-import com.intellij.python.pyproject.model.evolution.setPythonInterpreter
-import com.jetbrains.python.sdk.ModuleOrProject.ProjectOnly
-import com.jetbrains.python.sdk.createLocalSdkGuessingTypeByPath
-import com.intellij.bazel.python.backend.sync.PythonWorkspaceSyncConfig
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.NlsContexts
-import com.intellij.platform.workspace.jps.entities.ContentRootEntity
-import com.intellij.platform.workspace.jps.entities.ContentRootEntityBuilder
-import com.intellij.platform.workspace.jps.entities.DependencyScope
-import com.intellij.platform.workspace.jps.entities.LibraryDependency
-import com.intellij.platform.workspace.jps.entities.LibraryEntity
-import com.intellij.platform.workspace.jps.entities.LibraryId
-import com.intellij.platform.workspace.jps.entities.LibraryRoot
-import com.intellij.platform.workspace.jps.entities.LibraryRootTypeId
-import com.intellij.platform.workspace.jps.entities.LibraryTableId
-import com.intellij.platform.workspace.jps.entities.ModuleDependency
-import com.intellij.platform.workspace.jps.entities.ModuleEntity
-import com.intellij.platform.workspace.jps.entities.ModuleId
-import com.intellij.platform.workspace.jps.entities.ModuleSourceDependency
-import com.intellij.platform.workspace.jps.entities.ModuleTypeId
-import com.intellij.platform.workspace.jps.entities.SourceRootEntity
-import com.intellij.platform.workspace.jps.entities.SourceRootTypeId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.impl.url.toVirtualFileUrl
-import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
-import com.intellij.python.sdk.backend.PythonInterpreter
-import com.jetbrains.python.PythonBinary
-import com.jetbrains.python.errorProcessing.PyResult
-import com.jetbrains.python.sdk.internal.PYTHON_MODULE_ID
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.VisibleForTesting
-import org.jetbrains.bazel.commons.BazelPathsResolver
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.commons.RepoMapping
-import org.jetbrains.bazel.commons.getLocalRepositories
-import org.jetbrains.bazel.label.ResolvedLabel
-import org.jetbrains.bazel.progress.withSubtask
-import org.jetbrains.bazel.python.lang.PythonBuildTarget
-import org.jetbrains.bazel.python.lang.PythonLanguageClass
-import org.jetbrains.bazel.sync.environment.bazelProjectInfo
-import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter
-import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporterFactory
-import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext
-import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.NameProducer
-import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.NameSpace
-import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContextBuilder
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterContext
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterPhase
-import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterResult
-import org.jetbrains.bazel.sync.workspace.snapshot.CommonWorkspaceSyncConfig
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetMerger
-import org.jetbrains.bazel.sync.workspace.snapshot.allTargets
-import org.jetbrains.bazel.sync.workspace.snapshot.commonSyncConfig
-import org.jetbrains.bazel.sync.workspace.snapshot.filterBuildTarget
-import org.jetbrains.bazel.sync.workspace.snapshot.findBuildData
-import org.jetbrains.bazel.sync.workspace.snapshot.hasBuildData
-import org.jetbrains.bazel.target.isWorkspace
-import org.jetbrains.bazel.utils.isUnder
-import org.jetbrains.bazel.workspacemodel.entities.BazelModuleExtensionEntity
-import org.jetbrains.bazel.workspacemodel.entities.WorkspaceModelTargetKey
-import org.jetbrains.bazel.workspacemodel.entities.WorkspaceModelTargetLabelList
-import org.jetbrains.bazel.workspacemodel.entities.WorkspaceModelTargetSourceRootTypeId
-import org.jetbrains.bazel.workspacemodel.entities.bazelModuleExtension
-import org.jetbrains.bsp.protocol.BuildTarget
-import org.jetbrains.bsp.protocol.OutputLocation
-import org.jetbrains.bsp.protocol.StrictDependencyCheckedType
-import org.jetbrains.bsp.protocol.TaskId
-import org.jetbrains.bsp.protocol.id
-import org.jetbrains.bsp.protocol.isGenerated
-import org.jetbrains.bsp.protocol.isUserCode
-import org.jetbrains.bsp.protocol.utils.StringUtils
-import java.io.IOException
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.extension
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.pathString
+import com.intellij.bazel.python.backend.sync.PythonWorkspaceSyncConfig;
+import com.jetbrains.python.impl.sdk.PythonSdkType;
+import consulo.application.ReadAction;
+import consulo.application.WriteAction;
+import consulo.bazel.python.localize.BazelPythonBackendLocalize;
+import consulo.bazel.workspace.BazelModelBuilder;
+import consulo.content.ContentFolderTypeProvider;
+import consulo.content.base.SourcesOrderRootType;
+import consulo.content.bundle.Sdk;
+import consulo.content.bundle.SdkTable;
+import consulo.content.library.Library;
+import consulo.localize.LocalizeValue;
+import consulo.logging.Logger;
+import consulo.module.Module;
+import consulo.module.ModuleManager;
+import consulo.module.content.layer.ContentEntry;
+import consulo.module.content.layer.ModifiableRootModel;
+import consulo.module.content.layer.orderEntry.DependencyScope;
+import consulo.module.content.layer.orderEntry.LibraryOrderEntry;
+import consulo.module.content.layer.orderEntry.ModuleOrderEntry;
+import consulo.module.content.util.ModuleRootModificationUtil;
+import consulo.platform.Platform;
+import consulo.project.Project;
+import consulo.python.module.extension.BasePyMutableModuleExtension;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jetbrains.bazel.commons.BazelPathsResolver;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.RepoMapping;
+import org.jetbrains.bazel.commons.RepoMapping.LocalRepositoryMapping;
+import org.jetbrains.bazel.label.DependencyLabel;
+import org.jetbrains.bazel.label.Label.ResolvedLabel;
+import org.jetbrains.bazel.progress.util;
+import org.jetbrains.bazel.python.lang.PythonBuildTarget;
+import org.jetbrains.bazel.python.lang.PythonLanguageClass;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver;
+import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.GlobalNamingContextBuilder;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.NameProducer;
+import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.NameSpace;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetMerger;
+import org.jetbrains.bazel.target.BuildTargetUtils;
+import org.jetbrains.bazel.utils.PathUtil;
+import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource;
+import org.jetbrains.bazel.workspacemodel.entities.extensions;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.BazelModuleExtensionEntity;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.WorkspaceModelTargetKey;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.WorkspaceModelTargetLabelList;
+import org.jetbrains.bazel.workspacemodel.entities.extensions.WorkspaceModelTargetSourceRootTypeId;
+import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTarget.StrictDependencyCheckedType;
+import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.TaskId;
+import org.jetbrains.bsp.protocol.utils.StringUtils;
+import org.jspecify.annotations.Nullable;
 
-private const val PYTHON_SOURCE_ROOT_TYPE = "python-source"
-private const val PYTHON_RESOURCE_ROOT_TYPE = "python-resource"
-private val PYTHON_MODULE_TYPE = ModuleTypeId(PYTHON_MODULE_ID)
-private val NAME_PRODUCER = NameProducer(id = "python")
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.stream.Stream;
 
-internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContext) : BazelWorkspaceImporter {
-  companion object {
-    internal val logger = logger<BazelPythonWorkspaceImporter>()
-  }
+public class BazelPythonWorkspaceImporter implements BazelWorkspaceImporter {
+    // consulo: upstream private top-level constants of BazelPythonWorkspaceImporter.kt.
+    // SourceRootTypeId("python-source") / ("python-resource") -> the id of the Consulo ContentFolderTypeProvider
+    // (ContentFolderTypeProvider.byId), which is what WorkspaceModelTargetSourceRootTypeId stores
+    private static final String PYTHON_SOURCE_ROOT_TYPE = "PRODUCTION";
+    private static final String PYTHON_RESOURCE_ROOT_TYPE = "PRODUCTION_RESOURCE";
+    // consulo: ModuleTypeId(PYTHON_MODULE_ID) -> the Python module extension (BasePyMutableModuleExtension) is enabled on the module
+    private static final NameProducer NAME_PRODUCER = new NameProducer("python");
 
-  class Factory : BazelWorkspaceImporterFactory {
-    override fun createWorkspaceImporter(context: WorkspaceImporterContext): BazelWorkspaceImporter =
-      BazelPythonWorkspaceImporter(context)
-  }
+    static final Logger logger = Logger.getInstance(BazelPythonWorkspaceImporter.class);
 
-  override val importerName: @NlsContexts.ProgressTitle String
-    get() = BazelPythonBackendBundle.message("python.workspace.importer")
+    // consulo: the upstream nested `Factory` is the top-level BazelPythonWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
-  private lateinit var commonSyncConfig: CommonWorkspaceSyncConfig
-  private lateinit var pythonSyncConfig: PythonWorkspaceSyncConfig
-  private lateinit var allPythonTargets: Map<WorkspaceTargetKey, BuildTarget>
-  private var generatedSourcePaths: Map<Path, Path> = emptyMap()
-  private var generatedSourceRoots: Map<Path, Path> = emptyMap()
+    private final WorkspaceImporterContext myContext;
 
-  private var defaultInterpreter: OutputLocation? = null
-  private var defaultVersion: String? = null
-  private var externalSourceDependenciesByTarget: Map<WorkspaceTargetKey, List<WorkspaceTargetKey>> = mapOf()
+    private @Nullable CommonWorkspaceSyncConfig myCommonSyncConfig;
+    private @Nullable PythonWorkspaceSyncConfig myPythonSyncConfig;
+    private Map<WorkspaceTargetKey, BuildTarget> myAllPythonTargets = Map.of();
+    private Map<Path, Path> myGeneratedSourcePaths = Map.of();
+    private Map<Path, Path> myGeneratedSourceRoots = Map.of();
 
-  override suspend fun import(phase: WorkspaceImporterPhase, snapshot: WorkspaceSnapshot, taskId: TaskId): WorkspaceImporterResult =
-    when (phase) {
-      is WorkspaceImporterPhase.Initialize -> onInitialize(snapshot, phase.naming)
-      is WorkspaceImporterPhase.WorkspaceApply ->
-        onWorkspaceApply(snapshot, phase.builder, context.vfuManager, phase.entitySource, phase.naming)
+    private @Nullable OutputLocation myDefaultInterpreter = null;
+    private @Nullable String myDefaultVersion = null;
+    private Map<WorkspaceTargetKey, List<WorkspaceTargetKey>> myExternalSourceDependenciesByTarget = Map.of();
 
-      WorkspaceImporterPhase.PostProcessing -> onPostProcessing(snapshot, taskId)
-      else -> WorkspaceImporterResult.Success
+    public BazelPythonWorkspaceImporter(WorkspaceImporterContext context) {
+        myContext = context;
     }
 
-  private suspend fun onInitialize(
-    snapshot: WorkspaceSnapshot,
-    naming: GlobalNamingContextBuilder,
-  ): WorkspaceImporterResult {
-    commonSyncConfig = snapshot.syncConfigs.filterIsInstance<CommonWorkspaceSyncConfig>()
-                         .firstOrNull() ?: throw IllegalStateException()
-    pythonSyncConfig = snapshot.syncConfigs.filterIsInstance<PythonWorkspaceSyncConfig>()
-                         .firstOrNull() ?: throw IllegalStateException()
+    public WorkspaceImporterContext getContext() {
+        return myContext;
+    }
 
-    val importDepth = snapshot.commonSyncConfig.importDepth
-    allPythonTargets = snapshot.targetGraph.findAllTargetsAtDepth(maxDepth = importDepth, useRelaxedDependencyExpansion = true)
-      .mapNotNull { snapshot.targets.findTargetByKey(it) }
-      .filter { it.hasBuildData<PythonBuildTarget>() }
-      .let { targets ->
-        WorkspaceTargetMerger(mergeFunctions = pythonTargetMergeFunctions)
-          .mergeByTargetKey(targets = targets.toList())
-      }
-      .associateBy { it.key }
+    @Override
+    public LocalizeValue getImporterName() {
+        return BazelPythonBackendLocalize.pythonWorkspaceImporter();
+    }
 
-    collectGeneratedSourcePaths(snapshot)
-
-    val defaultPythonTarget = snapshot.allTargets
-      .filterBuildTarget<PythonBuildTarget>()
-      .filter { (_, pythonTarget) -> pythonTarget.interpreter != null }
-      .map { (_, pythonTarget) -> pythonTarget }
-      .firstOrNull()
-    defaultInterpreter = defaultPythonTarget?.interpreter
-    defaultVersion = defaultPythonTarget?.version
-
-    externalSourceDependenciesByTarget =
-      snapshot
-        .allTargets
-        .filterBuildTarget<PythonBuildTarget>()
-        .map { it.first.key }
-        .filter { it in allPythonTargets }
-        .associateWith { workspaceTargetKey ->
-          snapshot.targetGraph.findAllTransitiveSuccessorsWithoutRootTargets(workspaceTargetKey)
-            .mapNotNull { snapshot.targets.findTargetByKey(it) }
-            .filterBuildTarget<PythonBuildTarget>()
-            .filter { it.second.nonLocalExternalSources(snapshot.repoMapping).any() }
-            .map { it.first.key }
-            .distinct()
-            .toList()
+    @Override
+    public CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId) {
+        // consulo: an exception thrown by a phase fails the returned future
+        try {
+            if (phase instanceof WorkspaceImporterPhase.Initialize initialize) {
+                return onInitialize(snapshot, initialize.naming());
+            }
+            else if (phase instanceof WorkspaceImporterPhase.WorkspaceApply apply) {
+                return CompletableFuture.completedFuture(onWorkspaceApply(snapshot, apply.builder(), apply.entitySource(), apply.naming()));
+            }
+            else if (phase instanceof WorkspaceImporterPhase.PostProcessing) {
+                return onPostProcessing(snapshot, taskId);
+            }
+            else {
+                return CompletableFuture.completedFuture(WorkspaceImporterResult.Success);
+            }
         }
-
-    for (key in allPythonTargets.keys) {
-      naming.declare(NameSpace.MODULE, NAME_PRODUCER, key)
-    }
-    // one library per external source dependency target, see `onWorkspaceApply`
-    for (key in externalSourceDependencyKeys()) {
-      naming.declare(NameSpace.LIBRARY, NAME_PRODUCER, key)
-    }
-
-    return WorkspaceImporterResult.Success
-  }
-
-  private suspend fun collectGeneratedSourcePaths(snapshot: WorkspaceSnapshot) {
-    val overrides = allPythonTargets.values.asSequence()
-      .mapNotNull { it.findBuildData<PythonBuildTarget>() }
-      .flatMap { it.generatedSourceOverrides.asSequence() }
-      .associate { it.toPair() }
-    val locationsWithoutOverrides = allPythonTargets.values.asSequence()
-      .flatMap { target ->
-        val targetOverrides = target.findBuildData<PythonBuildTarget>()?.generatedSourceOverrides.orEmpty()
-        generatedSources(target).filter { it !in targetOverrides }
-      }.toSet()
-    val execrootResolver = DefaultOutputLocationResolver.createExecrootResolving(context.bazelInfo)
-    val localRepositories = snapshot.repoMapping.getLocalRepositories()
-    val roots = mutableMapOf<Path, Path>()
-    generatedSourcePaths = allPythonTargets.values.asSequence()
-      .flatMap { generatedSources(it) }
-      .filter { it.isGenerated }
-      .distinct()
-      .toList()
-      .mapNotNull { location ->
-        val original = execrootResolver.resolve(location, localRepositories) ?: return@mapNotNull null
-        if (LanguageClass.fromExtension(original.extension) != PythonLanguageClass.PYTHON) return@mapNotNull null
-        val cached = context.outputResolver.resolve(location, localRepositories)
-        val fallback = overrides[location]?.let { context.outputResolver.resolve(it, localRepositories) }
-        val effective = context.outFileHardLinks.findPreparedOutputFile(original)
-                        ?: cached?.takeIf { location in locationsWithoutOverrides && canReplaceFallback(it, fallback) }
-                        ?: fallback ?: cached
-                        ?: return@mapNotNull null
-        if (effective == cached) {
-          collectGeneratedSourceRoots(original, effective, roots)
+        catch (Throwable e) {
+            return CompletableFuture.failedFuture(e);
         }
-        original to effective
-      }.toMap()
-    generatedSourceRoots = roots
-  }
-
-  private fun canReplaceFallback(cached: Path, fallback: Path?): Boolean {
-    if (fallback == null) return true
-    if (!cached.isRegularFile()) return false
-    if (!fallback.exists()) return true
-    return try {
-      Files.isSameFile(cached, fallback)
-    } catch (_: IOException) {
-      false
-    }
-  }
-
-  private fun collectGeneratedSourceRoots(original: Path, effective: Path, roots: MutableMap<Path, Path>) {
-    val bazelBin = context.bazelInfo.bazelBin
-    if (original == effective || !original.startsWith(bazelBin) || !effective.endsWith(bazelBin.relativize(original))) return
-    var effectiveRoot: Path? = effective.parent
-    for (root in generateSequence(original.parent) { it.parent }) {
-      if (!root.startsWith(bazelBin)) break
-      val mappedRoot = effectiveRoot ?: break
-      if (roots.putIfAbsent(root, mappedRoot) != null) break
-      effectiveRoot = mappedRoot.parent
-    }
-  }
-
-  private fun generatedSources(target: BuildTarget): Sequence<OutputLocation> =
-    target.sources.getOutputLocations().filter { it.isGenerated } +
-    (target.findBuildData<PythonBuildTarget>()?.generatedSources?.getOutputLocations() ?: emptySequence())
-
-  private fun externalSourceDependencyKeys(): List<WorkspaceTargetKey> =
-    allPythonTargets.keys
-      .flatMap { externalSourceDependenciesByTarget[it].orEmpty() }
-      .distinct()
-
-  private fun onWorkspaceApply(
-    snapshot: WorkspaceSnapshot,
-    builder: MutableEntityStorage,
-    vfuManager: VirtualFileUrlManager,
-    entitySource: EntitySource,
-    naming: GlobalNamingContext,
-  ): WorkspaceImporterResult {
-    val allTargetsByKey = snapshot.allTargets.associateBy { it.key }
-    val sourceDependencyLibraries =
-      externalSourceDependencyKeys()
-        .mapNotNull { dependencyKey ->
-          // calculate one external source path list per iteration to avoid keeping everything in memory at once
-          val dependencyTarget = allTargetsByKey[dependencyKey] ?: return@mapNotNull null
-          val externalSources = getExternalSourcePaths(context, snapshot, dependencyTarget)
-          if (externalSources.isEmpty()) return@mapNotNull null
-          addSourceDependencyLibrary(builder, dependencyKey, naming, externalSources, entitySource, vfuManager)
-            ?.let { dependencyKey to it }
-        }.toMap()
-
-    for ((targetKey, target) in allPythonTargets) {
-      addModuleEntityFromTarget(
-        snapshot = snapshot,
-        builder = builder,
-        target = target,
-        moduleName = naming.findOrFallback(NameSpace.MODULE, NAME_PRODUCER, targetKey),
-        entitySource = entitySource,
-        virtualFileUrlManager = vfuManager,
-        naming = naming,
-        sourceDependencyLibraries = externalSourceDependenciesByTarget[targetKey].orEmpty().mapNotNull { sourceDependencyLibraries[it] },
-      )
-    }
-    return WorkspaceImporterResult.Success
-  }
-
-  private fun getExternalSourcePaths(context: WorkspaceImporterContext, snapshot: WorkspaceSnapshot, target: BuildTarget): List<Path> {
-    val pythonTarget = target.findBuildData<PythonBuildTarget>() ?: return emptyList()
-    val localRepositories = snapshot.repoMapping.getLocalRepositories()
-    return pythonTarget.nonLocalExternalSources(snapshot.repoMapping)
-      .mapNotNull { context.outputResolver.resolve(it, localRepositories) }
-      .distinct()
-      .toList()
-  }
-
-  private fun PythonBuildTarget.nonLocalExternalSources(repoMapping: RepoMapping): Sequence<OutputLocation> =
-    externalSources.getOutputLocations().filterNot { it.isUserCode(repoMapping) }
-
-  private suspend fun onPostProcessing(snapshot: WorkspaceSnapshot, taskId: TaskId): WorkspaceImporterResult {
-    /**
-     * Because of PY-86494, the interpreter update fails to add SDK paths unless there's at least one module in the project.
-     * Hence, we're forced to do it in post-processing, after WSM has been applied already.
-     */
-    calculateAndAddSdksWithProgress(snapshot, taskId)
-
-    val pyTargets = allPythonTargets.values
-      .filter { it.hasBuildData<PythonBuildTarget>() }
-      .toList()
-
-    context.project.serviceAsync<PythonResolveIndexService>()
-      .updatePythonResolveIndex(context, snapshot, pyTargets, generatedSourcePaths)
-    return WorkspaceImporterResult.Success
-  }
-
-  private suspend fun calculateAndAddSdksWithProgress(snapshot: WorkspaceSnapshot, taskId: TaskId) {
-    context.progressReporter.indeterminateStep(text = BazelPythonBackendBundle.message("progress.bar.calculate.python.sdk.infos")) {
-      context.taskConsole.withSubtask(
-        subtaskId = taskId.subTask("calculate-and-add-all-python-sdk-infos"),
-        message = BazelPythonBackendBundle.message("console.task.model.calculate.python.sdks"),
-      ) {
-        // The module SDKs are written under the configuration lock, as every other write of an interpreter.
-        withSdkConfigurationLock(context.project) { setInterpreters(snapshot) }
-      }
-    }
-  }
-
-  /**
-   * Sets an interpreter on the module of each Python target. The importer builds one interpreter for each Python binary,
-   * owned by the Bazel project root, and sets it on every module that uses that binary.
-   */
-  private suspend fun setInterpreters(snapshot: WorkspaceSnapshot) {
-    val project = context.project
-    val binaryByTarget = snapshot.allTargets.filterBuildTarget<PythonBuildTarget>()
-      .mapNotNull { (target, pythonTarget) -> interpreterPath(snapshot, pythonTarget)?.let { target.key to it } }
-      .toMap()
-    val storage = project.workspaceModel.currentSnapshot
-    val modulesByBinary = storage.entities(ModuleEntity::class.java)
-      .mapNotNull { entity ->
-        val binary = entity.bazelModuleExtension?.targetKey?.let { binaryByTarget[it] } ?: return@mapNotNull null
-        val module = entity.findModule(storage) ?: return@mapNotNull null
-        binary to module
-      }
-      .toList()
-      .groupBy({ it.first }, { it.second })
-    for ((binary, modules) in modulesByBinary) {
-      val interpreter = when (val result = createInterpreter(binary, project)) {
-        is com.jetbrains.python.Result.Success -> result.result
-        is com.jetbrains.python.Result.Failure -> {
-          logger.warn("Failed to create an interpreter for $binary: ${result.error}")
-          continue
-        }
-      }
-      for (module in modules) {
-        module.asPyProject()?.setPythonInterpreter(interpreter, waitForSnapshot = false)?.onFailure {
-          logger.warn("Failed to set the interpreter $binary on ${module.name}: $it")
-        }
-      }
-    }
-  }
-
-  /** The Python binary of [pythonTarget], or of the default target when it has none. */
-  private fun interpreterPath(snapshot: WorkspaceSnapshot, pythonTarget: PythonBuildTarget): Path? {
-    val interpreterLocation = pythonTarget.interpreter ?: defaultInterpreter ?: return null
-    return context.outputResolver.resolve(interpreterLocation, snapshot.repoMapping.getLocalRepositories())
-  }
-
-  private fun addSourceDependencyLibrary(
-    builder: MutableEntityStorage,
-    dependencyTarget: WorkspaceTargetKey,
-    naming: GlobalNamingContext,
-    sourceDependencies: List<Path>,
-    entitySource: EntitySource,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): LibraryEntity? {
-    val roots =
-      sourceDependencies.distinct().map {
-        LibraryRoot(
-          url = it.toVirtualFileUrl(virtualFileUrlManager),
-          type = LibraryRootTypeId.SOURCES,
-        )
-      }
-    if (roots.isEmpty()) {
-      return null
     }
 
-    val name = naming.findOrFallback(NameSpace.LIBRARY, NAME_PRODUCER, dependencyTarget)
-    val tableId = LibraryTableId.ProjectLibraryTableId
-    return builder.resolve(LibraryId(name, tableId))
-           ?: builder.addEntity(
-             LibraryEntity(
-               name = name,
-               tableId = tableId,
-               roots = roots,
-               entitySource = entitySource,
-             ),
-           )
-  }
-
-  private fun addModuleEntityFromTarget(
-    snapshot: WorkspaceSnapshot,
-    builder: MutableEntityStorage,
-    target: BuildTarget,
-    moduleName: String,
-    entitySource: EntitySource,
-    virtualFileUrlManager: VirtualFileUrlManager,
-    naming: GlobalNamingContext,
-    sourceDependencyLibraries: List<LibraryEntity> = emptyList(),
-  ): ModuleEntity {
-    val contentRoots = getContentRootEntities(snapshot, target, entitySource, virtualFileUrlManager)
-
-    val libraryDependencies =
-      sourceDependencyLibraries.map {
-        LibraryDependency(it.symbolicId, true, DependencyScope.COMPILE)
-      }
-
-    val dependencies =
-      target.dependencies.map {
-        ModuleDependency(
-          module = ModuleId(naming.findOrFallback(NameSpace.MODULE, NAME_PRODUCER, it.targetKey)),
-          exported = true,
-          scope = DependencyScope.COMPILE,  // Python does not have the runtime/compile scope separation
-          productionOnTest = true,
-        )
-      }
-
-    // The module gets its interpreter in post-processing, through PyProject.setPythonInterpreter. The importer does not
-    // name an SDK here.
-    val allDependencies =
-      buildList {
-        addAll(dependencies)
-        add(ModuleSourceDependency)
-        addAll(libraryDependencies)
-      }
-
-    return builder.addEntity(
-      ModuleEntity(
-        name = moduleName,
-        dependencies = allDependencies,
-        entitySource = entitySource,
-      ) {
-        this.type = PYTHON_MODULE_TYPE
-        this.contentRoots = contentRoots
-        this.bazelModuleExtension = BazelModuleExtensionEntity(
-          _targetKey = WorkspaceModelTargetKey.of(target.key),
-          rootTypeId = WorkspaceModelTargetSourceRootTypeId(SourceRootTypeId(PYTHON_SOURCE_ROOT_TYPE)),
-          strictDependencies = WorkspaceModelTargetLabelList(
-            StrictDependencyCheckedType.OFF,
-            emptyList(),
-          ),
-          entitySource = entitySource,
-        )
-      },
-    )
-  }
-
-  private fun getContentRootEntities(
-    snapshot: WorkspaceSnapshot,
-    target: BuildTarget,
-    entitySource: EntitySource,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): List<ContentRootEntityBuilder> {
-    val sourceContentRootEntities = getSourceContentRootEntities(snapshot, target, entitySource, virtualFileUrlManager)
-    val resourceContentRootEntities = getResourceContentRootEntities(snapshot, target, entitySource, virtualFileUrlManager)
-
-    return sourceContentRootEntities + resourceContentRootEntities
-  }
-
-  private fun getSourceContentRootEntities(
-    snapshot: WorkspaceSnapshot,
-    target: BuildTarget,
-    entitySource: EntitySource,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): List<ContentRootEntityBuilder> = computeSourceRootPaths(snapshot, target)
-    .map { it.toContentRoot(PYTHON_SOURCE_ROOT_TYPE, entitySource, virtualFileUrlManager) }
-
-  private fun getResourceContentRootEntities(
-    snapshot: WorkspaceSnapshot,
-    target: BuildTarget,
-    entitySource: EntitySource,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): List<ContentRootEntityBuilder> = target.resources.getOutputLocations()
-    .mapNotNull { context.outputResolver.resolve(it, snapshot.repoMapping.getLocalRepositories()) }
-    .map { resource -> resource.toContentRoot(PYTHON_RESOURCE_ROOT_TYPE, entitySource, virtualFileUrlManager) }
-    .toList()
-
-  /**
-   * Returns the directories against which the `imports` of [target] resolve: the root of its repository and the
-   * directory of the outputs of that repository under `bazel-bin`. A repository that is neither the main nor a local
-   * repository gets no directories, so its `imports` make no source roots.
-   */
-  private fun importBasePaths(snapshot: WorkspaceSnapshot, target: BuildTarget): List<Path> {
-    val label = target.id as? ResolvedLabel
-    if (label == null || label.isMainWorkspace) {
-      return listOfNotNull(context.project.bazelProjectInfo.projectRootDir?.toNioPath(), context.bazelInfo.bazelBin).distinct()
-    }
-    if (!target.isWorkspace(snapshot.repoMapping)) return emptyList()
-    val pathsResolver = BazelPathsResolver(context.bazelInfo)
-    return listOf(
-      pathsResolver.toRepositoryPath(label.repo, snapshot.repoMapping),
-      pathsResolver.toBinRepositoryPath(label.repo, snapshot.repoMapping),
-    ).distinct()
-  }
-
-  private fun computeSourceRootPaths(snapshot: WorkspaceSnapshot, target: BuildTarget): Set<Path> {
-    // imports for generated files should be resolved against bazel-bin
-    val basePaths = importBasePaths(snapshot, target)
-    val importRoots =
-      PythonImportUtils.assembleExplicitImportsPaths(target)
-        .mapNotNull { importPath ->
-          basePaths.firstNotNullOfOrNull { base ->
-            base.resolve(importPath).normalize().takeIf { it.startsWith(base) }
-              ?.let { generatedSourceRoots[it] ?: it }
-              ?.takeIf { it.isDirectory() }
-          }
-        }.toSet()
-    val execrootResolver = DefaultOutputLocationResolver.createExecrootResolving(context.bazelInfo)
-    val localRepositories = snapshot.repoMapping.getLocalRepositories()
-    val individualFiles = (target.sources.getOutputLocations() + generatedSources(target))
-      .mapNotNull { location ->
-        execrootResolver.resolve(location, localRepositories)?.let { generatedSourcePaths[it] }
-        ?: context.outputResolver.resolve(location, localRepositories)
-      }
-      .filter { !it.isUnder(importRoots) }
-      .toSet()
-    return importRoots + individualFiles
-  }
-
-  private fun Path.toContentRoot(
-    rootType: String,
-    entitySource: EntitySource,
-    virtualFileUrlManager: VirtualFileUrlManager,
-  ): ContentRootEntityBuilder {
-    val url = toVirtualFileUrl(virtualFileUrlManager)
-    val sourceRootEntity = SourceRootEntity(
-      url = url,
-      rootTypeId = SourceRootTypeId(rootType),
-      entitySource = entitySource,
-    )
-    return ContentRootEntity(
-      url = url,
-      excludedPatterns = emptyList(),
-      entitySource = entitySource,
+    private CompletableFuture<WorkspaceImporterResult> onInitialize(
+        WorkspaceSnapshot snapshot,
+        GlobalNamingContextBuilder naming
     ) {
-      this.excludedUrls = emptyList()
-      this.sourceRoots = listOf(sourceRootEntity)
+        myCommonSyncConfig = snapshot.syncConfigs().stream()
+            .filter(CommonWorkspaceSyncConfig.class::isInstance)
+            .map(CommonWorkspaceSyncConfig.class::cast)
+            .findFirst()
+            .orElseThrow(IllegalStateException::new);
+        myPythonSyncConfig = snapshot.syncConfigs().stream()
+            .filter(PythonWorkspaceSyncConfig.class::isInstance)
+            .map(PythonWorkspaceSyncConfig.class::cast)
+            .findFirst()
+            .orElseThrow(IllegalStateException::new);
+
+        int importDepth = WorkspaceHelpers.getCommonSyncConfig(snapshot).importDepth();
+        List<BuildTarget> targets = snapshot.targetGraph().findAllTargetsAtDepth(importDepth, importDepth < 0, true)
+            .map(it -> snapshot.targets().findTargetByKey(it))
+            .filter(Objects::nonNull)
+            .filter(it -> WorkspaceHelpers.hasBuildData(it, PythonBuildTarget.class))
+            .toList();
+        Map<WorkspaceTargetKey, BuildTarget> allPythonTargets = new LinkedHashMap<>();
+        for (BuildTarget it : new WorkspaceTargetMerger(PythonMergeFunctions.pythonTargetMergeFunctions).mergeByTargetKey(targets)) {
+            allPythonTargets.put(it.getKey(), it);
+        }
+        myAllPythonTargets = allPythonTargets;
+
+        return collectGeneratedSourcePaths(snapshot).thenApply(ignored -> {
+            PythonBuildTarget defaultPythonTarget = WorkspaceHelpers.filterBuildTarget(WorkspaceHelpers.getAllTargets(snapshot), PythonBuildTarget.class)
+                .filter(it -> it.getSecond().interpreter() != null)
+                .map(it -> it.getSecond())
+                .findFirst()
+                .orElse(null);
+            myDefaultInterpreter = defaultPythonTarget != null ? defaultPythonTarget.interpreter() : null;
+            myDefaultVersion = defaultPythonTarget != null ? defaultPythonTarget.version() : null;
+
+            Map<WorkspaceTargetKey, List<WorkspaceTargetKey>> externalSourceDependenciesByTarget = new LinkedHashMap<>();
+            WorkspaceHelpers.filterBuildTarget(WorkspaceHelpers.getAllTargets(snapshot), PythonBuildTarget.class)
+                .map(it -> it.getFirst().getKey())
+                .filter(it -> myAllPythonTargets.containsKey(it))
+                .forEach(workspaceTargetKey -> externalSourceDependenciesByTarget.put(
+                    workspaceTargetKey,
+                    WorkspaceHelpers.filterBuildTarget(
+                            snapshot.targetGraph().findAllTransitiveSuccessorsWithoutRootTargets(workspaceTargetKey)
+                                .map(it -> snapshot.targets().findTargetByKey(it))
+                                .filter(Objects::nonNull),
+                            PythonBuildTarget.class
+                        )
+                        .filter(it -> nonLocalExternalSources(it.getSecond(), snapshot.repoMapping()).findAny().isPresent())
+                        .map(it -> it.getFirst().getKey())
+                        .distinct()
+                        .toList()
+                ));
+            myExternalSourceDependenciesByTarget = externalSourceDependenciesByTarget;
+
+            for (WorkspaceTargetKey key : myAllPythonTargets.keySet()) {
+                naming.declare(NameSpace.MODULE, NAME_PRODUCER, key);
+            }
+            // one library per external source dependency target, see `onWorkspaceApply`
+            for (WorkspaceTargetKey key : externalSourceDependencyKeys()) {
+                naming.declare(NameSpace.LIBRARY, NAME_PRODUCER, key);
+            }
+
+            return WorkspaceImporterResult.Success;
+        });
     }
-  }
 
-  /**
-   * An interpreter for [binary], owned by the project working directory, the Bazel project root. It is not registered
-   * yet: setting it on a module registers it.
-   */
-  private suspend fun createInterpreter(binary: Path, project: Project): PyResult<PythonInterpreter> =
-    createLocalSdkGuessingTypeByPath(binary, ProjectOnly(project), chooseSdkName(binary, project.name))
+    private CompletableFuture<Void> collectGeneratedSourcePaths(WorkspaceSnapshot snapshot) {
+        Map<OutputLocation, OutputLocation> overrides = new LinkedHashMap<>();
+        for (BuildTarget target : myAllPythonTargets.values()) {
+            PythonBuildTarget pythonTarget = WorkspaceHelpers.findBuildData(target, PythonBuildTarget.class);
+            if (pythonTarget != null) {
+                overrides.putAll(pythonTarget.generatedSourceOverrides());
+            }
+        }
+        Set<OutputLocation> locationsWithoutOverrides = new LinkedHashSet<>();
+        for (BuildTarget target : myAllPythonTargets.values()) {
+            PythonBuildTarget pythonTarget = WorkspaceHelpers.findBuildData(target, PythonBuildTarget.class);
+            Map<OutputLocation, OutputLocation> targetOverrides = pythonTarget != null ? pythonTarget.generatedSourceOverrides() : Map.of();
+            generatedSources(target).filter(it -> !targetOverrides.containsKey(it)).forEach(locationsWithoutOverrides::add);
+        }
+        OutputLocation.OutputLocationResolver execrootResolver = DefaultOutputLocationResolver.createExecrootResolving(myContext.bazelInfo());
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        Map<Path, Path> roots = new LinkedHashMap<>();
+        List<OutputLocation> locations = myAllPythonTargets.values().stream()
+            .flatMap(it -> generatedSources(it))
+            .filter(OutputLocation::isGenerated)
+            .distinct()
+            .toList();
+
+        // consulo: findPreparedOutputFile is asynchronous; the lookups run together, the results are applied in the upstream order
+        List<@Nullable Path> originals = new ArrayList<>();
+        List<CompletableFuture<@Nullable Path>> preparedFutures = new ArrayList<>();
+        for (OutputLocation location : locations) {
+            Path original = execrootResolver.resolve(location, localRepositories);
+            if (original == null || !PythonLanguageClass.PYTHON.equals(LanguageClass.fromExtension(extension(original)))) {
+                originals.add(null);
+                preparedFutures.add(CompletableFuture.completedFuture(null));
+                continue;
+            }
+            originals.add(original);
+            preparedFutures.add(myContext.outFileHardLinks().findPreparedOutputFile(original));
+        }
+        return CompletableFuture.allOf(preparedFutures.toArray(CompletableFuture[]::new)).thenAccept(ignored -> {
+            Map<Path, Path> generatedSourcePaths = new LinkedHashMap<>();
+            for (int i = 0; i < locations.size(); i++) {
+                OutputLocation location = locations.get(i);
+                Path original = originals.get(i);
+                if (original == null) {
+                    continue;
+                }
+                Path cached = myContext.outputResolver().resolve(location, localRepositories);
+                OutputLocation override = overrides.get(location);
+                Path fallback = override != null ? myContext.outputResolver().resolve(override, localRepositories) : null;
+                Path effective = preparedFutures.get(i).join();
+                if (effective == null && cached != null && locationsWithoutOverrides.contains(location) && canReplaceFallback(cached, fallback)) {
+                    effective = cached;
+                }
+                if (effective == null) {
+                    effective = fallback;
+                }
+                if (effective == null) {
+                    effective = cached;
+                }
+                if (effective == null) {
+                    continue;
+                }
+                if (effective.equals(cached)) {
+                    collectGeneratedSourceRoots(original, effective, roots);
+                }
+                generatedSourcePaths.put(original, effective);
+            }
+            myGeneratedSourcePaths = generatedSourcePaths;
+            myGeneratedSourceRoots = roots;
+        });
+    }
+
+    private boolean canReplaceFallback(Path cached, @Nullable Path fallback) {
+        if (fallback == null) {
+            return true;
+        }
+        if (!Files.isRegularFile(cached)) {
+            return false;
+        }
+        if (!Files.exists(fallback)) {
+            return true;
+        }
+        try {
+            return Files.isSameFile(cached, fallback);
+        }
+        catch (IOException e) {
+            return false;
+        }
+    }
+
+    private void collectGeneratedSourceRoots(Path original, Path effective, Map<Path, Path> roots) {
+        Path bazelBin = myContext.bazelInfo().bazelBin();
+        if (original.equals(effective) || !original.startsWith(bazelBin) || !effective.endsWith(bazelBin.relativize(original))) {
+            return;
+        }
+        Path effectiveRoot = effective.getParent();
+        for (Path root = original.getParent(); root != null; root = root.getParent()) {
+            if (!root.startsWith(bazelBin)) {
+                break;
+            }
+            Path mappedRoot = effectiveRoot;
+            if (mappedRoot == null) {
+                break;
+            }
+            if (roots.putIfAbsent(root, mappedRoot) != null) {
+                break;
+            }
+            effectiveRoot = mappedRoot.getParent();
+        }
+    }
+
+    private Stream<OutputLocation> generatedSources(BuildTarget target) {
+        PythonBuildTarget pythonTarget = WorkspaceHelpers.findBuildData(target, PythonBuildTarget.class);
+        return Stream.concat(
+            target.getSources().getOutputLocations().filter(OutputLocation::isGenerated),
+            pythonTarget != null ? pythonTarget.generatedSources().getOutputLocations() : Stream.empty()
+        );
+    }
+
+    private List<WorkspaceTargetKey> externalSourceDependencyKeys() {
+        Set<WorkspaceTargetKey> result = new LinkedHashSet<>();
+        for (WorkspaceTargetKey it : myAllPythonTargets.keySet()) {
+            result.addAll(myExternalSourceDependenciesByTarget.getOrDefault(it, List.of()));
+        }
+        return new ArrayList<>(result);
+    }
+
+    private WorkspaceImporterResult onWorkspaceApply(
+        WorkspaceSnapshot snapshot,
+        BazelModelBuilder builder,
+        BazelEntitySource entitySource,
+        GlobalNamingContext naming
+    ) {
+        Map<WorkspaceTargetKey, BuildTarget> allTargetsByKey = new LinkedHashMap<>();
+        WorkspaceHelpers.getAllTargets(snapshot).forEach(it -> allTargetsByKey.put(it.getKey(), it));
+        Map<WorkspaceTargetKey, Library> sourceDependencyLibraries = new LinkedHashMap<>();
+        for (WorkspaceTargetKey dependencyKey : externalSourceDependencyKeys()) {
+            // calculate one external source path list per iteration to avoid keeping everything in memory at once
+            BuildTarget dependencyTarget = allTargetsByKey.get(dependencyKey);
+            if (dependencyTarget == null) {
+                continue;
+            }
+            List<Path> externalSources = getExternalSourcePaths(myContext, snapshot, dependencyTarget);
+            if (externalSources.isEmpty()) {
+                continue;
+            }
+            Library library = addSourceDependencyLibrary(builder, dependencyKey, naming, externalSources, entitySource);
+            if (library != null) {
+                sourceDependencyLibraries.put(dependencyKey, library);
+            }
+        }
+
+        // consulo: the classic modifiable models read the module table (addModuleOrderEntry), which needs read access on this pool
+        //   thread; upstream MutableEntityStorage needs no lock
+        ReadAction.run(() -> {
+            for (Map.Entry<WorkspaceTargetKey, BuildTarget> entry : myAllPythonTargets.entrySet()) {
+                WorkspaceTargetKey targetKey = entry.getKey();
+                BuildTarget target = entry.getValue();
+                List<Library> libraries = new ArrayList<>();
+                for (WorkspaceTargetKey it : myExternalSourceDependenciesByTarget.getOrDefault(targetKey, List.of())) {
+                    Library library = sourceDependencyLibraries.get(it);
+                    if (library != null) {
+                        libraries.add(library);
+                    }
+                }
+                addModuleEntityFromTarget(
+                    snapshot,
+                    builder,
+                    target,
+                    naming.findOrFallback(NameSpace.MODULE, NAME_PRODUCER, targetKey),
+                    entitySource,
+                    naming,
+                    libraries
+                );
+            }
+        });
+        return WorkspaceImporterResult.Success;
+    }
+
+    private List<Path> getExternalSourcePaths(WorkspaceImporterContext context, WorkspaceSnapshot snapshot, BuildTarget target) {
+        PythonBuildTarget pythonTarget = WorkspaceHelpers.findBuildData(target, PythonBuildTarget.class);
+        if (pythonTarget == null) {
+            return List.of();
+        }
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        return nonLocalExternalSources(pythonTarget, snapshot.repoMapping())
+            .map(it -> context.outputResolver().resolve(it, localRepositories))
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+    }
+
+    private static Stream<OutputLocation> nonLocalExternalSources(PythonBuildTarget receiver, RepoMapping repoMapping) {
+        return receiver.externalSources().getOutputLocations().filter(it -> !OutputLocation.isUserCode(it, repoMapping));
+    }
+
+    private CompletableFuture<WorkspaceImporterResult> onPostProcessing(WorkspaceSnapshot snapshot, TaskId taskId) {
+        /*
+         * Because of PY-86494, the interpreter update fails to add SDK paths unless there's at least one module in the project.
+         * Hence, we're forced to do it in post-processing, after WSM has been applied already.
+         */
+        return calculateAndAddSdksWithProgress(snapshot, taskId).thenCompose(ignored -> {
+            List<BuildTarget> pyTargets = myAllPythonTargets.values().stream()
+                .filter(it -> WorkspaceHelpers.hasBuildData(it, PythonBuildTarget.class))
+                .toList();
+
+            return myContext.project().getInstance(PythonResolveIndexService.class)
+                .updatePythonResolveIndex(myContext, snapshot, pyTargets, myGeneratedSourcePaths);
+        }).thenApply(ignored -> WorkspaceImporterResult.Success);
+    }
+
+    private CompletableFuture<Void> calculateAndAddSdksWithProgress(WorkspaceSnapshot snapshot, TaskId taskId) {
+        // consulo: SequentialProgressReporter.indeterminateStep(text) -> the progress indicator of the context
+        myContext.progressReporter().setIndeterminate(true);
+        myContext.progressReporter().setText(BazelPythonBackendLocalize.progressBarCalculatePythonSdkInfos());
+        return util.withSubtask(
+            myContext.taskConsole(),
+            taskId.subTask("calculate-and-add-all-python-sdk-infos"),
+            BazelPythonBackendLocalize.consoleTaskModelCalculatePythonSdks(),
+            subtaskId -> {
+                // The module SDKs are written under the configuration lock, as every other write of an interpreter.
+                // TODO consulo: withSdkConfigurationLock(project) { } is missing in consulo-python, the interpreters are set without it
+                return setInterpreters(snapshot);
+            }
+        );
+    }
+
+    /**
+     * Sets an interpreter on the module of each Python target. The importer builds one interpreter for each Python binary,
+     * owned by the Bazel project root, and sets it on every module that uses that binary.
+     */
+    private CompletableFuture<Void> setInterpreters(WorkspaceSnapshot snapshot) {
+        Project project = myContext.project();
+        Map<WorkspaceTargetKey, Path> binaryByTarget = new LinkedHashMap<>();
+        WorkspaceHelpers.filterBuildTarget(WorkspaceHelpers.getAllTargets(snapshot), PythonBuildTarget.class).forEach(it -> {
+            Path binary = interpreterPath(snapshot, it.getSecond());
+            if (binary != null) {
+                binaryByTarget.put(it.getFirst().getKey(), binary);
+            }
+        });
+        // consulo: the modules of the classic project model with their BazelModuleExtensionEntity data instead of the module
+        // entities of the workspace model snapshot; reading the module list needs read access on this pool thread
+        Map<Path, List<Module>> modulesByBinary = new LinkedHashMap<>();
+        for (Module module : ReadAction.compute(() -> ModuleManager.getInstance(project).getModules())) {
+            BazelModuleExtensionEntity bazelModuleExtension = extensions.getBazelModuleExtension(module);
+            Path binary = bazelModuleExtension != null ? binaryByTarget.get(bazelModuleExtension.getTargetKey()) : null;
+            if (binary == null) {
+                continue;
+            }
+            modulesByBinary.computeIfAbsent(binary, it -> new ArrayList<>()).add(module);
+        }
+        CompletableFuture<Void> result = CompletableFuture.completedFuture(null);
+        for (Map.Entry<Path, List<Module>> entry : modulesByBinary.entrySet()) {
+            Path binary = entry.getKey();
+            List<Module> modules = entry.getValue();
+            result = result.thenCompose(ignored -> createInterpreter(binary, project)).handle((interpreter, error) -> {
+                if (error != null) {
+                    Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+                    logger.warn("Failed to create an interpreter for " + binary + ": " + cause);
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                return project.getUIAccess().giveAsync(() -> {
+                    for (Module module : modules) {
+                        // consulo: PyProject.setPythonInterpreter(interpreter) -> the SDK of the Python module extension (the root
+                        // model is rebuilt by every sync, so the SDK is set after the commit)
+                        ModuleRootModificationUtil.updateModel(module, model -> {
+                            BasePyMutableModuleExtension pythonExtension = model.getExtensionWithoutCheck(BasePyMutableModuleExtension.class);
+                            if (pythonExtension == null) {
+                                logger.warn("Failed to set the interpreter " + binary + " on " + module.getName() + ": no Python module extension");
+                                return;
+                            }
+                            pythonExtension.setEnabled(true);
+                            pythonExtension.getInheritableSdk().set(null, interpreter);
+                            if (model.findModuleExtensionSdkEntry(pythonExtension) == null) {
+                                model.addModuleExtensionSdkEntry(pythonExtension);
+                            }
+                        });
+                    }
+                }).<Void>thenApply(it -> null);
+            }).thenCompose(it -> it);
+        }
+        return result;
+    }
+
+    /**
+     * The Python binary of {@code pythonTarget}, or of the default target when it has none.
+     */
+    private @Nullable Path interpreterPath(WorkspaceSnapshot snapshot, PythonBuildTarget pythonTarget) {
+        OutputLocation interpreterLocation = pythonTarget.interpreter() != null ? pythonTarget.interpreter() : myDefaultInterpreter;
+        if (interpreterLocation == null) {
+            return null;
+        }
+        return myContext.outputResolver().resolve(interpreterLocation, RepoMapping.getLocalRepositories(snapshot.repoMapping()));
+    }
+
+    private @Nullable Library addSourceDependencyLibrary(
+        BazelModelBuilder builder,
+        WorkspaceTargetKey dependencyTarget,
+        GlobalNamingContext naming,
+        List<Path> sourceDependencies,
+        BazelEntitySource entitySource
+    ) {
+        // consulo: LibraryRoot(url, LibraryRootTypeId.SOURCES) -> a VFS url with SourcesOrderRootType
+        List<String> roots = sourceDependencies.stream()
+            .distinct()
+            .map(it -> VirtualFileUtil.pathToUrl(it.toString()))
+            .toList();
+        if (roots.isEmpty()) {
+            return null;
+        }
+
+        String name = naming.findOrFallback(NameSpace.LIBRARY, NAME_PRODUCER, dependencyTarget);
+        // consulo: every library is a project library (upstream LibraryTableId.ProjectLibraryTableId). Upstream returns a library
+        // already added by this sync (`builder.resolve(LibraryId)`); the names of this importer are unique (one per declared key),
+        // so the library is created (or the one of the previous sync is reused and its roots are replaced)
+        Library library = builder.getOrCreateLibrary(name);
+        Library.ModifiableModel libraryModel = builder.getLibraryModifiableModel(library);
+        for (String it : roots) {
+            libraryModel.addRoot(it, SourcesOrderRootType.ID);
+        }
+        return library;
+    }
+
+    private Module addModuleEntityFromTarget(
+        WorkspaceSnapshot snapshot,
+        BazelModelBuilder builder,
+        BuildTarget target,
+        String moduleName,
+        BazelEntitySource entitySource,
+        GlobalNamingContext naming,
+        List<Library> sourceDependencyLibraries
+    ) {
+        // consulo: ModuleEntity(name, dependencies, entitySource) -> a Bazel-owned module of the builder
+        Module module = builder.getOrCreateModule(moduleName, null);
+        ModifiableRootModel model = builder.getRootModel(module);
+
+        // consulo: this.type = PYTHON_MODULE_TYPE -> the Python module extension
+        BasePyMutableModuleExtension pythonExtension = model.getExtensionWithoutCheck(BasePyMutableModuleExtension.class);
+        if (pythonExtension != null) {
+            pythonExtension.setEnabled(true);
+        }
+
+        for (ContentRootData it : getContentRootEntities(snapshot, target)) {
+            addContentRoot(model, it);
+        }
+
+        for (DependencyLabel it : target.getDependencies()) {
+            String dependencyName = naming.findOrFallback(NameSpace.MODULE, NAME_PRODUCER, it.targetKey());
+            // consulo: modules are referenced by name like the upstream ModuleId, a module written later resolves after the commit
+            Module dependencyModule = builder.findModule(dependencyName);
+            ModuleOrderEntry entry = dependencyModule != null
+                ? model.addModuleOrderEntry(dependencyModule)
+                : model.addInvalidModuleEntry(dependencyName);
+            entry.setExported(true);
+            entry.setScope(DependencyScope.COMPILE);  // Python does not have the runtime/compile scope separation
+            entry.setProductionOnTestDependency(true);
+        }
+
+        // consulo: ModuleSourceDependency is implicit (the first order entry of a Consulo root model)
+
+        for (Library it : sourceDependencyLibraries) {
+            LibraryOrderEntry entry = model.addLibraryEntry(it);
+            entry.setExported(true);
+            entry.setScope(DependencyScope.COMPILE);
+        }
+
+        // The module gets its interpreter in post-processing, through PyProject.setPythonInterpreter. The importer does not
+        // name an SDK here.
+
+        builder.putModuleData(
+            module,
+            BazelModuleExtensionEntity.class,
+            new BazelModuleExtensionEntity(
+                WorkspaceModelTargetKey.of(target.getKey()),
+                new WorkspaceModelTargetSourceRootTypeId(PYTHON_SOURCE_ROOT_TYPE),
+                new WorkspaceModelTargetLabelList(
+                    StrictDependencyCheckedType.OFF,
+                    List.of()
+                )
+            )
+        );
+        return module;
+    }
+
+    private List<ContentRootData> getContentRootEntities(
+        WorkspaceSnapshot snapshot,
+        BuildTarget target
+    ) {
+        List<ContentRootData> sourceContentRootEntities = getSourceContentRootEntities(snapshot, target);
+        List<ContentRootData> resourceContentRootEntities = getResourceContentRootEntities(snapshot, target);
+
+        List<ContentRootData> result = new ArrayList<>(sourceContentRootEntities);
+        result.addAll(resourceContentRootEntities);
+        return result;
+    }
+
+    private List<ContentRootData> getSourceContentRootEntities(
+        WorkspaceSnapshot snapshot,
+        BuildTarget target
+    ) {
+        List<ContentRootData> result = new ArrayList<>();
+        for (Path it : computeSourceRootPaths(snapshot, target)) {
+            result.add(toContentRoot(it, PYTHON_SOURCE_ROOT_TYPE));
+        }
+        return result;
+    }
+
+    private List<ContentRootData> getResourceContentRootEntities(
+        WorkspaceSnapshot snapshot,
+        BuildTarget target
+    ) {
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        return target.getResources().getOutputLocations()
+            .map(it -> myContext.outputResolver().resolve(it, localRepositories))
+            .filter(Objects::nonNull)
+            .map(resource -> toContentRoot(resource, PYTHON_RESOURCE_ROOT_TYPE))
+            .toList();
+    }
+
+    /**
+     * Returns the directories against which the {@code imports} of {@code target} resolve: the root of its repository and the
+     * directory of the outputs of that repository under {@code bazel-bin}. A repository that is neither the main nor a local
+     * repository gets no directories, so its {@code imports} make no source roots.
+     */
+    private List<Path> importBasePaths(WorkspaceSnapshot snapshot, BuildTarget target) {
+        ResolvedLabel label = BuildTarget.getId(target) instanceof ResolvedLabel resolvedLabel ? resolvedLabel : null;
+        if (label == null || label.isMainWorkspace()) {
+            VirtualFile projectRootDir = BazelProjectInfoService.getBazelProjectInfo(myContext.project()).getProjectRootDir();
+            Set<Path> result = new LinkedHashSet<>();
+            if (projectRootDir != null) {
+                result.add(projectRootDir.toNioPath());
+            }
+            result.add(myContext.bazelInfo().bazelBin());
+            return new ArrayList<>(result);
+        }
+        if (!BuildTargetUtils.isWorkspace(target, snapshot.repoMapping())) {
+            return List.of();
+        }
+        BazelPathsResolver pathsResolver = new BazelPathsResolver(myContext.bazelInfo());
+        Set<Path> result = new LinkedHashSet<>();
+        result.add(pathsResolver.toRepositoryPath(label.repo(), snapshot.repoMapping()));
+        result.add(pathsResolver.toBinRepositoryPath(label.repo(), snapshot.repoMapping()));
+        return new ArrayList<>(result);
+    }
+
+    private Set<Path> computeSourceRootPaths(WorkspaceSnapshot snapshot, BuildTarget target) {
+        // imports for generated files should be resolved against bazel-bin
+        List<Path> basePaths = importBasePaths(snapshot, target);
+        Set<Path> importRoots = new LinkedHashSet<>();
+        for (Path importPath : PythonImportUtils.assembleExplicitImportsPaths(target)) {
+            for (Path base : basePaths) {
+                Path resolved = base.resolve(importPath).normalize();
+                if (!resolved.startsWith(base)) {
+                    continue;
+                }
+                Path generatedSourceRoot = myGeneratedSourceRoots.get(resolved);
+                Path root = generatedSourceRoot != null ? generatedSourceRoot : resolved;
+                if (Files.isDirectory(root)) {
+                    importRoots.add(root);
+                    break;
+                }
+            }
+        }
+        OutputLocation.OutputLocationResolver execrootResolver = DefaultOutputLocationResolver.createExecrootResolving(myContext.bazelInfo());
+        LocalRepositoryMapping localRepositories = RepoMapping.getLocalRepositories(snapshot.repoMapping());
+        Set<Path> individualFiles = new LinkedHashSet<>();
+        Stream.concat(target.getSources().getOutputLocations(), generatedSources(target)).forEach(location -> {
+            Path original = execrootResolver.resolve(location, localRepositories);
+            Path generatedSourcePath = original != null ? myGeneratedSourcePaths.get(original) : null;
+            Path path = generatedSourcePath != null ? generatedSourcePath : myContext.outputResolver().resolve(location, localRepositories);
+            if (path != null && !PathUtil.isUnder(path, importRoots)) {
+                individualFiles.add(path);
+            }
+        });
+        Set<Path> result = new LinkedHashSet<>(importRoots);
+        result.addAll(individualFiles);
+        return result;
+    }
+
+    /**
+     * consulo: upstream ContentRootEntity(url, excludedPatterns = []) with one SourceRootEntity(url, rootTypeId); the classic
+     * content entry is added to the root model by {@link #addContentRoot}
+     */
+    private record ContentRootData(String url, String rootType) {
+    }
+
+    private static ContentRootData toContentRoot(Path receiver, String rootType) {
+        String url = VirtualFileUtil.pathToUrl(receiver.toString());
+        return new ContentRootData(url, rootType);
+    }
+
+    private static void addContentRoot(ModifiableRootModel model, ContentRootData contentRoot) {
+        ContentEntry entry = model.addContentEntry(contentRoot.url());
+        ContentFolderTypeProvider rootType = ContentFolderTypeProvider.byId(contentRoot.rootType());
+        if (rootType != null) {
+            entry.addFolder(contentRoot.url(), rootType);
+        }
+    }
+
+    /**
+     * An interpreter for {@code binary}, owned by the project working directory, the Bazel project root. It is not registered
+     * yet: setting it on a module registers it.
+     * <p>
+     * consulo: upstream createLocalSdkGuessingTypeByPath(binary, ProjectOnly(project), name); here an existing Python SDK with
+     * this home or a new SDK of the SDK table (a failed future when the binary is not a valid Python SDK home)
+     */
+    private CompletableFuture<Sdk> createInterpreter(Path binary, Project project) {
+        PythonSdkType sdkType = PythonSdkType.getInstance();
+        Path home = binary.toAbsolutePath().normalize();
+        for (Sdk sdk : PythonSdkType.getAllSdks()) {
+            String sdkHomePath = sdk.getHomePath();
+            if (sdkHomePath != null && Path.of(sdkHomePath).toAbsolutePath().normalize().equals(home)) {
+                return CompletableFuture.completedFuture(sdk);
+            }
+        }
+        // consulo: PythonSdkType is a PlatformAwareSdkType, the String isValidSdkHome overload is not supported
+        if (!sdkType.isValidSdkHome(Platform.current(), binary)) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("not a valid Python SDK home"));
+        }
+        Sdk sdk;
+        try {
+            sdk = SdkTable.getInstance().createSdk(binary, chooseSdkName(binary, project.getName()), sdkType);
+            sdkType.setupSdkPaths(sdk);
+        }
+        catch (Throwable e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        // consulo: the SDK is added to the SDK table in a write action on the UI thread, like the JDKs of the Java importer
+        return project.getUIAccess().giveAsync(() -> WriteAction.compute(() -> {
+            SdkTable.getInstance().addSdk(sdk);
+            return sdk;
+        }));
+    }
+
+    // consulo: upstream public top-level function of BazelPythonWorkspaceImporter.kt (PythonBinary is a Path)
+    public static String chooseSdkName(Path interpreter, String projectName) {
+        return projectName + "-python-" + StringUtils.md5Hash(interpreter.toString(), 5);
+    }
+
+    // consulo: Kotlin Path.extension
+    private static String extension(Path path) {
+        Path fileName = path.getFileName();
+        return fileName != null ? consulo.util.io.FileUtil.getExtension(fileName.toString()) : "";
+    }
 }
-
-@ApiStatus.Internal
-@VisibleForTesting
-fun chooseSdkName(interpreter: PythonBinary, projectName: String): String =
-  "$projectName-python-${StringUtils.md5Hash(interpreter.pathString, 5)}"
-

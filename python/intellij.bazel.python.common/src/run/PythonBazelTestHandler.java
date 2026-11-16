@@ -1,77 +1,82 @@
-package org.jetbrains.bazel.python.run
+package org.jetbrains.bazel.python.run;
 
-import com.intellij.execution.runners.ExecutionEnvironment
-import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.Nls
-import org.jetbrains.annotations.VisibleForTesting
-import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.python.lang.PythonLanguageClass
-import org.jetbrains.bazel.run.BazelCommandLineStateBase
-import org.jetbrains.bazel.run.BazelRunHandler
-import org.jetbrains.bazel.run.commandLine.BazelTestCommandLineState
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import org.jetbrains.bazel.run.import.GooglePluginAwareRunHandlerProvider
-import org.jetbrains.bazel.run.state.AbstractGenericTestState
-import org.jetbrains.bazel.run.state.GenericTestState
-import org.jetbrains.bsp.protocol.BuildTargetInfo
-import org.jetbrains.bsp.protocol.TestParams
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.runner.ExecutionEnvironment;
+import org.jetbrains.bazel.run.BazelCommandLineStateBase;
+import org.jetbrains.bazel.run.commandLine.BazelTestCommandLineState;
+import org.jetbrains.bazel.run.state.AbstractGenericTestState;
+import org.jetbrains.bazel.run.state.GenericTestState;
+import org.jetbrains.bsp.protocol.TestParams;
 
-@ApiStatus.Internal
-class PythonBazelTestHandler : PythonBazelHandler<GenericTestState>() {
-  override val name: @Nls String
-    get() = BazelPluginBundle.message("python.test.handler.name")
+import java.util.LinkedHashMap;
+import java.util.Map;
 
-  override val isTestHandler: Boolean = true
+// consulo: the nested upstream PythonBazelTestHandler.Provider has its own file (nested @ExtensionImpl classes are not supported by
+// the annotation processor), see PythonBazelTestHandlerProvider
+public class PythonBazelTestHandler extends PythonBazelHandler<GenericTestState> {
+    private final GenericTestState myState = new GenericTestState();
 
-  override val state: GenericTestState = GenericTestState()
-
-  override fun createCommandLineState(
-    environment: ExecutionEnvironment
-  ): BazelCommandLineStateBase = BazelPythonTestCommandLineState(environment, state)
-
-  class Provider : GooglePluginAwareRunHandlerProvider {
-    override val id: String
-      get() = "PythonBazelTestHandlerProvider"
-
-    override val providedRunHandlerName: @Nls String
-      get() = BazelPluginBundle.message("python.test.handler.name")
-
-    override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = PythonBazelTestHandler()
-
-    override fun canRun(project: Project, targets: List<BuildTargetInfo>): Boolean =
-      targets.all {
-        it.kind.languageClasses.contains(PythonLanguageClass.PYTHON) && it.kind.ruleType == RuleType.TEST
-      }
-
-    override val googleHandlerId: String = "BlazePyTestConfigurationHandlerProvider"
-    override val isTestHandler: Boolean = true
-  }
-
-  companion object {
-    @VisibleForTesting
-    fun addJunitXmlOptionsToEnvironment(testParams: TestParams): TestParams {
-      val envs = testParams.environmentVariables.toMutableMap()
-      val originalPytestOpts = envs["PYTEST_ADDOPTS"]
-      if (originalPytestOpts == null) {
-        envs["PYTEST_ADDOPTS"] = $$"--junitxml=${XML_OUTPUT_FILE} -o junit_family=xunit1"
-      } else if (!originalPytestOpts.contains("junitxml")) {
-        envs["PYTEST_ADDOPTS"] = $$"$$originalPytestOpts --junitxml=${XML_OUTPUT_FILE} -o junit_family=xunit1"
-      } else {
-        // if the user has already specified --junitxml, we don't want to interfere with that
-        return testParams
-      }
-      return testParams.copy(
-        environmentVariables = envs
-      )
+    @Override
+    public String getName() {
+        return BazelPluginLocalize.pythonTestHandlerName().get();
     }
-  }
+
+    @Override
+    public boolean isTestHandler() {
+        return true;
+    }
+
+    @Override
+    public GenericTestState getState() {
+        return myState;
+    }
+
+    @Override
+    protected BazelCommandLineStateBase createCommandLineState(
+        ExecutionEnvironment environment
+    ) {
+        return new BazelPythonTestCommandLineState(environment, myState);
+    }
+
+    public static TestParams addJunitXmlOptionsToEnvironment(TestParams testParams) {
+        Map<String, String> envs = new LinkedHashMap<>(testParams.environmentVariables());
+        String originalPytestOpts = envs.get("PYTEST_ADDOPTS");
+        if (originalPytestOpts == null) {
+            envs.put("PYTEST_ADDOPTS", "--junitxml=${XML_OUTPUT_FILE} -o junit_family=xunit1");
+        }
+        else if (!originalPytestOpts.contains("junitxml")) {
+            envs.put("PYTEST_ADDOPTS", originalPytestOpts + " --junitxml=${XML_OUTPUT_FILE} -o junit_family=xunit1");
+        }
+        else {
+            // if the user has already specified --junitxml, we don't want to interfere with that
+            return testParams;
+        }
+        // consulo: data class copy(environmentVariables = envs)
+        return new TestParams(
+            testParams.taskId(),
+            testParams.targets(),
+            testParams.arguments(),
+            envs,
+            testParams.useCoverage(),
+            testParams.coverageInstrumentationFilter(),
+            testParams.testFilter(),
+            testParams.additionalBazelParams(),
+            testParams.streamTestOutput()
+        );
+    }
 }
 
-private class BazelPythonTestCommandLineState(
-  environment: ExecutionEnvironment,
-  state: AbstractGenericTestState<*>
-) : BazelTestCommandLineState(environment, state) {
-  override fun transformTestParams(params: TestParams): TestParams = PythonBazelTestHandler.addJunitXmlOptionsToEnvironment(params)
+// consulo: upstream private class of PythonBazelTestHandler.kt
+class BazelPythonTestCommandLineState extends BazelTestCommandLineState {
+    BazelPythonTestCommandLineState(
+        ExecutionEnvironment environment,
+        AbstractGenericTestState<?> state
+    ) {
+        super(environment, state);
+    }
+
+    @Override
+    protected TestParams transformTestParams(TestParams params) {
+        return PythonBazelTestHandler.addJunitXmlOptionsToEnvironment(params);
+    }
 }

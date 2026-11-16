@@ -1,15 +1,28 @@
-package org.jetbrains.bazel.python.lang
+package org.jetbrains.bazel.python.lang;
 
-import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.bazel.commons.LanguageClass
-import org.jetbrains.bazel.commons.LanguageClassProvider
+import consulo.annotation.component.ExtensionImpl;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jetbrains.bazel.commons.LanguageClass.LanguageClassProvider;
 
-@ApiStatus.Internal
-object PythonLanguageClass {
-  val PYTHON: LanguageClass = LanguageClass("python", setOf("py", "pyw", "pyi"))
+import java.util.List;
+import java.util.Set;
+
+public final class PythonLanguageClass {
+    private PythonLanguageClass() {
+    }
+
+    public static final LanguageClass PYTHON = new LanguageClass("python", Set.of("py", "pyw", "pyi"));
 }
 
-internal class PythonLanguageClassProvider: LanguageClassProvider {
-  override val languages: List<LanguageClass>
-    get() = listOf(PythonLanguageClass.PYTHON)
+// consulo: upstream internal class of PythonLanguageClass.kt, a package-private top-level class (a nested @ExtensionImpl class is
+// not supported by the annotation processor)
+@ExtensionImpl
+class PythonLanguageClassProvider implements LanguageClassProvider {
+    public PythonLanguageClassProvider() {
+    }
+
+    @Override
+    public List<LanguageClass> getLanguages() {
+        return List.of(PythonLanguageClass.PYTHON);
+    }
 }
