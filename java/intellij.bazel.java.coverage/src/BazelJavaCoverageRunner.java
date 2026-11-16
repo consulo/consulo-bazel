@@ -11,8 +11,7 @@ import consulo.execution.coverage.CoverageRunnerData;
 /**
  * {@link com.intellij.java.coverage.DefaultJavaCoverageRunner}
  */
-// TODO consulo: upstream order="before bazelCoverageProgramRunner"; misc/intellij.bazel.coverage is not ported yet
-@ExtensionImpl(id = "BazelJavaCoverageRunner")
+@ExtensionImpl(id = "BazelJavaCoverageRunner", order = "before bazelCoverageProgramRunner")
 public class BazelJavaCoverageRunner extends DefaultJavaProgramRunner {
     private static final String RUNNER_ID = "BazelJavaCoverageRunner";
 

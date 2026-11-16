@@ -202,6 +202,8 @@ coverage.bazel.loading.progress:
     text: "Loading Bazel coverage data"
 coverage.bazel.presentable.text:
     text: "Bazel Coverage"
+coverage.bazel.runner.presentable.name:
+    text: "Bazel Coverage Runner"
 coverage.go.report.malformed.line:
     text: "Unexpected Go coverage line format: {0}"
 coverage.go.report.path.collision:

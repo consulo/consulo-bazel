@@ -1,5 +1,6 @@
 package org.jetbrains.bazel.golang.coverage;
 
+import consulo.annotation.component.ExtensionImpl;
 import consulo.application.progress.ProgressManager;
 import consulo.bazel.core.localize.BazelPluginLocalize;
 import consulo.logging.Logger;
@@ -7,58 +8,68 @@ import consulo.project.Project;
 import consulo.virtualFileSystem.VirtualFile;
 import consulo.virtualFileSystem.VirtualFileManager;
 import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil.GoPackageEntities;
+import org.jetbrains.bazel.run.coverage.BazelCoverageReportParser;
 import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity;
 import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity.ImportPathId;
 import org.jspecify.annotations.Nullable;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
-// TODO consulo: not registered (upstream bazelCoverageReportParser). The coverage integration misc/intellij.bazel.coverage
-//  (BazelCoverageReportParser, BazelCoverageLineConsumer) is not ported, and com.intellij.coverage.CoverageLoadErrorReporter is
-//  missing in Consulo; parse() is kept commented out, the source resolver is ported
-public class BazelGoCoverageReportParser /* : BazelCoverageReportParser */ {
+@ExtensionImpl
+public class BazelGoCoverageReportParser implements BazelCoverageReportParser {
     // consulo: upstream private top-level val of BazelGoCoverageReportParser.kt
     private static final Logger LOG = Logger.getInstance(BazelGoCoverageReportParser.class);
 
-    // override fun parse(
-    //   coverageFiles: List<Path>,
-    //   project: Project,
-    //   projectRoot: VirtualFile,
-    //   reporter: CoverageLoadErrorReporter,
-    //   consumer: BazelCoverageLineConsumer,
-    // ): Collection<Path> {
-    //   if (coverageFiles.isEmpty()) return emptyList()
-    //
-    //   val consumedCoverageFiles = mutableListOf<Path>()
-    //   val warningReporter = { message: String ->
-    //     LOG.warn(message)
-    //     reporter.reportWarning(message)
-    //   }
-    //   val goSourceResolver = GoCoverageSourceResolver(project, projectRoot, warningReporter)
-    //   val unresolvedFilePaths = mutableSetOf<String>()
-    //   for (coverageFile in coverageFiles) {
-    //     val consumed =
-    //       GoCoverageReportParser.parse(
-    //         coverageFile,
-    //         onMalformedLine = { line ->
-    //           warningReporter(BazelPluginBundle.message("coverage.go.report.malformed.line", line))
-    //         },
-    //       ) coverageLine@ { filePath, lineNumber, hits ->
-    //         val file = goSourceResolver.resolve(filePath)
-    //         if (file == null) {
-    //           if (unresolvedFilePaths.add(filePath)) {
-    //             warningReporter(BazelPluginBundle.message("coverage.go.report.unresolved.file", filePath))
-    //           }
-    //           return@coverageLine
-    //         }
-    //         consumer.addCoverage(file, lineNumber, hits)
-    //       }
-    //     if (consumed) consumedCoverageFiles.add(coverageFile)
-    //   }
-    //   return consumedCoverageFiles
-    // }
+    @Override
+    public Collection<Path> parse(
+        List<Path> coverageFiles,
+        Project project,
+        VirtualFile projectRoot,
+        CoverageLoadErrorReporter reporter,
+        BazelCoverageLineConsumer consumer
+    ) {
+        if (coverageFiles.isEmpty()) {
+            return List.of();
+        }
+
+        List<Path> consumedCoverageFiles = new ArrayList<>();
+        Consumer<String> warningReporter = message -> {
+            LOG.warn(message);
+            reporter.reportWarning(message);
+        };
+        GoCoverageSourceResolver goSourceResolver = new GoCoverageSourceResolver(project, projectRoot, warningReporter);
+        Set<String> unresolvedFilePaths = new HashSet<>();
+        for (Path coverageFile : coverageFiles) {
+            boolean consumed =
+                GoCoverageReportParser.parse(
+                    coverageFile,
+                    /* onMalformedLine = */ line ->
+                        warningReporter.accept(BazelPluginLocalize.coverageGoReportMalformedLine(line).get()),
+                    (filePath, lineNumber, hits) -> {
+                        VirtualFile file = goSourceResolver.resolve(filePath);
+                        if (file == null) {
+                            if (unresolvedFilePaths.add(filePath)) {
+                                warningReporter.accept(BazelPluginLocalize.coverageGoReportUnresolvedFile(filePath).get());
+                            }
+                            return;
+                        }
+                        consumer.addCoverage(file, lineNumber, hits);
+                    }
+                );
+            if (consumed) {
+                consumedCoverageFiles.add(coverageFile);
+            }
+        }
+        return consumedCoverageFiles;
+    }
 }
 
 class GoCoverageSourceResolver {

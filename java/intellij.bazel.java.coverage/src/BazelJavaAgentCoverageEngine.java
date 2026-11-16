@@ -31,8 +31,7 @@ import java.util.List;
  *
  * @see #isJavaAgentCoverageApplicableTo
  */
-// TODO consulo: upstream order="before bazelCoverageEngine"; misc/intellij.bazel.coverage is not ported yet
-@ExtensionImpl
+@ExtensionImpl(order = "before bazelCoverageEngine")
 public class BazelJavaAgentCoverageEngine extends JavaCoverageEngine {
     @Override
     public boolean isApplicableTo(@Nullable RunConfigurationBase configuration) {

@@ -1,48 +1,83 @@
-package org.jetbrains.bazel.run.coverage
+package org.jetbrains.bazel.run.coverage;
 
-import com.intellij.coverage.CoverageDataManager
-import com.intellij.coverage.CoverageOptionsProvider
-import com.intellij.ide.projectView.PresentationData
-import com.intellij.ide.projectView.ProjectViewNode
-import com.intellij.ide.projectView.ProjectViewNodeDecorator
-import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiElement
-import com.intellij.psi.SmartPsiElementPointer
-import org.jetbrains.annotations.ApiStatus
+import consulo.annotation.access.RequiredReadAction;
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ExtensionAPI;
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.component.extension.ExtensionPoint;
+import consulo.execution.coverage.CoverageDataManager;
+import consulo.execution.coverage.CoverageSuitesBundle;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.language.psi.SmartPsiElementPointer;
+import consulo.project.Project;
+import consulo.project.ui.view.tree.ProjectViewNode;
+import consulo.project.ui.view.tree.ProjectViewNodeDecorator;
+import consulo.ui.ex.tree.PresentationData;
+import jakarta.inject.Inject;
 
-internal class BazelCoverageClassNodeDecorator(private val project: Project) : ProjectViewNodeDecorator {
-  override fun decorate(node: ProjectViewNode<*>, data: PresentationData) {
-    if (!CoverageOptionsProvider.getInstance(project).showInProjectView()) return
+@ExtensionAPI(ComponentScope.APPLICATION)
+public interface BazelCoverageClassNodeDecoratorPsiElementClassifier {
+    boolean shouldShowCoverageForElement(PsiElement psiElement);
 
-    val nodeValue = node.value
-    val psiElement =
-      when (nodeValue) {
-        is SmartPsiElementPointer<*> -> nodeValue.element
-        is PsiElement -> nodeValue
-        else -> null
-      } ?: return
-
-    if (BazelCoverageClassNodeDecoratorPsiElementClassifier.ep.extensionList.none { it.shouldShowCoverageForElement(psiElement) }) return
-
-    val psiFile = psiElement.containingFile ?: return
-    val coverageDataManager = CoverageDataManager.getInstance(project)
-    val suite = coverageDataManager.currentSuitesBundle ?: return
-    val annotator = suite.getAnnotator(project) as? BazelCoverageAnnotator ?: return
-    annotator.getFileCoverageInformationString(psiFile, suite, coverageDataManager)?.let {
-      data.locationString = it
+    // consulo: upstream companion object `ep`, served by the Consulo extension point
+    static ExtensionPoint<BazelCoverageClassNodeDecoratorPsiElementClassifier> getEp() {
+        return Application.get().getExtensionPoint(BazelCoverageClassNodeDecoratorPsiElementClassifier.class);
     }
-  }
 }
 
-@ApiStatus.Internal
-interface BazelCoverageClassNodeDecoratorPsiElementClassifier {
-  fun shouldShowCoverageForElement(psiElement: PsiElement): Boolean
+// consulo: upstream internal top-level class of BazelCoverageClassNodeDecoratorPsiElementClassifier.kt
+@ExtensionImpl
+class BazelCoverageClassNodeDecorator implements ProjectViewNodeDecorator {
+    private final Project myProject;
 
-  companion object {
-    val ep =
-      ExtensionPointName<BazelCoverageClassNodeDecoratorPsiElementClassifier>(
-        "org.jetbrains.bazel.bazelCoverageClassNodeDecoratorPsiElementClassifier",
-      )
-  }
+    @Inject
+    public BazelCoverageClassNodeDecorator(Project project) {
+        myProject = project;
+    }
+
+    @Override
+    @RequiredReadAction
+    public void decorate(ProjectViewNode node, PresentationData data) {
+        // TODO consulo: CoverageOptionsProvider has no showInProjectView() option, coverage is always shown
+        // if (!CoverageOptionsProvider.getInstance(project).showInProjectView()) return
+
+        Object nodeValue = node.getValue();
+        PsiElement psiElement;
+        if (nodeValue instanceof SmartPsiElementPointer<?> pointer) {
+            psiElement = pointer.getElement();
+        }
+        else if (nodeValue instanceof PsiElement element) {
+            psiElement = element;
+        }
+        else {
+            psiElement = null;
+        }
+        if (psiElement == null) {
+            return;
+        }
+
+        if (BazelCoverageClassNodeDecoratorPsiElementClassifier.getEp()
+            .noneMatchSafe(it -> it.shouldShowCoverageForElement(psiElement))) {
+            return;
+        }
+
+        PsiFile psiFile = psiElement.getContainingFile();
+        if (psiFile == null) {
+            return;
+        }
+        CoverageDataManager coverageDataManager = CoverageDataManager.getInstance(myProject);
+        CoverageSuitesBundle suite = coverageDataManager.getCurrentSuitesBundle();
+        if (suite == null) {
+            return;
+        }
+        if (!(suite.getAnnotator(myProject) instanceof BazelCoverageAnnotator annotator)) {
+            return;
+        }
+        String coverageInformationString = annotator.getFileCoverageInformationString(psiFile, suite, coverageDataManager);
+        if (coverageInformationString != null) {
+            data.setLocationString(coverageInformationString);
+        }
+    }
 }

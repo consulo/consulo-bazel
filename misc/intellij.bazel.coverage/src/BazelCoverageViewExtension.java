@@ -1,44 +1,74 @@
-package org.jetbrains.bazel.run.coverage
+package org.jetbrains.bazel.run.coverage;
 
-import com.intellij.coverage.CoverageAnnotator
-import com.intellij.coverage.CoverageSuitesBundle
-import com.intellij.coverage.view.CoverageListNode
-import com.intellij.coverage.view.CoverageListRootNode
-import com.intellij.coverage.view.DirectoryCoverageViewExtension
-import com.intellij.ide.util.treeView.AbstractTreeNode
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiDirectory
-import com.intellij.psi.PsiManager
-import org.jetbrains.bazel.config.rootDir
+import consulo.annotation.access.RequiredReadAction;
+import consulo.execution.coverage.CoverageAnnotator;
+import consulo.execution.coverage.CoverageSuitesBundle;
+import consulo.execution.coverage.CoverageViewManager;
+import consulo.execution.coverage.view.CoverageListNode;
+import consulo.execution.coverage.view.CoverageListRootNode;
+import consulo.execution.coverage.view.DirectoryCoverageViewExtension;
+import consulo.language.psi.PsiDirectory;
+import consulo.language.psi.PsiManager;
+import consulo.project.Project;
+import consulo.project.ui.view.tree.AbstractTreeNode;
+import consulo.virtualFileSystem.VirtualFile;
 
-internal class BazelCoverageViewExtension(
-  private val project: Project,
-  coverageAnnotator: CoverageAnnotator,
-  private val bundle: CoverageSuitesBundle,
-) : DirectoryCoverageViewExtension(project, coverageAnnotator, bundle) {
-  private val roots: List<VirtualFile> = BazelCoverageSuite.getRoots(bundle)
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
 
-  override fun createRootNode(): AbstractTreeNode<*> =
-    if (roots.size == 1) {
-      object : CoverageListRootNode(project, roots.single().toPsiDirectory(), bundle) {
-        override fun getChildren(): List<AbstractTreeNode<*>> = getChildrenNodes(this)
-      }
-    } else {
-      CoverageListRootNode(project, project.rootDir.toPsiDirectory(), bundle)
+// consulo: the Consulo DirectoryCoverageViewExtension and coverage nodes also take the coverage view state
+public class BazelCoverageViewExtension extends DirectoryCoverageViewExtension {
+    private final List<VirtualFile> myRoots;
+
+    public BazelCoverageViewExtension(
+        Project project,
+        CoverageAnnotator coverageAnnotator,
+        CoverageSuitesBundle bundle,
+        CoverageViewManager.StateBean stateBean
+    ) {
+        super(project, coverageAnnotator, bundle, stateBean);
+        myRoots = BazelCoverageSuite.getRoots(bundle);
     }
 
-  override fun getChildrenNodes(node: AbstractTreeNode<*>?): List<AbstractTreeNode<*>> {
-    if (node is CoverageListRootNode && roots.size != 1) {
-      return roots.map { root ->
-        CoverageListNode(project, root.toPsiDirectory(), bundle)
-      }
+    @Override
+    @RequiredReadAction
+    public AbstractTreeNode createRootNode() {
+        if (myRoots.size() == 1) {
+            return new CoverageListRootNode(myProject, toPsiDirectory(myRoots.get(0)), getSuitesBundle(), getStateBean()) {
+                @Override
+                @RequiredReadAction
+                public Collection<? extends AbstractTreeNode> getChildren() {
+                    return getChildrenNodes(this);
+                }
+            };
+        }
+        else {
+            return new CoverageListRootNode(
+                myProject,
+                toPsiDirectory(org.jetbrains.bazel.config.project.getRootDir(myProject)),
+                getSuitesBundle(),
+                getStateBean()
+            );
+        }
     }
-    return super.getChildrenNodes(node)
-  }
 
-  private fun VirtualFile.toPsiDirectory(): PsiDirectory {
-    val directory = if (!this.isDirectory) this.parent else this
-    return checkNotNull(PsiManager.getInstance(myProject).findDirectory(directory))
-  }
+    @Override
+    public List<AbstractTreeNode> getChildrenNodes(AbstractTreeNode node) {
+        if (node instanceof CoverageListRootNode && myRoots.size() != 1) {
+            List<AbstractTreeNode> result = new ArrayList<>();
+            for (VirtualFile root : myRoots) {
+                result.add(new CoverageListNode(myProject, toPsiDirectory(root), getSuitesBundle(), getStateBean()));
+            }
+            return result;
+        }
+        return super.getChildrenNodes(node);
+    }
+
+    // consulo: upstream private extension fun VirtualFile.toPsiDirectory()
+    private PsiDirectory toPsiDirectory(VirtualFile receiver) {
+        VirtualFile directory = !receiver.isDirectory() ? receiver.getParent() : receiver;
+        return Objects.requireNonNull(PsiManager.getInstance(myProject).findDirectory(Objects.requireNonNull(directory)));
+    }
 }

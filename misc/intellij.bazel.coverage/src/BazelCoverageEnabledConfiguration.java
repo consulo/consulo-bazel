@@ -1,10 +1,12 @@
-package org.jetbrains.bazel.run.coverage
+package org.jetbrains.bazel.run.coverage;
 
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.execution.configurations.coverage.CoverageEnabledConfiguration
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.coverage.CoverageEnabledConfiguration;
 
-internal class BazelCoverageEnabledConfiguration(configuration: RunConfigurationBase<*>) :
-  CoverageEnabledConfiguration(
-    configuration,
-    BazelCoverageRunner.getInstance(),
-  )
+public class BazelCoverageEnabledConfiguration extends CoverageEnabledConfiguration {
+    // consulo: the Consulo CoverageEnabledConfiguration constructor takes no runner, it is set afterwards
+    public BazelCoverageEnabledConfiguration(RunConfigurationBase configuration) {
+        super(configuration);
+        setCoverageRunner(BazelCoverageRunner.getInstance());
+    }
+}

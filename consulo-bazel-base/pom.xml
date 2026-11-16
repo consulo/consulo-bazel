@@ -106,6 +106,7 @@
                                 <source>${project.basedir}/../intellij.bazel.backend/src</source>
                                 <source>${project.basedir}/../intellij.bazel.core/src</source>
                                 <source>${project.basedir}/../intellij.bazel.bazelisk/src</source>
+                                <source>${project.basedir}/../misc/intellij.bazel.coverage/src</source>
                             </sources>
                         </configuration>
                     </execution>

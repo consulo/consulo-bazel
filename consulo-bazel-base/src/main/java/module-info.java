@@ -318,6 +318,7 @@ module consulo.bazel.base {
     exports org.jetbrains.bazel.run;
     exports org.jetbrains.bazel.run.commandLine;
     exports org.jetbrains.bazel.run.config;
+    exports org.jetbrains.bazel.run.coverage;
     exports org.jetbrains.bazel.run.handler;
     exports org.jetbrains.bazel.run.import_;
     exports org.jetbrains.bazel.run.state;

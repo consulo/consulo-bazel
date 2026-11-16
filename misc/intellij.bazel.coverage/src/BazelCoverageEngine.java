@@ -1,81 +1,173 @@
-package org.jetbrains.bazel.run.coverage
+package org.jetbrains.bazel.run.coverage;
 
-import com.intellij.coverage.CoverageAnnotator
-import com.intellij.coverage.CoverageEngine
-import com.intellij.coverage.CoverageFileProvider
-import com.intellij.coverage.CoverageRunner
-import com.intellij.coverage.CoverageSuite
-import com.intellij.coverage.CoverageSuitesBundle
-import com.intellij.coverage.view.CoverageViewExtension
-import com.intellij.execution.configurations.RunConfigurationBase
-import com.intellij.execution.configurations.coverage.CoverageEnabledConfiguration
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.NlsActions
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiFile
-import org.jetbrains.bazel.config.BazelPluginBundle
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
-import java.io.File
+import consulo.annotation.component.ExtensionImpl;
+import consulo.application.Application;
+import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.execution.configuration.RunConfigurationBase;
+import consulo.execution.coverage.CoverageAnnotator;
+import consulo.execution.coverage.CoverageEnabledConfiguration;
+import consulo.execution.coverage.CoverageEngine;
+import consulo.execution.coverage.CoverageFileProvider;
+import consulo.execution.coverage.CoverageRunner;
+import consulo.execution.coverage.CoverageSuite;
+import consulo.execution.coverage.CoverageSuitesBundle;
+import consulo.execution.coverage.CoverageViewManager;
+import consulo.execution.coverage.view.CoverageViewExtension;
+import consulo.execution.test.AbstractTestProxy;
+import consulo.language.psi.PsiElement;
+import consulo.language.psi.PsiFile;
+import consulo.module.Module;
+import consulo.project.Project;
+import consulo.virtualFileSystem.VirtualFile;
+import consulo.virtualFileSystem.util.VirtualFileUtil;
+import org.jetbrains.bazel.run.BazelRunHandler;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
+import org.jspecify.annotations.Nullable;
 
-internal class BazelCoverageEngine : CoverageEngine() {
-  companion object {
-    @JvmStatic
-    fun getInstance(): BazelCoverageEngine = EP_NAME.findExtensionOrFail(BazelCoverageEngine::class.java)
-  }
+import java.io.File;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
-  override fun getPresentableText(): @NlsActions.ActionText String? = BazelPluginBundle.message("coverage.bazel.presentable.text")
+@ExtensionImpl(id = "bazelCoverageEngine")
+public class BazelCoverageEngine extends CoverageEngine {
+    public static BazelCoverageEngine getInstance() {
+        return Application.get().getExtensionPoint(CoverageEngine.class).findExtensionOrFail(BazelCoverageEngine.class);
+    }
 
-  override fun isApplicableTo(configuration: RunConfigurationBase<*>): Boolean {
-    if (configuration !is BazelRunConfiguration) return false
-    return configuration.handler?.isTestHandler == true
-  }
+    @Override
+    public String getPresentableText() {
+        return BazelPluginLocalize.coverageBazelPresentableText().get();
+    }
 
-  override fun createCoverageEnabledConfiguration(configuration: RunConfigurationBase<*>): CoverageEnabledConfiguration =
-    BazelCoverageEnabledConfiguration(configuration)
+    @Override
+    public boolean isApplicableTo(@Nullable RunConfigurationBase configuration) {
+        if (!(configuration instanceof BazelRunConfiguration bazelRunConfiguration)) {
+            return false;
+        }
+        BazelRunHandler handler = bazelRunConfiguration.getHandler();
+        return handler != null && handler.isTestHandler();
+    }
 
-  override fun createCoverageSuite(config: CoverageEnabledConfiguration): CoverageSuite? =
-    BazelCoverageSuite(
-      config.createSuiteName(),
-      config.configuration.project,
-      BazelCoverageRunner.getInstance(),
-      config.createFileProvider(),
-      config.createTimestamp(),
-    )
+    // consulo: abstract in Consulo, IntelliJ's default
+    @Override
+    public boolean canHavePerTestCoverage(@Nullable RunConfigurationBase conf) {
+        return false;
+    }
 
-  @Deprecated("Deprecated in Java")
-  override fun createCoverageSuite(
-    runner: CoverageRunner,
-    name: String,
-    fileProvider: CoverageFileProvider,
-    filters: Array<out String?>?,
-    timestamp: Long,
-    suiteToMerge: String?,
-    coverageByTestEnabled: Boolean,
-    branchCoverage: Boolean,
-    trackTestFolders: Boolean,
-    project: Project?,
-  ): CoverageSuite? {
-    if (project == null) return null
-    return BazelCoverageSuite(name, project, runner, fileProvider, timestamp)
-  }
+    @Override
+    public CoverageEnabledConfiguration createCoverageEnabledConfiguration(@Nullable RunConfigurationBase configuration) {
+        return new BazelCoverageEnabledConfiguration(Objects.requireNonNull(configuration));
+    }
 
-  @Deprecated("Deprecated in Java")
-  override fun createCoverageSuite(
-    runner: CoverageRunner,
-    name: String,
-    coverageDataFileProvider: CoverageFileProvider,
-    config: CoverageEnabledConfiguration,
-  ): CoverageSuite = BazelCoverageSuite(name, config.configuration.project, runner, config.createFileProvider(), config.createTimestamp())
+    // consulo: upstream also overrides createCoverageSuite(config: CoverageEnabledConfiguration), which Consulo does not have;
+    //  Consulo's CoverageDataManager calls createCoverageSuite(runner, name, fileProvider, config) below instead
 
-  override fun createEmptyCoverageSuite(coverageRunner: CoverageRunner): CoverageSuite = BazelCoverageSuite()
+    @Override
+    public @Nullable CoverageSuite createCoverageSuite(
+        CoverageRunner runner,
+        String name,
+        CoverageFileProvider fileProvider,
+        @Nullable String[] filters,
+        long timestamp,
+        @Nullable String suiteToMerge,
+        boolean coverageByTestEnabled,
+        boolean branchCoverage,
+        boolean trackTestFolders,
+        @Nullable Project project
+    ) {
+        if (project == null) {
+            return null;
+        }
+        return new BazelCoverageSuite(name, project, runner, fileProvider, timestamp);
+    }
 
-  override fun getCoverageAnnotator(project: Project): CoverageAnnotator = BazelCoverageAnnotator.getInstance(project)
+    // consulo: upstream uses config.createFileProvider() and config.createTimestamp(), which Consulo's CoverageEnabledConfiguration
+    //  does not have: the file provider is passed in, the timestamp is the current time
+    @Override
+    public CoverageSuite createCoverageSuite(
+        CoverageRunner runner,
+        String name,
+        CoverageFileProvider coverageDataFileProvider,
+        CoverageEnabledConfiguration config
+    ) {
+        return new BazelCoverageSuite(
+            name,
+            config.getConfiguration().getProject(),
+            runner,
+            coverageDataFileProvider,
+            System.currentTimeMillis()
+        );
+    }
 
-  override fun getQualifiedName(outputFile: File, sourceFile: PsiFile): String =
-    BazelCoverageRunner.getNameInCoverageData(sourceFile.virtualFile)
+    @Override
+    public CoverageSuite createEmptyCoverageSuite(CoverageRunner coverageRunner) {
+        return new BazelCoverageSuite();
+    }
 
-  override fun coverageProjectViewStatisticsApplicableTo(fileOrDir: VirtualFile): Boolean = true
+    @Override
+    public CoverageAnnotator getCoverageAnnotator(Project project) {
+        return BazelCoverageAnnotator.getInstance(project);
+    }
 
-  override fun createCoverageViewExtension(project: Project, suiteBundle: CoverageSuitesBundle): CoverageViewExtension =
-    BazelCoverageViewExtension(project, suiteBundle.getAnnotator(project), suiteBundle)
+    // consulo: abstract in Consulo, IntelliJ's default
+    @Override
+    public boolean coverageEditorHighlightingApplicableTo(PsiFile psiFile) {
+        return true;
+    }
+
+    // consulo: abstract in Consulo, IntelliJ's default
+    @Override
+    public boolean acceptedByFilters(PsiFile psiFile, CoverageSuitesBundle suite) {
+        return true;
+    }
+
+    // consulo: abstract in Consulo, IntelliJ's default
+    @Override
+    public boolean recompileProjectAndRerunAction(Module module, CoverageSuitesBundle suite, Runnable chooseSuiteAction) {
+        return false;
+    }
+
+    @Override
+    public String getQualifiedName(File outputFile, PsiFile sourceFile) {
+        return BazelCoverageRunner.getNameInCoverageData(Objects.requireNonNull(sourceFile.getVirtualFile()));
+    }
+
+    // consulo: abstract in Consulo, IntelliJ's default (the qualified name of the source file)
+    @Override
+    public Set<String> getQualifiedNames(PsiFile sourceFile) {
+        VirtualFile virtualFile = sourceFile.getVirtualFile();
+        if (virtualFile == null) {
+            return Set.of();
+        }
+        String qName = getQualifiedName(VirtualFileUtil.virtualToIoFile(virtualFile), sourceFile);
+        return Set.of(qName);
+    }
+
+    // consulo: abstract in Consulo, IntelliJ's default
+    @Override
+    public List<PsiElement> findTestsByNames(String[] testNames, Project project) {
+        return List.of();
+    }
+
+    // consulo: abstract in Consulo, IntelliJ's default
+    @Override
+    public @Nullable String getTestMethodName(PsiElement element, AbstractTestProxy testProxy) {
+        return null;
+    }
+
+    @Override
+    public boolean coverageProjectViewStatisticsApplicableTo(VirtualFile fileOrDir) {
+        return true;
+    }
+
+    // consulo: the Consulo createCoverageViewExtension() also takes the coverage view state
+    @Override
+    public CoverageViewExtension createCoverageViewExtension(
+        Project project,
+        CoverageSuitesBundle suiteBundle,
+        CoverageViewManager.StateBean stateBean
+    ) {
+        return new BazelCoverageViewExtension(project, suiteBundle.getAnnotator(project), suiteBundle, stateBean);
+    }
 }

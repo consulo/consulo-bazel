@@ -1,51 +1,73 @@
-package org.jetbrains.bazel.run.coverage
+package org.jetbrains.bazel.run.coverage;
 
-import com.intellij.coverage.CoverageDataManager
-import com.intellij.coverage.CoverageSuitesBundle
-import com.intellij.coverage.SimpleCoverageAnnotator
-import com.intellij.openapi.application.runReadAction
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectFileIndex
-import com.intellij.openapi.vfs.StandardFileSystems
-import com.intellij.openapi.vfs.VirtualFile
-import org.jetbrains.bazel.commons.LanguageClass
-import java.io.File
+import consulo.annotation.component.ComponentScope;
+import consulo.annotation.component.ServiceAPI;
+import consulo.annotation.component.ServiceImpl;
+import consulo.application.ReadAction;
+import consulo.execution.coverage.CoverageDataManager;
+import consulo.execution.coverage.CoverageSuitesBundle;
+import consulo.execution.coverage.SimpleCoverageAnnotator;
+import consulo.module.content.ProjectFileIndex;
+import consulo.project.Project;
+import consulo.util.io.FileUtil;
+import consulo.virtualFileSystem.LocalFileSystem;
+import consulo.virtualFileSystem.VirtualFile;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import org.jetbrains.bazel.commons.LanguageClass;
+import org.jspecify.annotations.Nullable;
 
-private const val AVERAGE_LINE_COUNT_IN_FILE = 100
+import java.io.File;
 
-@Service(Service.Level.PROJECT)
-internal class BazelCoverageAnnotator(project: Project) : SimpleCoverageAnnotator(project) {
-  companion object {
-    @JvmStatic
-    fun getInstance(project: Project): BazelCoverageAnnotator = project.service()
-  }
+@ServiceAPI(ComponentScope.PROJECT)
+@ServiceImpl
+@Singleton
+public class BazelCoverageAnnotator extends SimpleCoverageAnnotator {
+    // consulo: upstream private top-level const of BazelCoverageAnnotator.kt
+    private static final int AVERAGE_LINE_COUNT_IN_FILE = 100;
 
-  override fun getRoots(
-    project: Project,
-    dataManager: CoverageDataManager,
-    suite: CoverageSuitesBundle,
-  ): Array<VirtualFile> = BazelCoverageSuite.getRoots(suite).toTypedArray()
+    @Inject
+    public BazelCoverageAnnotator(Project project) {
+        super(project);
+    }
 
-  override fun fillInfoForUncoveredFile(file: File): FileCoverageInfo? {
-    // Only include Java/Kotlin/etc. files in the total count
-    if (LanguageClass.fromExtension(file.extension) == null) return null
+    public static BazelCoverageAnnotator getInstance(Project project) {
+        return project.getInstance(BazelCoverageAnnotator.class);
+    }
 
-    val virtualFile = StandardFileSystems.local().findFileByPath(file.absolutePath) ?: return null
-    if (runReadAction {
-        ProjectFileIndex.getInstance(project).isInTestSourceContent(virtualFile) ||
-          !ProjectFileIndex.getInstance(project).isInSource(virtualFile)
-      }
+    // TODO consulo: SimpleCoverageAnnotator has no getRoots(project, dataManager, suite) hook (upstream override), Consulo always
+    //  annotates the content roots of all modules instead of these roots; nothing calls this method
+    public VirtualFile[] getRoots(
+        Project project,
+        CoverageDataManager dataManager,
+        CoverageSuitesBundle suite
     ) {
-      return null
+        return BazelCoverageSuite.getRoots(suite).toArray(VirtualFile.EMPTY_ARRAY);
     }
 
-    return FileCoverageInfo().apply {
-      coveredLineCount = 0
-      // Best-effort attempt without actually reading the file from disk (slow!).
-      // Even if we were to read it and count the lines, the number of statements is not the same as the number of physical lines.
-      totalLineCount = AVERAGE_LINE_COUNT_IN_FILE
+    @Override
+    protected @Nullable FileCoverageInfo fillInfoForUncoveredFile(File file) {
+        // Only include Java/Kotlin/etc. files in the total count
+        if (LanguageClass.fromExtension(FileUtil.getExtension(file.getName())) == null) {
+            return null;
+        }
+
+        VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByPath(file.getAbsolutePath());
+        if (virtualFile == null) {
+            return null;
+        }
+        if (ReadAction.compute(() ->
+            ProjectFileIndex.getInstance(getProject()).isInTestSourceContent(virtualFile) ||
+                !ProjectFileIndex.getInstance(getProject()).isInSource(virtualFile)
+        )) {
+            return null;
+        }
+
+        FileCoverageInfo info = new FileCoverageInfo();
+        info.coveredLineCount = 0;
+        // Best-effort attempt without actually reading the file from disk (slow!).
+        // Even if we were to read it and count the lines, the number of statements is not the same as the number of physical lines.
+        info.totalLineCount = AVERAGE_LINE_COUNT_IN_FILE;
+        return info;
     }
-  }
 }
