@@ -104,6 +104,8 @@ module consulo.bazel.go {
     requires consulo.go.toolchain;
     requires consulo.go.language.impl;
     requires consulo.go.execution;
+    // Delve debugging of Go targets (debug.BazelGoDebugRunner): NativeDebugSessionStarter, NativeDebugTarget, NativeDebuggerSetup
+    requires consulo.nativeDev.debugger.api;
 
     exports consulo.bazel.go.localize;
     exports org.jetbrains.bazel.golang;

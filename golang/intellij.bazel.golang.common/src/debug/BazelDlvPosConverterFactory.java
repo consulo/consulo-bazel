@@ -20,8 +20,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-// TODO consulo: not registered (upstream com.goide dlv.positionConverterFactory, order="first"). The Delve debugger API
-//  (com.goide.dlv.location.DlvPositionConverterFactory / DlvPositionConverter) is missing in consulo-google-go
+// TODO consulo: not registered (upstream com.goide dlv.positionConverterFactory, order="first"). The Delve debugger of
+//  consulo-google-go (GoDlvDebugProcess, a consulo-native-dev DAP debug process) has no position converter extension point like
+//  com.goide.dlv.location.DlvPositionConverterFactory / DlvPositionConverter: Delve maps the paths itself by the prefix rules of its
+//  `substitutePath` launch argument, which BazelDlvDebuggerSetup derives from this algorithm. Kept as the reference of the
+//  per-path resolution (GoLanguagePlugin.resolveRemoteToLocal / resolveLocalToRemote) until such an API exists
 public class BazelDlvPosConverterFactory /* : DlvPositionConverterFactory */ {
     public @Nullable BspDlvPositionConverter createPositionConverter(
         Project project,

@@ -18,3 +18,5 @@ sync.gazelle.target.hint:
     text: "Specify the correct gazelle_target: in your selected .bazelproject"
 inspection.go.strict.dependencies.description:
     text: "Reports Go packages imported from targets missing from direct dependencies of the Bazel target."
+go.debug.error.no.executable:
+    text: "The Go binary to debug was not prepared: the ScriptPathDebugBeforeRunTaskProvider before launch task did not run"
