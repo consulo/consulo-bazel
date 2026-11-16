@@ -1,22 +1,34 @@
-package com.intellij.bazel.java.profiler
+package com.intellij.bazel.java.profiler;
 
-import com.intellij.execution.Executor
-import com.intellij.profiler.DefaultProfilerExecutorGroup
-import org.jetbrains.bazel.jvm.run.RunWithScriptPathExtension
-import org.jetbrains.bazel.run.config.BazelRunConfiguration
+import consulo.annotation.component.ExtensionImpl;
+import consulo.execution.executor.Executor;
+import consulo.execution.profiler.DefaultProfilerExecutorGroup;
+import consulo.execution.profiler.ProfilerExecutorSettings;
+import org.jetbrains.bazel.jvm.run.RunWithScriptPathExtension;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
 
 /**
- * Always run with `--script_path` for Profiler,
- * because it makes sure the process is run locally (unlike with `bazel run` and remote execution),
+ * Always run with {@code --script_path} for Profiler,
+ * because it makes sure the process is run locally (unlike with {@code bazel run} and remote execution),
  * and because we can add JVM arguments to the script without invalidating Bazel's analysis cache
  */
-internal class ProfilerRunWithScriptPathExtension : RunWithScriptPathExtension {
-  override fun shouldRunWithScriptPath(
-    executor: Executor,
-    configuration: BazelRunConfiguration,
-  ): Boolean =
-    isProfilerExecutor(executor.id)
+@ExtensionImpl
+public class ProfilerRunWithScriptPathExtension implements RunWithScriptPathExtension {
+    public ProfilerRunWithScriptPathExtension() {
+    }
 
-  private fun isProfilerExecutor(executorId: String): Boolean =
-    DefaultProfilerExecutorGroup.getInstance()?.getRegisteredSettings(executorId)?.state != null
+    @Override
+    public boolean shouldRunWithScriptPath(
+        Executor executor,
+        BazelRunConfiguration configuration
+    ) {
+        return isProfilerExecutor(executor.getId());
+    }
+
+    private boolean isProfilerExecutor(String executorId) {
+        DefaultProfilerExecutorGroup group = DefaultProfilerExecutorGroup.getInstance();
+        ProfilerExecutorSettings settings = group == null ? null : group.getRegisteredSettings(executorId);
+        // consulo: ProfilerExecutorSettings.getState() is never null, upstream checked `?.state != null`
+        return settings != null;
+    }
 }

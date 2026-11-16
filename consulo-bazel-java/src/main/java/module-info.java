@@ -59,6 +59,7 @@ module consulo.bazel.java {
     requires consulo.execution.test.api;
     requires consulo.execution.test.sm.api;
     requires consulo.execution.coverage.api;
+    requires consulo.execution.profiler.api;
     requires consulo.compiler.api;
     requires consulo.external.system.api;
     requires consulo.search.everywhere.api;
@@ -107,11 +108,14 @@ module consulo.bazel.java {
     requires consulo.java.execution.api;
     requires consulo.java.execution.impl;
     requires consulo.java.coverage.impl;
+    requires consulo.java.profiler.impl;
+    requires consulo.java.profiler.jfr;
     requires consulo.container.api;
     requires java.desktop;
 
     opens org.jetbrains.bazel.jvm.run to consulo.util.xml.serializer;
 
+    exports com.intellij.bazel.java.profiler;
     exports org.jetbrains.bazel.fastbuild;
     exports org.jetbrains.bazel.flow.modify;
     exports org.jetbrains.bazel.hotswap;
