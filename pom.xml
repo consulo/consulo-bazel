@@ -52,6 +52,8 @@
         <module>consulo-bazel-go</module>
         <module>consulo-bazel-python</module>
         <module>consulo-bazel-rust</module>
+        <module>consulo-bazel-dotnet</module>
+        <module>consulo-bazel-dotnet-nunit</module>
         <module>consulo-plugin</module>
     </modules>
 </project>

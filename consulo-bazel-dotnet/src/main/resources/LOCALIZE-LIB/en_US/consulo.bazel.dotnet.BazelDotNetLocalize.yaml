@@ -1,0 +1,24 @@
+module.extension.dotnet.core.name:
+    text: ".NET (Bazel)"
+module.extension.csharp.name:
+    text: "C# (Bazel)"
+console.task.model.dotnet.importer:
+    text: ".NET importer"
+console.task.model.calculate.dotnet.sdk:
+    text: "Calculate the .NET SDK"
+run.handler.dotnet.name:
+    text: ".NET Run Handler"
+test.handler.dotnet.name:
+    text: ".NET Test Handler"
+debug.error.no.single.target:
+    text: "Debugging is supported for a single .NET target only"
+debug.error.no.module:
+    text: "No .NET module for the target {0}, sync the project"
+debug.error.no.sdk:
+    text: "No .NET SDK for the module {0}"
+debug.error.build.failed:
+    text: "The build of {0} failed: {1}"
+debug.error.script.failed:
+    text: "Cannot read the run script of {0}: {1}"
+debug.error.no.assembly:
+    text: "Cannot find the assembly of the launcher {0}"

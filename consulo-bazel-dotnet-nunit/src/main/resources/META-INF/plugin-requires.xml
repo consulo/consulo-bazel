@@ -1,0 +1,9 @@
+<consulo-plugin-requires>
+    <plugins>
+        <!-- the plugins of consulo.bazel.dotnet: this library needs that library, which is loaded with them -->
+        <plugin>consulo.dotnet</plugin>
+        <plugin>consulo.csharp</plugin>
+        <plugin>consulo.dotnet.core</plugin>
+        <plugin>consulo.nunit</plugin>
+    </plugins>
+</consulo-plugin-requires>

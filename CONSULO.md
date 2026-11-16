@@ -316,6 +316,7 @@ git diff --name-only --diff-filter=D "$BASE" upstream/main -- '*.kt' \
 | `python/backend`, `python/intellij.bazel.python.common` | `consulo.bazel.python` (`consulo-bazel-python/`, optional library, needs consulo.python) | converted, builds, sync and import resolution tested; packaging API, module renderer, canonical path provider and stub files missing in consulo-python |
 | `clion/*` | `consulo.bazel.cpp` (`consulo-bazel-cpp/`, optional library, needs consulo.cpp from consulo/consulo-cpp) | converted, builds, sync tested; per-file options via `CFileOptionsContributor`, debug via consulo-native-dev; no compiler detection or test frameworks |
 | `rust/intellij.bazel.rust.sync` (Consulo-only, see [Rust](#rust)) | `consulo.bazel.rust` (`consulo-bazel-rust/`, optional library, needs consulo.rust) | restored and written, javac-checked; aspect output verified with Bazel 9.3.2; not yet built with Maven or tested in the IDE |
+| `dotnet/intellij.bazel.dotnet.sync` (Consulo-only, see [.NET](#net)) | `consulo.bazel.dotnet` (`consulo-bazel-dotnet/`, optional library, needs consulo.dotnet, consulo.csharp and consulo.dotnet.core), NUnit in `consulo.bazel.dotnet.nunit` (`consulo-bazel-dotnet-nunit/`, optional library, also needs consulo.nunit) | written, builds; C# only; NUnit test detection; not yet tested in the IDE |
 
 Order: `languages` -> `commons` -> `projectview` -> `backend` -> `core` -> language integrations.
 
@@ -336,6 +337,65 @@ folder, and is not touched by merges:
   Rustc action, resolved against the execution root). consulo-rust does not persist external projects, so
   `RustCargoProjectStartupActivity` attaches the project again from the persisted snapshot when the project is opened.
 - The `rust_info` aspect module only exists in our fork (see [Aspect](#aspect)).
+
+### .NET
+
+Upstream has no .NET support. `dotnet/intellij.bazel.dotnet.sync` is **Consulo-only code** (like [Rust](#rust)), the module
+extensions are Consulo-only classes of `consulo-bazel-dotnet/src/main/java`. Only C# targets of rules_dotnet are imported
+(`csharp_library`, `csharp_binary`, `csharp_test`, `csharp_nunit_test`); F# and Visual Basic are reported by the aspect but
+not imported (TODO).
+
+- The `dotnet_info` aspect module only exists in our fork (see [Aspect](#aspect)); `DotNetBazelRuleSetPlugin` enables it for
+  workspaces that use rules_dotnet. `DotNetLanguagePlugin` maps its `DotNetAssemblyInfo` to the snapshot data
+  `DotNetBuildTarget` (persisted by `DotNetWorkspaceTypeContributor`).
+- **Own module extensions**, not the MSBuild ones of consulo-msbuild / incubating-consulo-dotnet-core (decision of the project
+  owner), modelled on `MSBuildDotNetCoreModuleExtension` and `MSBuildCSharpModuleExtension`: `bazel-dotnet-core`
+  (`consulo.bazel.dotnet.module.extension.BazelDotNetCoreModuleExtension`, a `BaseDotNetModuleExtension` with a
+  `DotNetCoreBundleType` SDK; runs and debugs the assembly with `DotNetCoreDebuggerCommandLine` / `DotNetCoreDebugProcess` of
+  incubating-consulo-dotnet-core, does not compile) and its child `bazel-csharp` (`BazelCSharpModuleExtension`, a
+  `BaseCSharpModuleExtension`). Both are system only; their state is saved with the module by the extensions themselves.
+- `DotNetBazelWorkspaceImporter` creates one module per C# target, like consulo-msbuild's `BaseDotNetProjectCapability` /
+  `BaseCSharpProjectCapability`: target type, debug info, source roots, the built assembly in `bazel-out` (output directory and
+  file name), the preprocessor symbols (the `defines` plus `TRACE`, `DEBUG` and the target framework symbols of rules_dotnet's
+  `framework_preprocessor_symbols`, ported in `DotNetFrameworkDefines`), language version, nullable context, unsafe code and
+  `internals_visible_to` (rules_dotnet passes it as a generated source, which is not part of the module). The content root is the
+  Bazel package of the target (a production or test folder); a package with several C# targets gives each module its source
+  files as content roots (like the Python importer). External sources (the NUnit shim of `csharp_nunit_test`) are skipped.
+- SDK: the hermetic SDK of the target (`<dotnet dir>/sdk/<version>` of the `dotnet` of its compile action, in
+  `<output_base>/external`) as a `DotNetCoreBundleType` bundle of the SDK table, created in the `Initialize` phase (reused by
+  home), any existing .NET bundle when the aspect found no `dotnet`.
+- References: System types resolve only through the reference assemblies of the targeting pack. Framework references and NuGet
+  package references become project libraries, one per assembly directory (e.g.
+  `.NET: nuget.microsoft.netcore.app.ref.v8.0.30/ref/net8.0`), with `netdll` binary roots and the XML documentation next to an
+  assembly; compile dependencies on other C# targets become module dependencies.
+- Run and test go through the Bazel run configuration (`BazelDotNetRunHandler` / `BazelDotNetTestHandler`, `bazel run` /
+  `bazel test`). Debug: `BazelDotNetDebugRunner` builds the target with `bazel run --script_path` (with the `debug_flags`),
+  takes the assembly next to the launcher of rules_dotnet (`app.dll.sh` -> `app.dll`) and debugs `dotnet <assembly>` under
+  netcoredbg in the runfiles directory of the script (the `deps.json` names the dependency assemblies by their runfiles path).
+  A test is debugged like a binary (TODO: test console, test filter).
+  - rules_dotnet links only the assemblies of the dependencies into the runfiles, not their `.pdb`, and netcoredbg looks for
+    symbols next to the loaded assembly only, so the runner links the `.pdb` next to the real file of each runfiles assembly
+    into the runfiles (TODO: rules_dotnet could put `DotnetAssemblyRuntimeInfo.pdbs` into the runfiles).
+  - The symbols know a workspace source by the path rules_dotnet compiled it with, relative to the execution root
+    (`cs/greeter/Greeter.cs`); netcoredbg matches a relative breakpoint path against the end of the symbol paths, an absolute one
+    only exactly. `BazelDotNetCoreDebugProcess` sends the files of the workspace relative to its root
+    (`DAPDebugProcess.toSourcePath`, added to consulo-dap for this) and resolves the relative paths of frames against it.
+  - The debugger gets `BazelDotNetDebugRunProfile`, a `ModuleRunProfile` with the module of the target, from which the
+    expression editors (`DotNetEditorsProvider2`) and the evaluation context (`DotNetDebugContext`) take the language and the
+    search scope.
+- `BazelCSharpModuleExtension.getAssemblyTitle` falls back to the assembly name of the target (rules_dotnet generates no
+  `AssemblyTitle`), so `InternalsVisibleTo` of other targets matches it instead of the module name.
+- `consulo.bazel.dotnet.workspace.BazelDotNetModuleConfigurator` (`@ExtensionAPI`, Consulo-only) is called by the importer for
+  each C# module after it is set up, with its `ModifiableRootModel` and `DotNetBuildTarget`; other libraries enable their
+  module extensions there and disable them again when the target no longer needs them (modules are imported on every sync).
+- NUnit: the optional library `consulo.bazel.dotnet.nunit` (`consulo-bazel-dotnet-nunit/`). A library can only require plugins
+  (`.requires`), not another library, so its `plugin-requires.xml` names the plugins of `consulo.bazel.dotnet` plus
+  `consulo.nunit`: whenever it is loaded, `consulo.bazel.dotnet` is loaded too (all jars of the plugin share one class path).
+  `BazelNUnitModuleConfigurator` enables the system-only child extension `bazel-nunit` of `bazel-dotnet-core`
+  (`BazelNUnitModuleExtension`, a `NUnitSimpleModuleExtension`, so `NUnitTestFramework` of consulo.nunit recognizes
+  `[TestFixture]` / `[Test]`) for a target with a package reference `nunit.framework.dll` (`csharp_nunit_test` references
+  rules_dotnet's bundled NUnit). Not a `NUnitModuleExtension`: that one runs the tests with an NUnit bundle, Bazel runs them
+  with `bazel test`.
 
 ## Replaced files
 
