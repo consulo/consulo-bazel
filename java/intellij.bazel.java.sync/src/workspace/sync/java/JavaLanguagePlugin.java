@@ -193,9 +193,7 @@ public class JavaLanguagePlugin implements LanguagePlugin {
                                     binaryOutputs,
                                     new LinkedHashMap<>(environmentVariables),
                                     jvmTarget.getMainClass().isBlank() ? null : jvmTarget.getMainClass(),
-                                    // TODO consulo: upstream `jvmTarget.testClass.ifBlank { null }`; JvmTargetInfo.test_class needs the
-                                    //  aspect SDK protos of intellij-aspect 326afd3c (consulo-aspect-sdk is older)
-                                    null,
+                                    jvmTarget.getTestClass().isBlank() ? null : jvmTarget.getTestClass(),
                                     StringsCollection.of(jvmTarget.getJvmFlagsList()),
                                     StringsCollection.of(jvmTarget.getArgsList()),
                                     resourceStripPrefixLocation(target),
