@@ -3,27 +3,25 @@ package org.jetbrains.bazel.sync.task;
 import org.jetbrains.bazel.commons.LanguageClass;
 import org.jetbrains.bazel.sync.ProjectSyncOutcome;
 import org.jetbrains.bazel.sync.ProjectSyncOutcome.ProjectSyncCompletionResult;
-import org.jetbrains.bsp.protocol.BuildTarget;
 import org.jspecify.annotations.Nullable;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
 
 public record ProjectSyncResult(
     ProjectSyncCompletionResult completionResult,
     @Nullable ProjectSyncStatistics statistics,
-    List<ProjectSyncPhaseDuration> phaseDurations,
     @Nullable Throwable failureCause
 ) {
     // consulo: overloads for the upstream default arguments
     public ProjectSyncResult(ProjectSyncCompletionResult completionResult) {
-        this(completionResult, null, List.of(), null);
+        this(completionResult, null, null);
     }
 
     public ProjectSyncResult(ProjectSyncCompletionResult completionResult, @Nullable Throwable failureCause) {
-        this(completionResult, null, List.of(), failureCause);
+        this(completionResult, null, failureCause);
     }
 
     public ProjectSyncOutcome toOutcome() {
@@ -35,39 +33,33 @@ public record ProjectSyncResult(
         APPLY_PROJECT_MODEL,
     }
 
-    public record ProjectSyncPhaseDuration(
-        ProjectSyncPhase phase,
-        long durationMs
-    ) {
-    }
-
+    /**
+     * @param resolvedTargetCount The number of resolved targets, or {@code null} when the sync stopped before it resolved the targets.
+     * @param phaseDurations      The duration of each sync phase that ran, in milliseconds.
+     */
     public record ProjectSyncStatistics(
-        int resolvedTargetCount,
-        List<Set<LanguageClass>> targetLanguageClasses
+        @Nullable Integer resolvedTargetCount,
+        List<Set<LanguageClass>> targetLanguageClasses,
+        Map<String, Long> importerDurations,
+        Map<ProjectSyncPhase, Long> phaseDurations
     ) {
+        // consulo: upstream default arguments
+        public ProjectSyncStatistics() {
+            this(null, List.of(), Map.of(), Map.of());
+        }
+
+        // consulo: Kotlin data class copy(phaseDurations = ...)
+        public ProjectSyncStatistics withPhaseDurations(Map<ProjectSyncPhase, Long> phaseDurations) {
+            return new ProjectSyncStatistics(resolvedTargetCount, targetLanguageClasses, importerDurations, phaseDurations);
+        }
     }
 
-    public static <T> CompletableFuture<T> trackSyncPhase(
-        List<ProjectSyncPhaseDuration> receiver,
-        ProjectSyncPhase phase,
-        Supplier<CompletableFuture<T>> action
-    ) {
-        long startedAt = System.currentTimeMillis();
-        CompletableFuture<T> result;
-        try {
-            result = action.get();
-        }
-        catch (Throwable e) {
-            result = CompletableFuture.failedFuture(e);
-        }
-        // consulo: the upstream finally block runs when the future completes
-        return result.whenComplete(
-            (value, error) -> receiver.add(new ProjectSyncPhaseDuration(phase, System.currentTimeMillis() - startedAt))
+    public ProjectSyncResult withPhaseDurations(Map<ProjectSyncPhase, Long> phaseDurations) {
+        ProjectSyncStatistics current = statistics != null ? statistics : new ProjectSyncStatistics();
+        return new ProjectSyncResult(
+            completionResult,
+            current.withPhaseDurations(new LinkedHashMap<>(phaseDurations)),
+            failureCause
         );
-    }
-
-    public static ProjectSyncStatistics syncStatistics(List<BuildTarget> receiver) {
-        List<Set<LanguageClass>> targetLanguageClasses = receiver.stream().map(it -> it.getKind().languageClasses()).toList();
-        return new ProjectSyncStatistics(receiver.size(), targetLanguageClasses);
     }
 }

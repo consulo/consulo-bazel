@@ -15,7 +15,7 @@ import consulo.ui.ex.action.AnActionWithSyncUpdate;
 import consulo.util.concurrent.coroutine.Coroutine;
 import consulo.ui.UIAction;
 import org.jspecify.annotations.Nullable;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,7 +25,7 @@ public final class ExecutorActionsUtil {
     }
 
     @RequiredReadAction
-    public static List<AnAction> getExecutorActions(Project project, BuildTarget target) {
+    public static List<AnAction> getExecutorActions(Project project, BuildTargetInfo target) {
         return getExecutorActions(new BazelRunLocation(project, target));
     }
 

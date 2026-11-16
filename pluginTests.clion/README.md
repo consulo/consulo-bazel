@@ -11,35 +11,42 @@ https://dotnet.microsoft.com/en-us/download/dotnet/10.0
 cd dotnet && Rider/compileBackend_Radler.cmd
 ```
 
-3) [TEMPORARY] because of https://youtrack.jetbrains.com/issue/MRI-3220
-
-Modify the `BUILD.bazel` file 
-``` bazel
-jps_test(
-    name = "pluginTests.clion_test",
-    runtime_deps = [":pluginTests.clion_test_lib"],
-    env = {
-        "RESHARPER_HOST_BIN": "/Users/...../ultimate/dotnet/Bin.RiderBackend",
-    },
-)
-
+3) Set `RESHARPER_HOST_BIN` to the Rider backend build. Run this command from the repository root:
+``` shell
+export RESHARPER_HOST_BIN="$(pwd)/dotnet/Bin.RiderBackend"
 ```
 
-Please note that this change will be overwritten on each jps-to-bazel call 
+The test target inherits this variable from the shell, so no change of the `BUILD.bazel` file is necessary.
 
 ### Running CLion tests from the command line
 
-Instead of following step 3, it is also possible to run the CLion test from the command line after compiling the Rider Backend without modifying the `BUILD` file:
+```bash
+bazel test //plugins/bazel/pluginTests.clion:pluginTests.clion_test
+```
+
+Instead of step 3, you can also pass the variable to one command:
 ```bash
 bazel test //plugins/bazel/pluginTests.clion:pluginTests.clion_test --test_env=RESHARPER_HOST_BIN="$(pwd)/dotnet/Bin.RiderBackend"
 ```
 
 To debug the tests use `run` and pass `-- --debug`:
 ```bash
-bazel run //plugins/bazel/pluginTests.clion:pluginTests.clion_test --test_env=RESHARPER_HOST_BIN="$(pwd)/dotnet/Bin.RiderBackend" -- --debug
+bazel run //plugins/bazel/pluginTests.clion:pluginTests.clion_test -- --debug
 ```
 
 To filter tests add:
 ```bash
 --test_env=JB_IDE_SM_RUN=true --test_env=JB_TEST_FILTER="fully qualified class name[:test name]"
+```
+
+On Windows msys2 (BAZEL_SH, needs to be set explicitly because some scripts in our repo overwrite it otherwise) and clang-cl (BAZEL_LLVM) are required and the following additional environment variables need to be set (copy this to your project view file):
+```
+  --test_env=BAZEL_SH=C:\msys64\usr\bin\bash.exe
+  --test_env=BAZEL_LLVM 
+  --test_env=USERPROFILE
+  --test_env=LOCALAPPDATA
+  --test_env=APPDATA
+  --test_env=ProgramFiles
+  --test_env=ProgramFiles(x86)
+  --test_env=ProgramData
 ```

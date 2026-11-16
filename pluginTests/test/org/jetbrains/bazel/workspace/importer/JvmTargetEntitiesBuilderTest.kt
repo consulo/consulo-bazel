@@ -1,14 +1,16 @@
 package org.jetbrains.bazel.workspace.importer
 
 import com.intellij.java.workspace.entities.javaSettings
-import com.intellij.openapi.util.registry.Registry
 import com.intellij.platform.workspace.jps.entities.ContentRootEntity
 import com.intellij.platform.workspace.jps.entities.LibraryEntity
 import com.intellij.platform.workspace.jps.entities.ModuleDependency
 import com.intellij.platform.workspace.jps.entities.ModuleEntity
 import com.intellij.platform.workspace.jps.entities.SourceRootEntity
+import com.intellij.platform.workspace.storage.MutableEntityStorage
+import com.intellij.platform.workspace.storage.entities
 import com.intellij.platform.workspace.storage.impl.url.toVirtualFileUrl
 import com.intellij.testFramework.common.timeoutRunBlocking
+import com.intellij.testFramework.junit5.RegistryKey
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
@@ -19,6 +21,7 @@ import io.kotest.matchers.shouldBe
 import org.jetbrains.bazel.commons.RepoMappingDisabled
 import org.jetbrains.bazel.commons.RuleType
 import org.jetbrains.bazel.commons.TargetKind
+import org.jetbrains.bazel.config.BazelFeatureFlags
 import org.jetbrains.bazel.label.DependencyLabel
 import org.jetbrains.bazel.label.DependencyLabelKind
 import org.jetbrains.bazel.label.Label
@@ -33,11 +36,15 @@ import org.jetbrains.bazel.sync.workspace.snapshot.FileToTargetMap
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver
-import org.jetbrains.bazel.test.framework.testBazelInfo
-import org.jetbrains.bazel.test.framework.target.TestBuildTarget
+import org.jetbrains.bazel.test.framework.BazelTestApplication
+import org.jetbrains.bazel.test.framework.target.withKey
+import org.jetbrains.bazel.test.framework.target.withTags
+import org.jetbrains.bazel.test.framework.testproject.bazelInfo
+import org.jetbrains.bazel.test.framework.testproject.outputResolver
+import org.jetbrains.bazel.test.framework.testproject.testBazelProjectFixture
+import org.jetbrains.bazel.test.framework.testproject.virtualFileUrlManager
+import org.jetbrains.bazel.test.framework.testproject.workspaceRoot
 import org.jetbrains.bazel.workspace.ProjectViewGlobSet
-import org.jetbrains.bazel.workspace.model.test.framework.WorkspaceModelBaseTest
 import org.jetbrains.bazel.workspace.model.test.framework.createTestBuildTarget
 import org.jetbrains.bazel.workspace.model.test.framework.testLocations
 import org.jetbrains.bazel.workspacemodel.entities.BazelProjectEntitySource
@@ -54,11 +61,13 @@ import kotlin.io.path.writeText
 
 private val FOO_BAR: Label = Label.parse("//foo:bar")
 
-internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
+@BazelTestApplication
+internal class JvmTargetEntitiesBuilderTest {
+  private val testBazel by testBazelProjectFixture()
 
-  private val projectLocationResolver by lazy {
-    DefaultOutputLocationResolver.createHardlinkResolving(testBazelInfo(workspaceRoot = projectBasePath))
-  }
+  private val storage = MutableEntityStorage.create()
+
+  private val projectLocationResolver by lazy { testBazel.bazelInfo.outputResolver() }
 
   @Test
   fun `writes a single java module with no sources or resources`() = timeoutRunBlocking {
@@ -69,7 +78,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
 
     runImport(targets = listOf(target))
 
-    val modules = loadedEntries(ModuleEntity::class.java)
+    val modules = storage.entities<ModuleEntity>().toList()
     check(modules.size == 1) { "expected 1 module, got ${modules.size}: $modules" }
     check(modules[0].name == target.id.formatAsModuleNameTest()) {
       "unexpected module name ${modules[0].name}"
@@ -79,7 +88,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
   @Test
   fun `writes a java module with one source root`() = timeoutRunBlocking {
 
-    val sourcePath = projectBasePath.resolve("src/Foo.java")
+    val sourcePath = testBazel.workspaceRoot.resolve("src/Foo.java")
     sourcePath.toFile().parentFile.mkdirs()
     sourcePath.toFile().writeText("class Foo {}")
     val target = createTestBuildTarget(
@@ -90,9 +99,9 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
 
     runImport(targets = listOf(target))
 
-    val modules = loadedEntries(ModuleEntity::class.java)
+    val modules = storage.entities<ModuleEntity>().toList()
     check(modules.size == 1) { "expected 1 module, got ${modules.size}" }
-    val sourceRoots = loadedEntries(SourceRootEntity::class.java)
+    val sourceRoots = storage.entities<SourceRootEntity>().toList()
     check(sourceRoots.isNotEmpty()) { "expected at least one source root" }
   }
 
@@ -122,14 +131,15 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
       resolved = mapOf(appKey to JvmResolvedTarget(appKey, listOf(libraryItem), emptyList(), null, "")),
     )
 
-    check(loadedEntries(LibraryEntity::class.java).isNotEmpty()) { "expected a library entity" }
-    check(loadedEntries(ModuleEntity::class.java).isNotEmpty()) { "expected a module entity" }
+    check(storage.entities<LibraryEntity>().any()) { "expected a library entity" }
+    check(storage.entities<ModuleEntity>().any()) { "expected a module entity" }
   }
 
+  // BAZEL-3205 grouping logic in SourceRootBuilder.write() only fires when this flag is off.
   @Test
+  @RegistryKey(key = BazelFeatureFlags.MERGE_SOURCE_ROOTS, value = "false")
   fun `groups sources sharing a parent directory under one content root`() = timeoutRunBlocking {
-    disableMergeSourceRoots()
-    val srcDir = projectBasePath.resolve("src/main")
+    val srcDir = testBazel.workspaceRoot.resolve("src/main")
     Files.createDirectories(srcDir)
     val fooPath = srcDir.resolve("Foo.java")
     val barPath = srcDir.resolve("Bar.java")
@@ -143,12 +153,12 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
 
     runImport(targets = listOf(target))
 
-    val contentRoots = loadedEntries(ContentRootEntity::class.java)
+    val contentRoots = storage.entities<ContentRootEntity>().toList()
     check(contentRoots.size == 1) {
       "expected 1 content root, got ${contentRoots.size}: ${contentRoots.map { it.url }}"
     }
-    check(contentRoots[0].url == srcDir.toVirtualFileUrl(virtualFileUrlManager)) {
-      "expected content root URL ${srcDir.toVirtualFileUrl(virtualFileUrlManager)}, got ${contentRoots[0].url}"
+    check(contentRoots[0].url == srcDir.toVirtualFileUrl(testBazel.virtualFileUrlManager)) {
+      "expected content root URL ${srcDir.toVirtualFileUrl(testBazel.virtualFileUrlManager)}, got ${contentRoots[0].url}"
     }
     check(contentRoots[0].sourceRoots.size == 2) {
       "expected 2 source roots under the shared content root, got ${contentRoots[0].sourceRoots.size}"
@@ -156,10 +166,10 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
   }
 
   @Test
+  @RegistryKey(key = BazelFeatureFlags.MERGE_SOURCE_ROOTS, value = "false")
   fun `keeps separate content roots for sources in different parent directories`() = timeoutRunBlocking {
-    disableMergeSourceRoots()
-    val mainDir = projectBasePath.resolve("src/main")
-    val testDir = projectBasePath.resolve("src/test")
+    val mainDir = testBazel.workspaceRoot.resolve("src/main")
+    val testDir = testBazel.workspaceRoot.resolve("src/test")
     Files.createDirectories(mainDir)
     Files.createDirectories(testDir)
     val mainPath = mainDir.resolve("Foo.java")
@@ -174,11 +184,11 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
 
     runImport(targets = listOf(target))
 
-    val contentRoots = loadedEntries(ContentRootEntity::class.java)
+    val contentRoots = storage.entities<ContentRootEntity>().toList()
     val urls = contentRoots.map { it.url }.toSet()
     val expected = setOf(
-      mainDir.toVirtualFileUrl(virtualFileUrlManager),
-      testDir.toVirtualFileUrl(virtualFileUrlManager),
+      mainDir.toVirtualFileUrl(testBazel.virtualFileUrlManager),
+      testDir.toVirtualFileUrl(testBazel.virtualFileUrlManager),
     )
     check(urls == expected) { "expected content root URLs $expected, got $urls" }
     for (cr in contentRoots) {
@@ -189,9 +199,9 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
   }
 
   @Test
+  @RegistryKey(key = BazelFeatureFlags.MERGE_SOURCE_ROOTS, value = "false")
   fun `places content root at the source path when the source lives directly under projectBasePath`() = timeoutRunBlocking {
-    disableMergeSourceRoots()
-    val sourcePath = projectBasePath.resolve("Foo.java")
+    val sourcePath = testBazel.workspaceRoot.resolve("Foo.java")
     sourcePath.writeText("class Foo {}")
     val target = createTestBuildTarget(
       id = Label.parse("//foo"),
@@ -201,10 +211,10 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
 
     runImport(targets = listOf(target))
 
-    val contentRoots = loadedEntries(ContentRootEntity::class.java)
+    val contentRoots = storage.entities<ContentRootEntity>().toList()
     check(contentRoots.size == 1) { "expected 1 content root, got ${contentRoots.size}" }
-    check(contentRoots[0].url == sourcePath.toVirtualFileUrl(virtualFileUrlManager)) {
-      "expected content root at source path ${sourcePath.toVirtualFileUrl(virtualFileUrlManager)}, " +
+    check(contentRoots[0].url == sourcePath.toVirtualFileUrl(testBazel.virtualFileUrlManager)) {
+      "expected content root at source path ${sourcePath.toVirtualFileUrl(testBazel.virtualFileUrlManager)}, " +
       "got ${contentRoots[0].url}"
     }
   }
@@ -216,13 +226,13 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
     val label = Label.parse("//foo")
     val kind = TargetKind(kind = "java_library", ruleType = RuleType.LIBRARY, languageClasses = setOf(JavaLanguageClass.JAVA))
     val normal = createTestBuildTarget(id = label, kind = kind)
-      .copy(key = WorkspaceTargetKey(label = label, configuration = WorkspaceConfigurationId.of("00000f1")))
+      .withKey(WorkspaceTargetKey(label = label, configuration = WorkspaceConfigurationId.of("00000f1")))
     val exec = createTestBuildTarget(id = label, kind = kind)
-      .copy(key = WorkspaceTargetKey(label = label, configuration = WorkspaceConfigurationId.of("00000f2")))
+      .withKey(WorkspaceTargetKey(label = label, configuration = WorkspaceConfigurationId.of("00000f2")))
 
     runImport(targets = listOf(normal, exec))
 
-    val names = loadedEntries(ModuleEntity::class.java).map { it.name }.toSet()
+    val names = storage.entities<ModuleEntity>().toList().map { it.name }.toSet()
     val base = label.formatAsModuleNameTest()
     names shouldContainExactlyInAnyOrder setOf("$base-00000f1", "$base-00000f2")
   }
@@ -231,11 +241,11 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
   fun `a label with a single configuration keeps its plain module name`() = timeoutRunBlocking {
     val label = Label.parse("//foo")
     val target = createTestBuildTarget(id = label)
-      .copy(key = WorkspaceTargetKey(label = label, configuration = WorkspaceConfigurationId.of("00000f1")))
+      .withKey(WorkspaceTargetKey(label = label, configuration = WorkspaceConfigurationId.of("00000f1")))
 
     runImport(targets = listOf(target))
 
-    val names = loadedEntries(ModuleEntity::class.java).map { it.name }
+    val names = storage.entities<ModuleEntity>().toList().map { it.name }
     names shouldContainExactly listOf(label.formatAsModuleNameTest())
   }
 
@@ -244,9 +254,9 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
     val foo = Label.parse("//foo")
     val kind = TargetKind(kind = "java_library", ruleType = RuleType.LIBRARY, languageClasses = setOf(JavaLanguageClass.JAVA))
     val fooNormal = createTestBuildTarget(id = foo, kind = kind)
-      .copy(key = WorkspaceTargetKey(label = foo, configuration = WorkspaceConfigurationId.of("00000f1")))
+      .withKey(WorkspaceTargetKey(label = foo, configuration = WorkspaceConfigurationId.of("00000f1")))
     val fooExec = createTestBuildTarget(id = foo, kind = kind)
-      .copy(key = WorkspaceTargetKey(label = foo, configuration = WorkspaceConfigurationId.of("00000f2")))
+      .withKey(WorkspaceTargetKey(label = foo, configuration = WorkspaceConfigurationId.of("00000f2")))
     val app = createTestBuildTarget(
       id = Label.parse("//app"),
       kind = kind,
@@ -260,30 +270,25 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
 
     runImport(targets = listOf(fooNormal, fooExec, app))
 
-    val appModule = loadedEntries(ModuleEntity::class.java).single { it.name == Label.parse("//app").formatAsModuleNameTest() }
+    val appModule = storage.entities<ModuleEntity>().toList().single { it.name == Label.parse("//app").formatAsModuleNameTest() }
     val moduleDeps = appModule.dependencies.filterIsInstance<ModuleDependency>().map { it.module.name }
     val fooBase = foo.formatAsModuleNameTest()
     moduleDeps shouldContain "$fooBase-00000f2"
     moduleDeps shouldNotContain "$fooBase-00000f1"
   }
 
-  // BAZEL-3205 grouping logic in SourceRootBuilder.write() only fires when this flag is off.
-  private fun disableMergeSourceRoots() {
-    Registry.get("bazel.merge.source.roots").setValue(false, disposable)
-  }
-
   @Test
   fun `merges aspect variants so a provider carried only by the aspect variant survives`(): Unit = timeoutRunBlocking {
     val label = Label.parse("//proto")
     val kind = TargetKind(kind = "java_library", ruleType = RuleType.LIBRARY, languageClasses = setOf(JavaLanguageClass.JAVA))
-    val sourcePath = projectBasePath.resolve("Proto.java")
+    val sourcePath = testBazel.workspaceRoot.resolve("Proto.java")
     sourcePath.writeText("class Proto {}")
     val bare = createTestBuildTarget(id = label, kind = kind, sources = listOf(sourcePath))
     val withProvider = createTestBuildTarget(
       id = label,
       kind = kind,
       data = listOf(JvmBuildTarget()),
-    ).copy(key = WorkspaceTargetKey(label = label, aspectIds = WorkspaceAspectIds.of(listOf("//proto:proto_aspect"))))
+    ).withKey(WorkspaceTargetKey(label = label, aspectIds = WorkspaceAspectIds.of(listOf("//proto:proto_aspect"))))
 
     val protoKey = WorkspaceTargetKey(label = label)
     runImport(
@@ -291,7 +296,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
       resolved = mapOf(protoKey to JvmResolvedTarget(protoKey, emptyList(), emptyList(), null, "11")),
     )
 
-    val modules = loadedEntries(ModuleEntity::class.java)
+    val modules = storage.entities<ModuleEntity>().toList()
     modules shouldHaveSize 1
     modules.single().javaSettings?.languageLevelId.shouldNotBeNull()
   }
@@ -309,17 +314,17 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
       kind = kind,
       dependencies = listOf(DependencyLabel(WorkspaceTargetKey(label = a))),
       data = listOf(JvmBuildTarget()),
-    ).copy(key = WorkspaceTargetKey(label = foo, aspectIds = WorkspaceAspectIds.of(listOf("//foo:aspect_a"))))
+    ).withKey(WorkspaceTargetKey(label = foo, aspectIds = WorkspaceAspectIds.of(listOf("//foo:aspect_a"))))
     val variantB = createTestBuildTarget(
       id = foo,
       kind = kind,
       dependencies = listOf(DependencyLabel(WorkspaceTargetKey(label = b))),
       data = listOf(JvmBuildTarget()),
-    ).copy(key = WorkspaceTargetKey(label = foo, aspectIds = WorkspaceAspectIds.of(listOf("//foo:aspect_b"))))
+    ).withKey(WorkspaceTargetKey(label = foo, aspectIds = WorkspaceAspectIds.of(listOf("//foo:aspect_b"))))
 
     runImport(targets = listOf(depA, depB, variantA, variantB))
 
-    val fooModule = loadedEntries(ModuleEntity::class.java).single { it.name == foo.formatAsModuleNameTest() }
+    val fooModule = storage.entities<ModuleEntity>().toList().single { it.name == foo.formatAsModuleNameTest() }
     val moduleDeps = fooModule.dependencies.filterIsInstance<ModuleDependency>().map { it.module.name }
     moduleDeps shouldContain a.formatAsModuleNameTest()
     moduleDeps shouldContain b.formatAsModuleNameTest()
@@ -331,7 +336,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
     val kind = TargetKind(kind = "java_library", ruleType = RuleType.LIBRARY, languageClasses = setOf(JavaLanguageClass.JAVA))
     // a custom aspect carries the JavaInfo, so only the aspect variant holds the jars. See `custom_aspect_codegen`
     val aspectKey = WorkspaceTargetKey(label = label, aspectIds = WorkspaceAspectIds.of(listOf("//gen:defs.bzl%gen_aspect")))
-    val target = createTestBuildTarget(id = label, kind = kind, data = listOf(JvmBuildTarget())).copy(key = aspectKey)
+    val target = createTestBuildTarget(id = label, kind = kind, data = listOf(JvmBuildTarget())).withKey(aspectKey)
     val libraryItem = LibraryItem(
       key = aspectKey,
       ijars = listOf(Path("/gen/gen-hjar.jar")),
@@ -348,7 +353,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
       resolved = mapOf(strippedKey to JvmResolvedTarget(strippedKey, listOf(libraryItem), emptyList(), null, "")),
     )
 
-    val roots = loadedEntries(LibraryEntity::class.java).single().roots.map { it.url.url }
+    val roots = storage.entities<LibraryEntity>().toList().single().roots.map { it.url.url }
     roots shouldContain "jar:///gen/gen.jar!/"
     roots shouldNotContain "jar:///gen/gen-hjar.jar!/"
   }
@@ -396,7 +401,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
       ),
     )
 
-    val appModule = loadedEntries(ModuleEntity::class.java).single { it.name == Label.parse("//app").formatAsModuleNameTest() }
+    val appModule = storage.entities<ModuleEntity>().toList().single { it.name == Label.parse("//app").formatAsModuleNameTest() }
     val dep = appModule.dependencies.filterIsInstance<ModuleDependency>().single { it.module.name == producer.formatAsModuleNameTest() }
     dep.exported shouldBe true
   }
@@ -440,7 +445,7 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
   @Test
   fun `the ide-module-name tag wins over a rules_kotlin module name`(): Unit = timeoutRunBlocking {
     val target = kotlinTarget(FOO_BAR, moduleName = "explicit.module.name")
-      .copy(tags = listOf("ide-module-name=tagged.module.name"))
+      .withTags(listOf("ide-module-name=tagged.module.name"))
 
     runImport(targets = listOf(target))
 
@@ -460,14 +465,14 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
     )
   }
 
-  private fun moduleNames(): List<String> = loadedEntries(ModuleEntity::class.java).map { it.name }
+  private fun moduleNames(): List<String> = storage.entities<ModuleEntity>().toList().map { it.name }
 
   private fun kotlinTarget(
     label: Label,
     moduleName: String,
     isTestOnly: Boolean = false,
     associates: List<Label> = emptyList(),
-  ): TestBuildTarget =
+  ): BuildTarget =
     createTestBuildTarget(
       id = label,
       kind = TargetKind(kind = "kt_jvm_library", ruleType = RuleType.LIBRARY, languageClasses = setOf(JavaLanguageClass.KOTLIN)),
@@ -500,18 +505,18 @@ internal class JvmTargetEntitiesBuilderTest : WorkspaceModelBaseTest() {
       jvmResolved = resolved,
       repoMapping = RepoMappingDisabled,
       projectName = "test-project",
-      projectBasePath = projectBasePath,
+      projectBasePath = testBazel.workspaceRoot,
       defaultJdkName = null,
-      testSourcesGlob = ProjectViewGlobSet.of(projectBasePath, emptyList()),
+      testSourcesGlob = ProjectViewGlobSet.of(testBazel.workspaceRoot, emptyList()),
       fileToTargets = FileToTargetMap.EMPTY,
-      virtualFileUrlManager = virtualFileUrlManager,
+      virtualFileUrlManager = testBazel.virtualFileUrlManager,
       entitySource = BazelProjectEntitySource,
       excludeCompiledSourceCodeInsideJars = true,
       currentCompiledSourceExcludeEntity = null,
       resolveLocation = ::resolveProjectLocation,
     )
     // JvmTargetEntitiesBuilder writes ctx.libraries (sourced from the resolver) in its phase 0
-    JvmTargetEntitiesBuilder(ctx).writeAll(workspaceEntityStorageBuilder)
+    JvmTargetEntitiesBuilder(ctx).writeAll(storage)
   }
 
   private fun defaultResolved(targets: List<BuildTarget>): Map<WorkspaceTargetKey, JvmResolvedTarget> {

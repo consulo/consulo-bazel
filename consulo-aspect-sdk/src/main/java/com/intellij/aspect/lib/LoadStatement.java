@@ -16,7 +16,7 @@
 package com.intellij.aspect.lib;
 
 // consulo: declared in upstream sdk/lib/loads.kt
-public record LoadStatement(
+record LoadStatement(
     Repository repository,
     String path,
     String arguments

@@ -1,17 +1,12 @@
 package org.jetbrains.bazel.server.bep;
 
-import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
-import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.NamedSetOfFiles;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.OutputGroup;
 import com.intellij.aspect.lib.OutputGroups;
 import org.jetbrains.bazel.commons.BazelInfo.BazelRelease;
-import org.jetbrains.bazel.commons.BazelPathsResolver;
-import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 
-import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -22,21 +17,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-final class BepOutputBuilder {
+public final class BepOutputBuilder {
     public record TextProtoDepSet(Collection<Path> files, Collection<String> children) {
     }
 
-    private final BazelPathsResolver myBazelPathsResolver;
     private final Set<String> myInfoOutputGroupFileSets = new HashSet<>();
     private final Map<String, TextProtoDepSet> myTextProtoFileSets = new HashMap<>();
     private final Set<WorkspaceTargetKey> myRootTargets = new HashSet<>();
     private final List<String> myOptions = new ArrayList<>();
     private final Map<WorkspaceConfigurationId, WorkspaceConfiguration> myConfigurations = new LinkedHashMap<>();
     private BazelRelease myBuildToolVersion = BazelRelease.FALLBACK_VERSION;
-
-    BepOutputBuilder(BazelPathsResolver bazelPathsResolver) {
-        myBazelPathsResolver = bazelPathsResolver;
-    }
 
     public Map<WorkspaceConfigurationId, WorkspaceConfiguration> getConfigurations() {
         return myConfigurations;
@@ -50,26 +40,8 @@ final class BepOutputBuilder {
         myBuildToolVersion = buildToolVersion;
     }
 
-    public void storeNamedSet(String id, NamedSetOfFiles namedSetOfFiles) {
-        TextProtoDepSet textProtoDepSet =
-            new TextProtoDepSet(
-                namedSetOfFiles
-                    .getFilesList()
-                    .stream()
-                    .filter(it -> it.getName().endsWith(Constants.ASPECT_INFO_OUTPUT_EXTENSION))
-                    .map(this::toLocalPath)
-                    .toList(),
-                namedSetOfFiles.getFileSetsList().stream().map(it -> it.getId()).toList()
-            );
-
+    public void storeNamedSet(String id, TextProtoDepSet textProtoDepSet) {
         myTextProtoFileSets.put(id, textProtoDepSet);
-    }
-
-    private Path toLocalPath(BuildEventStreamProtos.File receiver) {
-        Path mergedPathPrefix = Path.of(String.join(File.separator, receiver.getPathPrefixList()));
-        Path bazelOutputRelativePath = mergedPathPrefix.resolve(receiver.getName());
-
-        return myBazelPathsResolver.resolveOutput(bazelOutputRelativePath);
     }
 
     public void storeTargetOutputGroups(WorkspaceTargetKey target, List<OutputGroup> outputGroups) {
@@ -91,6 +63,25 @@ final class BepOutputBuilder {
 
     public void storeConfiguration(WorkspaceConfiguration configuration) {
         myConfigurations.put(configuration.id(), configuration);
+    }
+
+    public void add(BepOutput output) {
+        myInfoOutputGroupFileSets.addAll(output.getInfoOutputGroupFileSets());
+        for (Map.Entry<String, TextProtoDepSet> entry : output.getTextProtoFileSets().entrySet()) {
+            myTextProtoFileSets.merge(entry.getKey(), entry.getValue(), (first, second) -> {
+                List<Path> files = new ArrayList<>(first.files());
+                files.addAll(second.files());
+                List<String> children = new ArrayList<>(first.children());
+                children.addAll(second.children());
+                return new TextProtoDepSet(files, children);
+            });
+        }
+        myRootTargets.addAll(output.rootTargets());
+        myOptions.addAll(output.getOptions());
+        myConfigurations.putAll(output.getConfigurations());
+        if (myBuildToolVersion.equals(BazelRelease.FALLBACK_VERSION)) {
+            myBuildToolVersion = output.getBuildToolVersion();
+        }
     }
 
     public void clear() {

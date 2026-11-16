@@ -60,6 +60,9 @@
     <extensionPoint qualifiedName="org.jetbrains.bazel.testRerunExtension"
                     interface="org.jetbrains.bazel.run.BazelTestRerunExtension"
                     dynamic="true"/>
+    <extensionPoint qualifiedName="org.jetbrains.bazel.entryPointMatcher"
+                    interface="org.jetbrains.bazel.ui.gutters.BazelEntryPointMatcher"
+                    dynamic="true"/>
   </extensionPoints>
 
   <resource-bundle>messages.BazelPluginBundle</resource-bundle>
@@ -74,27 +77,14 @@
     <module name="intellij.bazel.protobuf"/>
     <module name="intellij.libraries.bazel.aspect.sdk"/>
     <module name="intellij.libraries.caffeine"/>
-    <module name="intellij.libraries.commons.cli"/>
-    <module name="intellij.libraries.commons.io"/>
-    <module name="intellij.libraries.fastutil"/>
-    <module name="intellij.libraries.grpc"/>
     <module name="intellij.libraries.gson"/>
-    <module name="intellij.libraries.guava"/>
-    <module name="intellij.libraries.hash4j"/>
-    <module name="intellij.libraries.jackson"/>
-    <module name="intellij.libraries.jackson.databind"/>
-    <module name="intellij.libraries.jackson.dataformat.xml"/>
-    <module name="intellij.libraries.jackson.module.kotlin"/>
     <module name="intellij.libraries.jediterm.core"/>
     <module name="intellij.libraries.jediterm.ui"/>
     <module name="intellij.libraries.jetbrains.annotations"/>
-    <module name="intellij.libraries.kotlinx.collections.immutable"/>
     <module name="intellij.libraries.kotlinx.coroutines.core"/>
-    <module name="intellij.libraries.kotlinx.datetime"/>
     <module name="intellij.libraries.mvstore"/>
+    <module name="intellij.libraries.opentelemetry"/>
     <module name="intellij.libraries.protobuf"/>
-    <module name="intellij.libraries.stream"/>
-    <module name="intellij.libraries.velocity"/>
     <module name="intellij.platform.analysis"/>
     <module name="intellij.platform.backend.observation"/>
     <module name="intellij.platform.backend.workspace"/>
@@ -161,7 +151,7 @@
   </projectListeners>
 
   <extensions defaultExtensionNs="org.jetbrains.bazel">
-    <projectPreSyncHook implementation="org.jetbrains.bazel.flow.open.ReparseProjectViewFilePreSyncHook" order="first"/>
+    <projectPreSyncHook implementation="org.jetbrains.bazel.flow.open.ValidateProjectViewPreSyncHook" order="first"/>
 
     <projectSyncHook
       id="DirectoriesSyncHook"
@@ -315,6 +305,9 @@
     />
 
     <statistics.counterUsagesCollector implementationClass="org.jetbrains.bazel.fus.BazelBuildInvocationCollector"/>
+    <statistics.collectorExtension implementation="org.jetbrains.bazel.fus.BazelRunConfigurationUsageCollectorExtension"/>
+    <statistics.collectorExtension implementation="org.jetbrains.bazel.fus.BazelRunConfigurationTypeCollectorExtension"/>
+    <statistics.validation.customValidationRule implementation="org.jetbrains.bazel.fus.BazelRunHandlerProviderValidationRule"/>
     <statistics.projectUsagesCollector implementation="org.jetbrains.bazel.fus.BazelProjectStatisticsCollector"/>
 
     <projectService
@@ -655,7 +648,6 @@
     />
 
     <execution.processHandlerPidProvider implementation="org.jetbrains.bazel.run.BazelProcessHandlerPidProvider"/>
-    <applicationSettings service="org.jetbrains.bazel.ui.settings.BazelApplicationSettingsService"/>
     <projectSettings service="org.jetbrains.bazel.sync.environment.IJBazelProjectInfoService"/>
     <projectSettings service="org.jetbrains.bazel.languages.bazelversion.service.BazelVersionCheckerService"/>
     <projectSettings service="org.jetbrains.bazel.languages.bazelversion.service.resolver.BazelGithubGlobalCacheService"/>

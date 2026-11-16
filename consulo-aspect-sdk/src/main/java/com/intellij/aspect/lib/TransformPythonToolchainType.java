@@ -16,7 +16,7 @@
 package com.intellij.aspect.lib;
 
 // consulo: declared in upstream sdk/lib/transformers.kt (a Kotlin object)
-public final class TransformPythonToolchainType extends TransformFieldLoad {
+final class TransformPythonToolchainType extends TransformFieldLoad {
     public static final TransformPythonToolchainType INSTANCE = new TransformPythonToolchainType();
 
     private TransformPythonToolchainType() {

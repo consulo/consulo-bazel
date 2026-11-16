@@ -118,8 +118,10 @@ public interface TaskConsole {
      * @param message     message of the diagnostic
      * @param description description of the diagnostic
      * @param severity    severity of the diagnostic
+     * @param error       the exception that the diagnostic reports. The console does not add the diagnostic when its task already
+     *                    shows this exception.
      */
-    // consulo: upstream defaults are path = null, line = -1, column = -1, description = null
+    // consulo: upstream defaults are path = null, line = -1, column = -1, description = null, error = null
     void addDiagnosticMessage(
         TaskId taskId,
         @Nullable Path path,
@@ -127,8 +129,22 @@ public interface TaskConsole {
         int column,
         LocalizeValue message,
         @Nullable String description,
-        MessageEvent.Kind severity
+        MessageEvent.Kind severity,
+        @Nullable Throwable error
     );
+
+    // consulo: overload for the upstream default argument (error = null)
+    default void addDiagnosticMessage(
+        TaskId taskId,
+        @Nullable Path path,
+        int line,
+        int column,
+        LocalizeValue message,
+        @Nullable String description,
+        MessageEvent.Kind severity
+    ) {
+        addDiagnosticMessage(taskId, path, line, column, message, description, severity, null);
+    }
 
     /**
      * Adds a message to a particular task in this console. If the message is added to a subtask, it will also be
@@ -138,14 +154,4 @@ public interface TaskConsole {
      * @param message message to be added. New line will be inserted at its end if it's not present there already
      */
     void addMessage(TaskId taskId, String message);
-
-    /**
-     * Registers new exception during task processing.
-     * NOTE: this does not add any UI elements. It is to prevent duplicate UI nodes when subtask fails
-     *
-     * @param taskId id of the task (or a subtask) whic produced an exception
-     * @param ex     exception itself
-     * @return true if this exception is new and was not registered already
-     */
-    boolean registerException(TaskId taskId, Throwable ex);
 }

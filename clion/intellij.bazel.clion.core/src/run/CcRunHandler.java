@@ -7,6 +7,7 @@ import consulo.execution.debug.DefaultDebugExecutor;
 import consulo.execution.executor.Executor;
 import consulo.execution.runner.ExecutionEnvironment;
 import consulo.project.Project;
+import org.jetbrains.bazel.clion.run.debug.CcDebugCommandLineState;
 import org.jetbrains.bazel.run.BazelRunHandler;
 import org.jetbrains.bazel.run.commandLine.BazelRunCommandLineState;
 import org.jetbrains.bazel.run.commandLine.BazelTestCommandLineState;

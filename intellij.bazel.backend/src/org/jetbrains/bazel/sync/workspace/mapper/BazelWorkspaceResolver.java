@@ -7,6 +7,7 @@ import org.jetbrains.bazel.commons.RepoMapping;
 import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.ignore.BazelIgnoreService;
 import org.jetbrains.bazel.label.Label;
+import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
 import org.jetbrains.bazel.progress.util;
 import org.jetbrains.bazel.server.BazelServerConnection.BazelServerService;
 import org.jetbrains.bazel.sync.workspace.BazelResolvedWorkspace;
@@ -78,7 +79,7 @@ public final class BazelWorkspaceResolver {
                         ignored -> new AspectBazelProjectMapper(project, server)
                             .mapTargets(syncProject.targetProtoPaths(), build, taskId)
                     ).thenCompose(targets -> {
-                        reportImportedNoIdeTargets(project, taskId, targets);
+                        reportImportedNoIdeTargets(project, taskId, targets, ProjectViewExtensions.getDropNoIde(server.getProjectView()));
 
                         // consulo: upstream top-level extendRepoMapping of server/bzlmod/RepoMapping.kt
                         return org.jetbrains.bazel.server.bzlmod.RepoMapping.extendRepoMapping(
@@ -102,7 +103,8 @@ public final class BazelWorkspaceResolver {
     private static void reportImportedNoIdeTargets(
         Project project,
         TaskId taskId,
-        Collection<BuildTarget> targets
+        Collection<BuildTarget> targets,
+        boolean dropNoIde
     ) {
         List<BuildTarget> noIdeTargets = targets.stream().filter(target -> target.getTags().contains(Constants.NO_IDE)).toList();
         if (!noIdeTargets.isEmpty()) {
@@ -111,12 +113,22 @@ public final class BazelWorkspaceResolver {
                 .limit(5)
                 .map(it -> BuildTarget.getId(it).toString())
                 .collect(Collectors.joining(",")) + (noIdeTargets.size() > 5 ? ",..." : "");
-            util.getSyncConsole(project).addDiagnosticMessage(
-                taskId, null, -1, -1,
-                BazelBackendLocalize.bazelImportNoideTargets(noIdeTargets.size(), Constants.NO_IDE),
-                description,
-                MessageEvent.Kind.WARNING
-            );
+            if (dropNoIde) {
+                util.getSyncConsole(project).addDiagnosticMessage(
+                    taskId, null, -1, -1,
+                    BazelBackendLocalize.bazelImportNoideDroppedtargets(noIdeTargets.size(), Constants.NO_IDE),
+                    description,
+                    MessageEvent.Kind.INFO
+                );
+            }
+            else {
+                util.getSyncConsole(project).addDiagnosticMessage(
+                    taskId, null, -1, -1,
+                    BazelBackendLocalize.bazelImportNoideTargets(noIdeTargets.size(), Constants.NO_IDE),
+                    description,
+                    MessageEvent.Kind.WARNING
+                );
+            }
         }
     }
 

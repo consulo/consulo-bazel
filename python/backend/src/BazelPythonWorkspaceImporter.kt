@@ -40,9 +40,11 @@ import com.jetbrains.python.errorProcessing.PyResult
 import com.jetbrains.python.sdk.internal.PYTHON_MODULE_ID
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.VisibleForTesting
+import org.jetbrains.bazel.commons.BazelPathsResolver
 import org.jetbrains.bazel.commons.LanguageClass
 import org.jetbrains.bazel.commons.RepoMapping
 import org.jetbrains.bazel.commons.getLocalRepositories
+import org.jetbrains.bazel.label.ResolvedLabel
 import org.jetbrains.bazel.progress.withSubtask
 import org.jetbrains.bazel.python.lang.PythonBuildTarget
 import org.jetbrains.bazel.python.lang.PythonLanguageClass
@@ -57,7 +59,6 @@ import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContextBuilder
 import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterContext
 import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterPhase
 import org.jetbrains.bazel.sync.workspace.importer.WorkspaceImporterResult
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions
 import org.jetbrains.bazel.sync.workspace.snapshot.CommonWorkspaceSyncConfig
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
@@ -67,6 +68,7 @@ import org.jetbrains.bazel.sync.workspace.snapshot.commonSyncConfig
 import org.jetbrains.bazel.sync.workspace.snapshot.filterBuildTarget
 import org.jetbrains.bazel.sync.workspace.snapshot.findBuildData
 import org.jetbrains.bazel.sync.workspace.snapshot.hasBuildData
+import org.jetbrains.bazel.target.isWorkspace
 import org.jetbrains.bazel.utils.isUnder
 import org.jetbrains.bazel.workspacemodel.entities.BazelModuleExtensionEntity
 import org.jetbrains.bazel.workspacemodel.entities.WorkspaceModelTargetKey
@@ -77,6 +79,7 @@ import org.jetbrains.bsp.protocol.BuildTarget
 import org.jetbrains.bsp.protocol.OutputLocation
 import org.jetbrains.bsp.protocol.StrictDependencyCheckedType
 import org.jetbrains.bsp.protocol.TaskId
+import org.jetbrains.bsp.protocol.id
 import org.jetbrains.bsp.protocol.isGenerated
 import org.jetbrains.bsp.protocol.isUserCode
 import org.jetbrains.bsp.protocol.utils.StringUtils
@@ -94,7 +97,7 @@ private const val PYTHON_RESOURCE_ROOT_TYPE = "python-resource"
 private val PYTHON_MODULE_TYPE = ModuleTypeId(PYTHON_MODULE_ID)
 private val NAME_PRODUCER = NameProducer(id = "python")
 
-internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContext) : BazelWorkspaceImporter, BazelWorkspaceImporter.Named {
+internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContext) : BazelWorkspaceImporter {
   companion object {
     internal val logger = logger<BazelPythonWorkspaceImporter>()
   }
@@ -117,16 +120,14 @@ internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContex
   private var defaultVersion: String? = null
   private var externalSourceDependenciesByTarget: Map<WorkspaceTargetKey, List<WorkspaceTargetKey>> = mapOf()
 
-  override suspend fun import(phase: WorkspaceImporterPhase, snapshot: WorkspaceSnapshot, taskId: TaskId): Result<WorkspaceImporterResult> =
-    runCatching {
-      when (phase) {
-        is WorkspaceImporterPhase.Initialize -> onInitialize(snapshot, phase.naming)
-        is WorkspaceImporterPhase.WorkspaceApply ->
-          onWorkspaceApply(snapshot, phase.builder, context.vfuManager, phase.entitySource, phase.naming)
+  override suspend fun import(phase: WorkspaceImporterPhase, snapshot: WorkspaceSnapshot, taskId: TaskId): WorkspaceImporterResult =
+    when (phase) {
+      is WorkspaceImporterPhase.Initialize -> onInitialize(snapshot, phase.naming)
+      is WorkspaceImporterPhase.WorkspaceApply ->
+        onWorkspaceApply(snapshot, phase.builder, context.vfuManager, phase.entitySource, phase.naming)
 
-        WorkspaceImporterPhase.PostProcessing -> onPostProcessing(snapshot, taskId)
-        else -> WorkspaceImporterResult.Success
-      }
+      WorkspaceImporterPhase.PostProcessing -> onPostProcessing(snapshot, taskId)
+      else -> WorkspaceImporterResult.Success
     }
 
   private suspend fun onInitialize(
@@ -140,7 +141,7 @@ internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContex
 
     val importDepth = snapshot.commonSyncConfig.importDepth
     allPythonTargets = snapshot.targetGraph.findAllTargetsAtDepth(maxDepth = importDepth, useRelaxedDependencyExpansion = true)
-      .mapNotNull { snapshot.targets.findTargetByKey(it, TargetLoadOptions.ALL) }
+      .mapNotNull { snapshot.targets.findTargetByKey(it) }
       .filter { it.hasBuildData<PythonBuildTarget>() }
       .let { targets ->
         WorkspaceTargetMerger(mergeFunctions = pythonTargetMergeFunctions)
@@ -163,9 +164,10 @@ internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContex
         .allTargets
         .filterBuildTarget<PythonBuildTarget>()
         .map { it.first.key }
+        .filter { it in allPythonTargets }
         .associateWith { workspaceTargetKey ->
           snapshot.targetGraph.findAllTransitiveSuccessorsWithoutRootTargets(workspaceTargetKey)
-            .mapNotNull { snapshot.targets.findTargetByKey(it, TargetLoadOptions.ALL) }
+            .mapNotNull { snapshot.targets.findTargetByKey(it) }
             .filterBuildTarget<PythonBuildTarget>()
             .filter { it.second.nonLocalExternalSources(snapshot.repoMapping).any() }
             .map { it.first.key }
@@ -299,7 +301,7 @@ internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContex
 
   private suspend fun onPostProcessing(snapshot: WorkspaceSnapshot, taskId: TaskId): WorkspaceImporterResult {
     /**
-     * Because of PY-86494, PythonSdkUpdater fails to add SDK paths unless there's at least one module in the project.
+     * Because of PY-86494, the interpreter update fails to add SDK paths unless there's at least one module in the project.
      * Hence, we're forced to do it in post-processing, after WSM has been applied already.
      */
     calculateAndAddSdksWithProgress(snapshot, taskId)
@@ -484,10 +486,27 @@ internal class BazelPythonWorkspaceImporter(val context: WorkspaceImporterContex
     .map { resource -> resource.toContentRoot(PYTHON_RESOURCE_ROOT_TYPE, entitySource, virtualFileUrlManager) }
     .toList()
 
+  /**
+   * Returns the directories against which the `imports` of [target] resolve: the root of its repository and the
+   * directory of the outputs of that repository under `bazel-bin`. A repository that is neither the main nor a local
+   * repository gets no directories, so its `imports` make no source roots.
+   */
+  private fun importBasePaths(snapshot: WorkspaceSnapshot, target: BuildTarget): List<Path> {
+    val label = target.id as? ResolvedLabel
+    if (label == null || label.isMainWorkspace) {
+      return listOfNotNull(context.project.bazelProjectInfo.projectRootDir?.toNioPath(), context.bazelInfo.bazelBin).distinct()
+    }
+    if (!target.isWorkspace(snapshot.repoMapping)) return emptyList()
+    val pathsResolver = BazelPathsResolver(context.bazelInfo)
+    return listOf(
+      pathsResolver.toRepositoryPath(label.repo, snapshot.repoMapping),
+      pathsResolver.toBinRepositoryPath(label.repo, snapshot.repoMapping),
+    ).distinct()
+  }
+
   private fun computeSourceRootPaths(snapshot: WorkspaceSnapshot, target: BuildTarget): Set<Path> {
-    val projectInfo = context.project.bazelProjectInfo
     // imports for generated files should be resolved against bazel-bin
-    val basePaths = listOfNotNull(projectInfo.projectRootDir?.toNioPath(), context.bazelInfo.bazelBin).distinct()
+    val basePaths = importBasePaths(snapshot, target)
     val importRoots =
       PythonImportUtils.assembleExplicitImportsPaths(target)
         .mapNotNull { importPath ->

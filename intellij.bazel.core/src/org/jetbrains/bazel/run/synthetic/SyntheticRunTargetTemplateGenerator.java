@@ -10,7 +10,7 @@ import consulo.language.extension.LanguageExtension;
 import consulo.language.extension.LanguageOneToMany;
 import consulo.language.psi.PsiElement;
 import org.jetbrains.bazel.label.Label;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
@@ -22,13 +22,13 @@ public interface SyntheticRunTargetTemplateGenerator extends LanguageExtension {
     ExtensionPointCacheKey<SyntheticRunTargetTemplateGenerator, ByLanguageValue<List<SyntheticRunTargetTemplateGenerator>>> KEY =
         ExtensionPointCacheKey.create("SyntheticRunTargetTemplateGenerator", LanguageOneToMany.build(false));
 
-    boolean isSupported(BuildTarget target);
+    boolean isSupported(BuildTargetInfo target);
 
-    Label getSyntheticTargetLabel(BuildTarget original, PsiElement element);
+    Label getSyntheticTargetLabel(BuildTargetInfo original, PsiElement element);
 
-    Params getSyntheticParams(BuildTarget target, PsiElement element);
+    Params getSyntheticParams(BuildTargetInfo target, PsiElement element);
 
-    SyntheticRunTargetTemplate createSyntheticTemplate(BuildTarget target, Params params);
+    SyntheticRunTargetTemplate createSyntheticTemplate(BuildTargetInfo target, Params params);
 
     // consulo: upstream `ep.allForLanguage(language)`
     static List<SyntheticRunTargetTemplateGenerator> allForLanguage(Language language) {
@@ -38,7 +38,7 @@ public interface SyntheticRunTargetTemplateGenerator extends LanguageExtension {
     /**
      * Just one generator, because showing several gutters for the same target doesn't make sense
      */
-    static @Nullable SyntheticRunTargetTemplateGenerator getTemplateGenerator(BuildTarget target, Language language) {
+    static @Nullable SyntheticRunTargetTemplateGenerator getTemplateGenerator(BuildTargetInfo target, Language language) {
         for (SyntheticRunTargetTemplateGenerator it : allForLanguage(language)) {
             if (it.isSupported(target)) {
                 return it;

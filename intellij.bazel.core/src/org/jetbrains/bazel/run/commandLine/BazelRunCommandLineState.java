@@ -11,6 +11,7 @@ import org.jetbrains.bazel.run.task.BazelRunTaskListener;
 import org.jetbrains.bazel.server.BazelServerFacade;
 import org.jetbrains.bazel.taskEvents.BazelTaskListener;
 import org.jetbrains.bsp.protocol.RunParams;
+import org.jetbrains.bsp.protocol.RunResult;
 import org.jspecify.annotations.Nullable;
 
 import java.util.concurrent.CompletableFuture;
@@ -31,7 +32,7 @@ public class BazelRunCommandLineState extends BazelCommandLineStateBase {
     }
 
     @Override
-    protected CompletableFuture<?> startBsp(
+    protected CompletableFuture<Integer> runCommand(
         BazelServerFacade server,
         CompletableFuture<@Nullable Long> pidDeferred,
         BazelProcessHandler handler
@@ -51,6 +52,6 @@ public class BazelRunCommandLineState extends BazelCommandLineStateBase {
                 /* pidDeferred = */ pidDeferred,
                 /* captureStdout = */ false
             );
-        return server.buildTargetRun(runParams);
+        return server.buildTargetRun(runParams).thenApply(RunResult::exitCode);
     }
 }

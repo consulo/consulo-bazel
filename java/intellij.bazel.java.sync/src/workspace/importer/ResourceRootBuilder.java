@@ -10,7 +10,8 @@ import consulo.module.content.layer.ModifiableRootModel;
 import consulo.virtualFileSystem.VFileProperty;
 import consulo.virtualFileSystem.VirtualFile;
 import org.jetbrains.bazel.commons.constants.Constants;
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.BazelConventionalRoots;
 import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTarget;
 import org.jetbrains.bazel.utils.PathUtil;
@@ -21,7 +22,9 @@ import org.jspecify.annotations.Nullable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,8 +55,7 @@ public final class ResourceRootBuilder {
     public static List<ResolvedResourceRoot> resolve(
         BuildTarget target,
         @Nullable Path baseDirectory,
-        String bazelProjectName,
-        Path workspaceRoot,
+        BazelConvenienceSymlinksScanner symlinksScanner,
         Function<OutputLocation, @Nullable Path> resolveLocation
     ) {
         String rootType = inferRootType(target);
@@ -62,9 +64,11 @@ public final class ResourceRootBuilder {
             return List.of();
         }
         Set<Path> extractedStripPrefix = extractStripPrefixOrNull(target, resolveLocation);
-        Set<Path> stripPrefixes = extractedStripPrefix != null ? extractedStripPrefix : defaultStripPrefixes(target, resourceFiles);
+        Set<Path> stripPrefixes = extractedStripPrefix != null
+            ? extractedStripPrefix
+            : defaultStripPrefixes(target, resourceFiles, resolveLocation, symlinksScanner.getWorkspaceRoot());
         Set<Path> resourcesSet = new LinkedHashSet<>(resourceFiles);
-        DirtinessCache dirtinessCache = new DirtinessCache(resourcesSet, bazelProjectName);
+        DirtinessCache dirtinessCache = new DirtinessCache(resourcesSet, symlinksScanner);
         MergeResult result = new MergeResult(List.of(), resourcesSet);
         for (Path prefix : stripPrefixes) {
             result = mergeUsing(result, prefix, dirtinessCache);
@@ -72,7 +76,7 @@ public final class ResourceRootBuilder {
         List<Path> leftoverPaths = collapseLeftoversByTopology(
             result.leftovers(),
             result.merged(),
-            parent -> collapseCeiling(parent, baseDirectory, workspaceRoot),
+            parent -> collapseCeiling(parent, baseDirectory, symlinksScanner.getWorkspaceRoot()),
             dirtinessCache
         );
         List<Path> all = new ArrayList<>(result.merged());
@@ -255,12 +259,12 @@ public final class ResourceRootBuilder {
 
     private static class DirtinessCache {
         private final Set<Path> myAllResourceFiles;
-        private final String myBazelProjectName;
+        private final BazelConvenienceSymlinksScanner mySymlinksScanner;
         private final HashMap<VirtualFile, Boolean> myCache = new HashMap<>();
 
-        DirtinessCache(Set<Path> allResourceFiles, String bazelProjectName) {
+        DirtinessCache(Set<Path> allResourceFiles, BazelConvenienceSymlinksScanner symlinksScanner) {
             myAllResourceFiles = allResourceFiles;
-            myBazelProjectName = bazelProjectName;
+            mySymlinksScanner = symlinksScanner;
         }
 
         boolean isDirty(Path path) {
@@ -314,7 +318,7 @@ public final class ResourceRootBuilder {
         }
 
         private boolean isDirtySymlink(VirtualFile receiver) {
-            if (BazelSymlinksCalculator.isBazelSymlink(myBazelProjectName, receiver)) {
+            if (mySymlinksScanner.isBazelSymlink(receiver)) {
                 return false;
             }
             else if (receiver.isDirectory()) {
@@ -389,44 +393,61 @@ public final class ResourceRootBuilder {
         return resolved != null ? Set.of(resolved) : null;
     }
 
-    private static Set<Path> defaultStripPrefixes(BuildTarget target, List<Path> resources) {
+    private static Set<Path> defaultStripPrefixes(
+        BuildTarget target,
+        List<Path> resources,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        Path workspaceRoot
+    ) {
         if (JvmBuildTarget.extractKotlinBuildTarget(target) != null) {
-            return defaultStripPrefixesKotlin(resources);
+            return defaultStripPrefixesKotlin(target, resolveLocation, workspaceRoot);
         }
         else if (JvmBuildTarget.extractScalaBuildTarget(target) != null) {
-            return defaultStripPrefixesScala(resources);
+            return defaultStripPrefixesScala(target, resources, resolveLocation, workspaceRoot);
         }
         else if (JvmBuildTarget.extractJvmBuildTarget(target) != null) {
-            return defaultStripPrefixesJava(resources);
+            return defaultStripPrefixesJava(target, resolveLocation, workspaceRoot);
         }
         else {
             return Set.of();
         }
     }
 
-    private static Set<Path> defaultStripPrefixesJava(List<Path> resources) {
-        Set<Path> result = new LinkedHashSet<>();
-        for (Path it : resources) {
-            Path prefix = takeSrcResourcesPrefixOrNull(it);
-            if (prefix == null) {
-                prefix = takeJavaLayoutPrefixOrNull(it);
-            }
-            if (prefix != null) {
-                result.add(prefix);
-            }
-        }
-        return result;
+    /**
+     * Returns the strip prefixes that `rules_java` uses when `resource_strip_prefix` is not set.
+     * Each prefix is the resource root that {@link BazelConventionalRoots#javaResourceRootIndex} finds.
+     */
+    private static Set<Path> defaultStripPrefixesJava(
+        BuildTarget target,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        Path workspaceRoot
+    ) {
+        return stripPrefixes(target, resolveLocation, workspaceRoot, BazelConventionalRoots::javaResourceRootIndex);
     }
 
-    private static Set<Path> defaultStripPrefixesKotlin(List<Path> resources) {
-        Set<Path> result = new LinkedHashSet<>();
-        for (Path it : kotlinConventionalSegments) {
-            result.addAll(findPrefixesEndingWith(resources, it));
-        }
-        return result;
+    /**
+     * Returns the strip prefixes that `rules_kotlin` uses when `resource_strip_prefix` is not set.
+     * Each prefix ends with the first marker of {@link #KOTLIN_RESOURCE_MARKERS} that the path contains.
+     */
+    private static Set<Path> defaultStripPrefixesKotlin(
+        BuildTarget target,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        Path workspaceRoot
+    ) {
+        return stripPrefixes(target, resolveLocation, workspaceRoot, it -> markerEndIndex(it, KOTLIN_RESOURCE_MARKERS));
     }
 
-    private static Set<Path> defaultStripPrefixesScala(List<Path> resources) {
+    /**
+     * Returns the strip prefixes that `rules_scala` uses when `resource_strip_prefix` is not set.
+     * Each prefix ends with the first marker of {@link #SCALA_RESOURCE_MARKERS} that the path contains.
+     * A resource of an external repository also gets the root of that repository as a prefix.
+     */
+    private static Set<Path> defaultStripPrefixesScala(
+        BuildTarget target,
+        List<Path> resources,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        Path workspaceRoot
+    ) {
         Set<Path> externalPrefixes = new LinkedHashSet<>();
         for (Path resource : resources) {
             int index = -1;
@@ -445,109 +466,82 @@ public final class ResourceRootBuilder {
             }
             externalPrefixes.add(rootSubpath(resource, next + 1));
         }
-        Set<Path> conventionalPrefixes = new LinkedHashSet<>();
-        for (Path it : scalaConventionalSegments) {
-            conventionalPrefixes.addAll(findPrefixesEndingWith(resources, it));
-        }
+        Set<Path> conventionalPrefixes =
+            stripPrefixes(target, resolveLocation, workspaceRoot, it -> markerEndIndex(it, SCALA_RESOURCE_MARKERS));
         Set<Path> result = new LinkedHashSet<>(externalPrefixes);
         result.addAll(conventionalPrefixes);
         return result;
     }
 
-    private static @Nullable Path takeSrcResourcesPrefixOrNull(Path receiver) {
-        for (int i = 0; i < receiver.getNameCount() - 2; i++) {
-            if (receiver.getName(i).toString().equals("src") && receiver.getName(i + 2).toString().equals("resources")) {
-                return rootSubpath(receiver, i + 3);
+    /**
+     * Returns a strip prefix for each resource of {@code target}.
+     * {@code rootIndex} gives the index of the resource root in the segments of a path relative to the root of the repository.
+     * Bazel uses this relative path, so a directory above the workspace root does not count.
+     */
+    private static Set<Path> stripPrefixes(
+        BuildTarget target,
+        Function<OutputLocation, @Nullable Path> resolveLocation,
+        Path workspaceRoot,
+        Function<List<String>, @Nullable Integer> rootIndex
+    ) {
+        Set<Path> result = new HashSet<>();
+        target.getResources().getOutputLocations().forEach(location -> {
+            Path path = resolveLocation.apply(location);
+            if (path == null) {
+                return;
             }
-        }
-        return null;
-    }
-
-    private static @Nullable Path takeJavaLayoutPrefixOrNull(Path receiver) {
-        for (int segmentIndex = 0; segmentIndex < receiver.getNameCount(); segmentIndex++) {
-            String segment = receiver.getName(segmentIndex).toString();
-            switch (segment) {
-                case "javatests", "testsrc", "java" -> {
-                    Path srcJava = takeSrcJavaOrNull(receiver, segmentIndex);
-                    return srcJava != null ? srcJava : rootSubpath(receiver, segmentIndex + 1);
-                }
-                case "src" -> {
-                    for (int subSegmentIndex = segmentIndex + 1; subSegmentIndex < receiver.getNameCount() - 1; subSegmentIndex++) {
-                        String subSegment = receiver.getName(subSegmentIndex).toString();
-                        if (subSegment.equals("src") || subSegment.equals("java") || subSegment.equals("javatests")) {
-                            String packageCandidate = receiver.getName(subSegmentIndex + 1).toString();
-                            if (javaCommonPackagePrefixes.contains(packageCandidate)) {
-                                return rootSubpath(receiver, subSegmentIndex + 1);
-                            }
-                            Path srcJava = takeSrcJavaOrNull(receiver, segmentIndex);
-                            return srcJava != null ? srcJava : rootSubpath(receiver, segmentIndex + 1);
-                        }
-                    }
-                    Path srcJava = takeSrcJavaOrNull(receiver, segmentIndex);
-                    return srcJava != null ? srcJava : rootSubpath(receiver, segmentIndex + 1);
-                }
-                default -> {
-                }
+            Path repoRelativePath = OutputLocation.toRepoRelativePath(location);
+            String relativePath = repoRelativePath != null
+                ? invariantSeparatorsPathString(repoRelativePath)
+                : relativeToRootOrNull(path, workspaceRoot);
+            if (relativePath == null) {
+                return;
             }
-        }
-        return null;
-    }
-
-    private static @Nullable Path takeSrcJavaOrNull(Path receiver, int at) {
-        if (receiver.getNameCount() <= at + 2) {
-            return null;
-        }
-        if (!receiver.getName(at).toString().equals("src")) {
-            return null;
-        }
-        if (!receiver.getName(at + 1).toString().equals("main") && !receiver.getName(at + 1).toString().equals("test")) {
-            return null;
-        }
-        if (receiver.getName(at + 2).toString().equals("java")) {
-            return rootSubpath(receiver, at + 3);
-        }
-        return null;
-    }
-
-    private static Set<Path> findPrefixesEndingWith(List<Path> receiver, Path path) {
-        Set<Path> result = new LinkedHashSet<>();
-        for (Path it : receiver) {
-            Path prefix = takePrefixEndingWithOrNull(it, path);
-            if (prefix != null) {
-                result.add(prefix);
+            // a hard link of a generated file has another path, so the prefix is unknown
+            if (!path.endsWith(relativePath)) {
+                return;
             }
-        }
+            List<String> segments = Arrays.stream(relativePath.split("/", -1)).filter(it -> !it.isEmpty()).toList();
+            Integer index = rootIndex.apply(segments);
+            if (index == null) {
+                return;
+            }
+            result.add(rootSubpath(path, path.getNameCount() - (segments.size() - 1 - index)));
+        });
         return result;
     }
 
-    private static @Nullable Path takePrefixEndingWithOrNull(Path receiver, Path suffix) {
-        if (suffix.isAbsolute()) {
-            throw new IllegalArgumentException("Failed requirement.");
-        }
-        if (suffix.getNameCount() < 1) {
-            return null;
-        }
-        Path first = suffix.getName(0);
-        // consulo: Kotlin `Iterable<Path>.indexOf(first)` over the name elements
-        int index = -1;
-        for (int i = 0; i < receiver.getNameCount(); i++) {
-            if (receiver.getName(i).equals(first)) {
-                index = i;
-                break;
+    private static @Nullable String relativeToRootOrNull(Path receiver, Path root) {
+        return receiver.startsWith(root) && !receiver.equals(root) ? invariantSeparatorsPathString(root.relativize(receiver)) : null;
+    }
+
+    /**
+     * Returns the index of the last segment of the first marker in {@code markers} that the directories of this path contain.
+     * The rules check the markers in their order, and each marker can match at any depth.
+     * A marker matches whole segments, so `kotlin` does not match `mykotlinlib`.
+     */
+    private static @Nullable Integer markerEndIndex(List<String> receiver, List<List<String>> markers) {
+        List<String> directories = receiver.subList(0, Math.max(receiver.size() - 1, 0));
+        for (List<String> marker : markers) {
+            // consulo: Kotlin `directories.windowed(marker.size).indexOf(marker)`
+            int start = -1;
+            for (int i = 0; i + marker.size() <= directories.size(); i++) {
+                if (directories.subList(i, i + marker.size()).equals(marker)) {
+                    start = i;
+                    break;
+                }
+            }
+            if (start >= 0) {
+                return start + marker.size() - 1;
             }
         }
-        if (index == -1) {
-            return null;
-        }
-        for (int i = 1; i < suffix.getNameCount(); i++) {
-            if (index + i >= receiver.getNameCount()) {
-                return null;
-            }
-            if (!receiver.getName(index + i).equals(suffix.getName(i))) {
-                return null;
-            }
-        }
-        return rootSubpath(receiver, index + suffix.getNameCount());
+        return null;
+    }
+
+    // consulo: Kotlin Path.invariantSeparatorsPathString
+    private static String invariantSeparatorsPathString(Path path) {
+        String separator = path.getFileSystem().getSeparator();
+        return separator.equals("/") ? path.toString() : path.toString().replace(separator, "/");
     }
 
     private static Path rootSubpath(Path receiver, int until) {
@@ -564,18 +558,20 @@ public final class ResourceRootBuilder {
     private static final boolean DEFAULT_GENERATED = false;
     private static final String DEFAULT_RELATIVE_OUTPUT_PATH = "";
 
-    private static final Set<String> javaCommonPackagePrefixes = Set.of("com", "org", "net");
+    /**
+     * The markers of `_CONVENTIONAL_RESOURCE_PATHS` in
+     * <a href="https://github.com/bazelbuild/rules_kotlin/blob/v2.4.21/kotlin/internal/jvm/compile.bzl">compile.bzl</a> of
+     * `rules_kotlin`, in its order.
+     */
+    private static final List<List<String>> KOTLIN_RESOURCE_MARKERS =
+        List.of("src/main/java", "src/main/resources", "src/test/java", "src/test/resources", "kotlin").stream()
+            .map(it -> List.of(it.split("/", -1)))
+            .toList();
 
-    private static final List<Path> kotlinConventionalSegments = List.of(
-        Path.of("src/main/java"),
-        Path.of("src/main/resources"),
-        Path.of("src/test/java"),
-        Path.of("src/test/resources"),
-        Path.of("kotlin")
-    );
-
-    private static final List<Path> scalaConventionalSegments = List.of(
-        Path.of("resources"),
-        Path.of("java")
-    );
+    /**
+     * The markers of `_target_path_by_default_prefixes` in
+     * <a href="https://github.com/bazelbuild/rules_scala/blob/master/scala/private/resources.bzl">resources.bzl</a> of
+     * `rules_scala`, in its order.
+     */
+    private static final List<List<String>> SCALA_RESOURCE_MARKERS = List.of(List.of("resources"), List.of("java"));
 }

@@ -29,12 +29,6 @@ directories:
   -tools/tomcat
   -vscode
 
-use_jetbrains_test_runner: true
-
-java_source_root_optimization_enable: true
-java_source_root_optimization_patterns:
-  *
-
 run_config_run_with_bazel: false
 
 import_run_configurations:
@@ -46,6 +40,8 @@ import_run_configurations:
 targets:
   //plugins/bazel/clion/intellij.bazel.clion.common:all
   //plugins/bazel/clion/intellij.bazel.clion.core:all
+  //plugins/bazel/clion/intellij.bazel.clion.frontend:all
+  //plugins/bazel/clion/intellij.bazel.clion.shared:all
   //plugins/bazel/pluginTests:all
   //plugins/bazel/pluginTests.clion:all
   //build:idea_dev_build_with_bazel_all

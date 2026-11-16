@@ -5,31 +5,26 @@ import org.jetbrains.bazel.commons.RuleType;
 import org.jetbrains.bazel.commons.TargetKind;
 import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService.TargetKindProvider;
 
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Map;
+import java.util.List;
 import java.util.Set;
 
 @ExtensionImpl
 public class CcTargetKindProvider implements TargetKindProvider {
-    // consulo: upstream private top-level val CC_RULE_TYPES
-    private static final Map<String, RuleType> CC_RULE_TYPES = new LinkedHashMap<>();
+    // consulo: upstream top-level val CC_TEST_KIND of CcTargetKindProvider.kt
+    public static final TargetKind CC_TEST_KIND = new TargetKind("cc_test", Set.of(CcLanguageClass.CC_LANGUAGE_CLASS), RuleType.TEST);
 
-    static {
-        CC_RULE_TYPES.put("cc_binary", RuleType.BINARY);
-        CC_RULE_TYPES.put("cc_library", RuleType.LIBRARY);
-        CC_RULE_TYPES.put("cc_test", RuleType.TEST);
-    }
+    private final Set<TargetKind> myTargetKinds = new LinkedHashSet<>(List.of(
+        new TargetKind("cc_binary", Set.of(CcLanguageClass.CC_LANGUAGE_CLASS), RuleType.BINARY),
+        new TargetKind("cc_library", Set.of(CcLanguageClass.CC_LANGUAGE_CLASS), RuleType.LIBRARY),
+        CC_TEST_KIND
+    ));
 
     public CcTargetKindProvider() {
     }
 
     @Override
     public Set<TargetKind> getTargetKinds() {
-        Set<TargetKind> result = new LinkedHashSet<>();
-        for (Map.Entry<String, RuleType> it : CC_RULE_TYPES.entrySet()) {
-            result.add(new TargetKind(it.getKey(), it.getValue()));
-        }
-        return result;
+        return myTargetKinds;
     }
 }

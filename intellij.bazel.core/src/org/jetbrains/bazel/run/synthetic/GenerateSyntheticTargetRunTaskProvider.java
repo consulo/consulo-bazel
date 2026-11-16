@@ -20,7 +20,7 @@ import org.jetbrains.bazel.config.BazelFeatureFlags;
 import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.run.config.BazelRunConfiguration;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
@@ -101,7 +101,7 @@ public class GenerateSyntheticTargetRunTaskProvider implements BeforeRunFragment
         Project project = environment.getProject();
         TaskState taskState = task.getTaskState();
         Label targetLabel = Label.parse(taskState.target);
-        BuildTarget target = TargetStorage.getTargetStorage(project).getTargetSummary(targetLabel);
+        BuildTargetInfo target = TargetStorage.getTargetInfo(TargetStorage.getTargetStorage(project), targetLabel);
         if (target == null) {
             return false;
         }

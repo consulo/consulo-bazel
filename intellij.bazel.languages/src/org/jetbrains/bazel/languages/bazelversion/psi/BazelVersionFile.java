@@ -18,6 +18,6 @@ public class BazelVersionFile extends PsiFileBase {
     }
 
     public @Nullable BazelVersionLiteral getBazelVersion() {
-        return BazelVersionLiteral.toBazelVersionLiteral(this.getText());
+        return BazelVersionLiteral.fromString(this.getText());
     }
 }

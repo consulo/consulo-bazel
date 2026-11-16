@@ -24,7 +24,7 @@ import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
 import org.jetbrains.bazel.runnerAction.BuildTargetAction;
 import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -130,16 +130,16 @@ public class StarlarkRunLineMarkerContributor extends RunLineMarkerContributor i
     ) {
         List<AnAction> result = new ArrayList<>();
         TargetStorage targetUtils = TargetStorage.getTargetStorage(project);
-        BuildTarget targetInfo = targetUtils.getTargetSummary(targetLabel);
-        TargetKind targetKind = targetInfo != null ? targetInfo.getKind() : TargetKindService.getInstance().guessFromRuleName(ruleName);
+        BuildTargetInfo targetSummary = TargetStorage.getTargetInfo(targetUtils, targetLabel);
+        TargetKind targetKind = targetSummary != null ? targetSummary.kind() : TargetKindService.getInstance().guessFromRuleName(ruleName);
         // consulo: upstream shadows the tags parameter with this local value
-        List<String> targetTags = targetInfo != null ? targetInfo.getTags() : tags != null ? tags : List.of();
+        List<String> targetTags = targetSummary != null ? targetSummary.tags() : tags != null ? tags : List.of();
 
         result.add(new BuildTargetAction(targetLabel));
 
         if (targetKind.isExecutable()) {
-            BuildTarget executableTarget =
-                targetInfo != null ? targetInfo : new NonImportedBuildTarget(targetLabel, targetKind, targetTags);
+            BuildTargetInfo executableTarget =
+                targetSummary != null ? targetSummary : new BuildTargetInfo(targetLabel, targetKind, targetTags);
             result.addAll(ExecutorActionsUtil.getExecutorActions(project, executableTarget));
         }
         return result;

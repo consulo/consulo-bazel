@@ -12,7 +12,7 @@ class BazelTestProcessHandler extends BazelProcessHandler {
 
     BazelTestProcessHandler(
         Project project,
-        CompletableFuture<?> runDeferred,
+        CompletableFuture<Integer> runDeferred,
         @Nullable CompletableFuture<@Nullable Long> pidDeferred,
         boolean isIdBasedTestTree
     ) {
@@ -20,11 +20,11 @@ class BazelTestProcessHandler extends BazelProcessHandler {
         myIsIdBasedTestTree = isIdBasedTestTree;
     }
 
-    BazelTestProcessHandler(Project project, CompletableFuture<?> runDeferred, @Nullable CompletableFuture<@Nullable Long> pidDeferred) {
+    BazelTestProcessHandler(Project project, CompletableFuture<Integer> runDeferred, @Nullable CompletableFuture<@Nullable Long> pidDeferred) {
         this(project, runDeferred, pidDeferred, false);
     }
 
-    BazelTestProcessHandler(Project project, CompletableFuture<?> runDeferred) {
+    BazelTestProcessHandler(Project project, CompletableFuture<Integer> runDeferred) {
         this(project, runDeferred, null);
     }
 

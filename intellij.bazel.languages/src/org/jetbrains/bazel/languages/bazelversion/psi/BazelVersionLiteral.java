@@ -26,6 +26,10 @@ public sealed interface BazelVersionLiteral {
         ROLLING,
     }
 
+    static @Nullable BazelVersionLiteral fromString(String s) {
+        return toBazelVersionLiteral(s);
+    }
+
     static String toBazelVersionStringLiteral(BazelVersionLiteral receiver) {
         return switch (receiver) {
             case Forked forked -> forked.fork() + "/" + toBazelVersionStringLiteral(forked.version());
@@ -56,10 +60,11 @@ public sealed interface BazelVersionLiteral {
         };
     }
 
+    // consulo: upstream private top-level vals; interface fields cannot be private
     Pattern BAZEL_FORK_VERSION_REGEX = Pattern.compile("(?:([^/]+)/)?(.+)");
     Pattern BAZEL_VERSION_LATEST_REGEX = Pattern.compile("latest(?:-(\\d+))?");
 
-    static @Nullable BazelVersionLiteral toBazelVersionLiteral(String receiver) {
+    private static @Nullable BazelVersionLiteral toBazelVersionLiteral(String receiver) {
         Matcher forkMatch = BAZEL_FORK_VERSION_REGEX.matcher(receiver.trim());
         if (!forkMatch.matches()) {
             return null;
@@ -76,14 +81,13 @@ public sealed interface BazelVersionLiteral {
 
         Matcher latestMatch = BAZEL_VERSION_LATEST_REGEX.matcher(version);
         if (latestMatch.matches()) {
-            // consulo: ported as-is, upstream `val (_, offset) = latestMatch.destructured` reads group 2
-            String offset = Objects.requireNonNullElse(latestMatch.group(2), "");
+            String offset = Objects.requireNonNullElse(latestMatch.group(1), "");
             int offsetValue;
             try {
                 offsetValue = Integer.parseInt(offset);
             }
             catch (NumberFormatException e) {
-                return null;
+                offsetValue = 0;
             }
             return new Latest(offsetValue);
         }

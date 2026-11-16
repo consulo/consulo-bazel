@@ -1,5 +1,7 @@
 package org.jetbrains.bazel.workspace.importer;
 
+import consulo.bazel.java.localize.BazelJavaBackendLocalize;
+import consulo.localize.LocalizeValue;
 import org.jetbrains.bazel.commons.RepoMapping;
 import org.jetbrains.bazel.commons.RepoMapping.LocalRepositoryMapping;
 import org.jetbrains.bazel.scala.sdk.ScalaSdk;
@@ -23,6 +25,11 @@ public class ScalaBazelWorkspaceImporter implements BazelWorkspaceImporter {
     // consulo: the upstream nested `Factory` is the top-level ScalaBazelWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
     private final WorkspaceImporterContext myContext;
+
+    @Override
+    public LocalizeValue getImporterName() {
+        return BazelJavaBackendLocalize.workspaceScalaImporterName();
+    }
 
     private @Nullable Set<ScalaSdk> myScalaSdks = null;
 

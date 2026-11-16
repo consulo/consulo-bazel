@@ -1,13 +1,15 @@
 package org.jetbrains.bazel.golang.debug;
 
 import consulo.annotation.component.ExtensionImpl;
+import consulo.bazel.go.localize.BazelGoLocalize;
+import consulo.localize.LocalizeValue;
 import consulo.project.Project;
 import org.jetbrains.bazel.commons.RuleType;
 import org.jetbrains.bazel.golang.targetKinds.GoBazelRules;
 import org.jetbrains.bazel.run.BazelRunHandler;
 import org.jetbrains.bazel.run.config.BazelRunConfiguration;
 import org.jetbrains.bazel.run.import_.GooglePluginAwareRunHandlerProvider;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 
 import java.util.List;
 
@@ -21,14 +23,19 @@ public class BazelGoRunHandlerProvider implements GooglePluginAwareRunHandlerPro
     }
 
     @Override
+    public LocalizeValue getProvidedRunHandlerName() {
+        return BazelGoLocalize.goRunHandlerName();
+    }
+
+    @Override
     public BazelRunHandler createRunHandler(BazelRunConfiguration configuration) {
         return new BazelGoRunHandler(configuration);
     }
 
     @Override
-    public boolean canRun(Project project, List<BuildTarget> targets) {
-        for (BuildTarget it : targets) {
-            if (!(GoBazelRules.includesGo(it.getKind()) && it.getKind().ruleType() == RuleType.BINARY)) {
+    public boolean canRun(Project project, List<BuildTargetInfo> targets) {
+        for (BuildTargetInfo it : targets) {
+            if (!(GoBazelRules.includesGo(it.kind()) && it.kind().ruleType() == RuleType.BINARY)) {
                 return false;
             }
         }

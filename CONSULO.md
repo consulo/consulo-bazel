@@ -332,7 +332,7 @@ classes under other names, the Java file is renamed. Upstream diffs of the left 
 | `intellij.bazel.core/.../run/state/GenericTestState.kt` | `GenericTestState.java`, `AbstractGenericTestState.java` |
 | `intellij.bazel.core/.../startup/BazelStartupActivityTracker.kt` (the service) | `BazelStartupActivityTracker.java` + `BspConfigurationTrackerService.java` |
 | `intellij.bazel.core/.../sync/action/ResyncFilesAction.kt` (`XmlRegistered`) | `ResyncFilesAction.java` + `ResyncFilesActionXmlRegistered.java` |
-| `intellij.bazel.core/.../ui/settings/BazelApplicationSettingsPanel.kt` | `BazelApplicationSettingsPanel.java`, `BazelApplicationSettings.java`, `BazelApplicationSettingsService.java` |
+| `intellij.bazel.commons/.../settings/bazel/BazelApplicationSettings.kt` | `BazelApplicationSettings.java` + `BazelApplicationSettingsService.java` |
 | `intellij.bazel.core/.../ui/status/BazelFileStatusDecorator.kt` (the refresher service) | `BazelFileStatusDecorator.java` + `BazelFileStatusRefresher.java` |
 | `intellij.bazel.core/.../ui/widgets/BazelJumpToBuildFileAction.kt` (`XmlRegistered`) | `BazelJumpToBuildFileAction.java` + `BazelJumpToBuildFileActionXmlRegistered.java` |
 | `intellij.bazel.core/.../ui/widgets/LabelSearchEverywhereContributor.kt` (`Factory`) | `LabelSearchEverywhereContributor.java` + `LabelSearchEverywhereContributorFactory.java` |

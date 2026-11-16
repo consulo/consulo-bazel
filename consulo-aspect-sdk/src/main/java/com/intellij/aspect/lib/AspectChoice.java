@@ -16,45 +16,18 @@
 
 package com.intellij.aspect.lib;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
  * consulo: top-level declarations of upstream sdk/lib/aspectchoice.kt. The enums of that file are
  * {@link Rules} and {@link OutputGroups}.
  */
 public final class AspectChoice {
-    public static final String ASPECT_NAME = "config:aspect.bzl%intellij_aspect";
+    /**
+     * @deprecated use the location of the bundled aspect definition:
+     * {@code Definition.INTELLIJ_ASPECT.getLocation().toString()}
+     */
+    @Deprecated
+    public static final String ASPECT_NAME = Definition.INTELLIJ_ASPECT.getLocation().toString();
 
     private AspectChoice() {
-    }
-
-    public static List<Modules> modulesForRules(Iterable<Rules> rules) {
-        Set<Rules> rulesets = new HashSet<>();
-        for (Rules rule : rules) {
-            rulesets.add(rule);
-        }
-
-        List<Modules> result = new ArrayList<>();
-        for (Modules module : Modules.values()) {
-            if (module.getRulesets().isEmpty() || module.getRulesets().stream().anyMatch(rulesets::contains)) {
-                result.add(module);
-            }
-        }
-        return result;
-    }
-
-    // If the repository names of the rules for certain languages are known, provide the appropriate
-    // repo-mapping to be used in the aspect configuration.
-    public static Map<String, String> repoMappingForRules(Map<Rules, String> mapping) {
-        Map<String, String> result = new LinkedHashMap<>();
-        for (Map.Entry<Rules, String> entry : mapping.entrySet()) {
-            result.put(entry.getKey().getRulesetName(), entry.getValue());
-        }
-        return result;
     }
 }

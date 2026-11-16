@@ -8,8 +8,7 @@ import consulo.versionControlSystem.ProjectLevelVcsManager;
 import consulo.versionControlSystem.VcsDirectoryMapping;
 import consulo.versionControlSystem.VcsRootError;
 import consulo.virtualFileSystem.VirtualFile;
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
-import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner;
 import org.jetbrains.bazel.flow.exclude.BazelSymlinkExcludeService;
 import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
@@ -17,8 +16,6 @@ import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.utils.PathUtil;
 import org.jspecify.annotations.Nullable;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -78,7 +75,9 @@ public class BazelVcsRootErrorFilter {
      */
     public static IsBazelOutputDirectoryPredicate bazelOutputDirectoryPredicate(Project project, @Nullable WorkspaceSnapshot snapshot) {
         VirtualFile projectRootDir = BazelProjectInfoService.getBazelProjectInfo(project).getProjectRootDir();
-        Path workspace = projectRootDir != null ? toNioPathOrNull(projectRootDir) : null;
+        @Nullable Path workspace = projectRootDir != null ? toNioPathOrNull(projectRootDir) : null;
+        @Nullable BazelConvenienceSymlinksScanner symlinksScanner =
+            workspace != null ? new BazelConvenienceSymlinksScanner(workspace) : null;
         Set<Path> knownSymlinks = BazelSymlinkExcludeService.getInstance(project).getBazelSymlinksToExclude();
         List<Path> candidates = new ArrayList<>(knownSymlinks);
         if (snapshot != null) {
@@ -86,7 +85,7 @@ public class BazelVcsRootErrorFilter {
         }
         Set<Path> outputTrees = new HashSet<>();
         for (Path it : candidates) {
-            Path realPath = toRealPathOrNull(it);
+            Path realPath = PathUtil.toRealPathOrNull(it);
             if (realPath != null) {
                 outputTrees.add(realPath);
             }
@@ -101,13 +100,13 @@ public class BazelVcsRootErrorFilter {
                 return true;
             }
             // VCS root detection can run before BazelSymlinkExcludeStartupActivity finishes collecting the symlinks
-            if (workspace != null && isUnderBazelSymlink(workspace, path)) {
+            if (symlinksScanner != null && symlinksScanner.isUnderBazelSymlink(path)) {
                 return true;
             }
             if (outputTrees.isEmpty()) {
                 return false;
             }
-            Path realPath = toRealPathOrNull(path);
+            Path realPath = PathUtil.toRealPathOrNull(path);
             if (realPath == null) {
                 return false;
             }
@@ -160,38 +159,6 @@ public class BazelVcsRootErrorFilter {
     private record MappingsPartition(List<VcsDirectoryMapping> bazelOutputMappings, List<VcsDirectoryMapping> otherMappings) {
     }
 
-    /**
-     * Whether {@code path} lies under a Bazel symlink of {@code workspace}, looking as deep as {@link BazelSymlinksCalculator} scans for them.
-     */
-    private static boolean isUnderBazelSymlink(Path workspace, Path path) {
-        if (!path.startsWith(workspace)) {
-            return false;
-        }
-        Path relativePath = workspace.relativize(path);
-        if (relativePath.toString().isEmpty()) {
-            return false;
-        }
-        int maxDepth = Math.min(relativePath.getNameCount(), BazelFeatureFlags.getSymlinkScanMaxDepth());
-        for (int depth = 1; depth <= maxDepth; depth++) {
-            Path ancestor = workspace.resolve(relativePath.subpath(0, depth));
-            // Check the link first: isBazelSymlink logs every regular directory that ends like a Bazel symlink, e.g., `bin`
-            if ((Files.isSymbolicLink(ancestor) || PathUtil.isWindowsJunction(ancestor)) &&
-                BazelSymlinksCalculator.isBazelSymlink(name(workspace), ancestor)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static @Nullable Path toRealPathOrNull(Path receiver) {
-        try {
-            return receiver.toRealPath();
-        }
-        catch (IOException ignored) {
-            return null;
-        }
-    }
-
     // consulo: IntelliJ String.toNioPathOrNull()
     private static @Nullable Path toNioPathOrNull(String path) {
         try {
@@ -210,11 +177,5 @@ public class BazelVcsRootErrorFilter {
         catch (UnsupportedOperationException e) {
             return null;
         }
-    }
-
-    // consulo: Kotlin Path.name
-    private static String name(Path path) {
-        Path fileName = path.getFileName();
-        return fileName != null ? fileName.toString() : "";
     }
 }

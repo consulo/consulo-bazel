@@ -8,17 +8,23 @@ import consulo.language.editor.annotation.AnnotationHolder;
 import consulo.language.editor.annotation.Annotator;
 import consulo.language.editor.annotation.AnnotatorFactory;
 import consulo.language.editor.annotation.HighlightSeverity;
+import consulo.language.editor.annotation.SuppressableProblemGroup;
+import consulo.language.editor.inspection.LocalQuickFix;
 import consulo.language.editor.inspection.ProblemHighlightType;
 import consulo.language.editor.intention.IntentionAction;
+import consulo.language.editor.intention.SuppressIntentionAction;
 import consulo.language.psi.PsiElement;
-import consulo.language.psi.util.PsiTreeUtil;
-import org.jetbrains.bazel.languages.projectview.annotation.quickfix.MergeIntoSectionQuickFix;
-import org.jetbrains.bazel.languages.projectview.annotation.quickfix.ReplaceWithIndexQuickFix;
+import org.jetbrains.bazel.languages.projectview.annotation.quickfix.ProjectViewLocalQuickFix;
+import org.jetbrains.bazel.languages.projectview.annotation.quickfix.Utils;
+import org.jetbrains.bazel.languages.projectview.annotation.suppress.ProjectViewSuppressActions;
+import org.jetbrains.bazel.languages.projectview.annotation.suppress.ProjectViewSuppressActions.ProjectViewSuppressOptionsAction;
 import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
 import org.jetbrains.bazel.languages.projectview.checker.ProjectViewChecker;
 import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem;
-import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewSuppression;
 import org.jspecify.annotations.Nullable;
+
+import java.util.List;
 
 // consulo: Consulo registers annotators through AnnotatorFactory; the stateless annotator is its own factory
 @ExtensionImpl
@@ -28,17 +34,13 @@ class ProjectViewProblemsAnnotator implements Annotator, AnnotatorFactory, DumbA
 
     @Override
     public void annotate(PsiElement element, AnnotationHolder holder) {
-        if (!(element instanceof ProjectViewPsiSection section)) {
-            return;
-        }
-        ProjectViewChecker.Sink sink = problem -> {
+        ProjectViewChecker.check(ProjectViewChecker.Main, element).forEach(problem -> {
             holder.newAnnotation(toHighlightSeverity(problem.severity()), problem.message())
                 .apply(it -> rangeIfPresent(it, problem.element()))
                 .apply(it -> withQuickFixesFrom(it, problem))
                 .apply(it -> highlightingTypeFor(it, problem))
                 .create();
-        };
-        ProjectViewChecker.run(section, sink);
+        });
     }
 
     private HighlightSeverity toHighlightSeverity(ProjectViewProblem.Severity receiver) {
@@ -59,37 +61,68 @@ class ProjectViewProblemsAnnotator implements Annotator, AnnotatorFactory, DumbA
     }
 
     private AnnotationBuilder withQuickFixesFrom(AnnotationBuilder receiver, ProjectViewProblem problem) {
-        if (problem.quickFixes().isEmpty()) {
-            return receiver;
+        List<SuppressIntentionAction> suppressActions = ProjectViewSuppression.isSuppressible(problem)
+            ? ProjectViewSuppressActions.suppressActions(problem.id())
+            : List.of();
+        List<IntentionAction> fixesActions;
+        if (problem.quickFixes().isEmpty() && !suppressActions.isEmpty()) {
+            fixesActions = List.of(new ProjectViewSuppressOptionsAction(problem.id(), suppressActions));
         }
-        AnnotationBuilder builder = receiver;
-        for (ProjectViewProblem.QuickFix it : problem.quickFixes()) {
-            IntentionAction fix = toIntentionAction(it, problem.element());
-            if (fix != null) {
-                builder = builder.withFix(fix);
-            }
+        else {
+            fixesActions = Utils.quickFixActions(problem)
+                .stream()
+                .<IntentionAction>map(it -> new ProjectViewLocalQuickFix(it, suppressActions))
+                .toList();
+        }
+        AnnotationBuilder builder = withSuppressOptions(receiver, suppressActions);
+        for (IntentionAction entry : fixesActions) {
+            builder = universalIfQuickFix(builder.newFix(entry), entry)
+                .registerFix();
         }
         return builder;
     }
 
-    // consulo: CommonIntentionAction (ModCommand API) -> classic IntentionAction
-    private @Nullable IntentionAction toIntentionAction(ProjectViewProblem.QuickFix receiver, @Nullable PsiElement element) {
-        ProjectViewPsiSection section = element == null ? null : PsiTreeUtil.getParentOfType(element, ProjectViewPsiSection.class, false);
-        if (section == null) {
-            return null;
+    /**
+     * The display name of the key is the title of the submenu that holds the suppress actions.
+     * An annotator cannot give a fix its own title, so without this key the title is the name of the annotator tool, "Annotator".
+     */
+    // consulo: upstream sets the key ProjectViewActionWithSuppressOptions.KEY on each fix, and the platform takes the options of the
+    // fix (IntentionActionWithOptions) as its submenu. A Consulo annotation fix takes its submenu from the suppress actions of a
+    // SuppressableProblemGroup of the annotation, and only with the default annotator key, so the problem group gives them here
+    private AnnotationBuilder withSuppressOptions(AnnotationBuilder receiver, List<SuppressIntentionAction> suppressActions) {
+        if (suppressActions.isEmpty()) {
+            return receiver;
         }
-        return switch (receiver) {
-            case ProjectViewProblem.QuickFix.MergeIntoSection mergeIntoSection ->
-                new MergeIntoSectionQuickFix(section, mergeIntoSection.targetSectionKey());
-            case ProjectViewProblem.QuickFix.ReplaceWithIndex replaceWithIndex -> new ReplaceWithIndexQuickFix(section);
-        };
+        SuppressIntentionAction[] actions = suppressActions.toArray(SuppressIntentionAction[]::new);
+        return receiver.problemGroup(new SuppressableProblemGroup() {
+            @Override
+            public SuppressIntentionAction[] getSuppressActions(@Nullable PsiElement element) {
+                return actions;
+            }
+
+            @Override
+            public @Nullable String getProblemName() {
+                return null;
+            }
+        });
+    }
+
+    private AnnotationBuilder.FixBuilder universalIfQuickFix(AnnotationBuilder.FixBuilder receiver, IntentionAction entry) {
+        if (entry instanceof LocalQuickFix) {
+            return receiver.universal();
+        }
+        else {
+            return receiver;
+        }
     }
 
     private AnnotationBuilder highlightingTypeFor(AnnotationBuilder receiver, ProjectViewProblem problem) {
-        return switch (problem.type()) {
-            case Message -> receiver;
-            case Deprecation -> receiver.highlightType(ProblemHighlightType.LIKE_DEPRECATED);
-        };
+        if (problem.id().equals(ProjectViewProblem.Id.Deprecation)) {
+            return receiver.highlightType(ProblemHighlightType.LIKE_DEPRECATED);
+        }
+        else {
+            return receiver;
+        }
     }
 
     @Override

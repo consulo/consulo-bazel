@@ -75,6 +75,8 @@ public final class BazelRegistryKeys {
         DEFAULTS.put("bazel.kill.server.on.cancel", "false");
         // If true, log bazel process output to bazel.log file
         DEFAULTS.put("bazel.enable.log", "false");
+        // If true, the Bazel command in the Build tool window and in bazel.log masks passwords, tokens and other secrets. If false, these logs show secrets in plain text. Turn it off only to debug.
+        DEFAULTS.put("bazel.log.mask.secrets", "true");
         // Enable running non-binary bazel targets using synthetically generated targets
         DEFAULTS.put("bazel.run.synthetic.enable", "false");
         // Disable bazel visibility checks when running syhthetic binary targets

@@ -24,7 +24,9 @@ import consulo.ui.ex.action.AnActionWithSyncUpdate;
 import consulo.ui.ex.action.DumbAwareAction;
 import consulo.ui.ex.awt.FormBuilder;
 import consulo.ui.ex.awt.JBCheckBox;
+import consulo.ui.ex.awt.JBLabel;
 import consulo.ui.ex.awtUnsafe.TargetAWT;
+import consulo.util.lang.xml.XmlStringUtil;
 import jakarta.inject.Inject;
 import org.jetbrains.bazel.buildifier.BuildifierUtil;
 import org.jetbrains.bazel.languages.projectview.ProjectViewService;
@@ -32,7 +34,6 @@ import org.jetbrains.bazel.settings.bazel.BazelProjectSettings;
 import org.jspecify.annotations.Nullable;
 
 import javax.swing.JComponent;
-import javax.swing.JTextField;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -53,7 +54,6 @@ class BazelProjectSettingsConfigurable implements ProjectConfigurable, Searchabl
 
     private final Project myProject;
 
-    private final JTextField myProjectViewPathField;
     // consulo: TextFieldWithBrowseButton (an ExtendableTextField) -> Consulo UI TextBox with a browse button, created with the UI
     private FileChooserTextBoxBuilder.@Nullable Controller myBuildifierExecutablePathField;
     private final JBCheckBox myRunBuildifierOnSaveCheckBox;
@@ -76,7 +76,6 @@ class BazelProjectSettingsConfigurable implements ProjectConfigurable, Searchabl
         myProject = project;
         myCurrentProjectSettings = BazelProjectSettings.getBazelProjectSettings(project);
 
-        myProjectViewPathField = initProjectViewFileField();
         myRunBuildifierOnSaveCheckBox = initRunBuildifierOnSaveCheckBox();
     }
 
@@ -104,8 +103,21 @@ class BazelProjectSettingsConfigurable implements ProjectConfigurable, Searchabl
     private JComponent createPanel(Disposable parentDisposable) {
         FileChooserTextBoxBuilder.Controller buildifierExecutablePathField = initBuildifierExecutablePathField(parentDisposable);
         myBuildifierExecutablePathField = buildifierExecutablePathField;
-        FormBuilder builder = FormBuilder.createFormBuilder()
-            .addLabeledComponent(BazelPluginLocalize.projectSettingsProjectViewLabel().get(), myProjectViewPathField)
+        FormBuilder builder = FormBuilder.createFormBuilder();
+        Path projectViewPath = ProjectViewService.getInstance(myProject).getProjectViewPath();
+        if (projectViewPath != null) {
+            builder
+                .addLabeledComponent(BazelPluginLocalize.projectSettingsProjectViewLabel().get(), new JBLabel(projectViewPath.toString()))
+                // consulo: upstream rowComment (HTML)
+                .addTooltip(
+                    XmlStringUtil.wrapInHtml(
+                        BazelPluginLocalize.projectSettingsProjectViewComment(
+                            BazelPluginLocalize.actionLoadProjectViewFile().get()
+                        ).get()
+                    )
+                );
+        }
+        builder
             .addLabeledComponent(BazelPluginLocalize.projectSettingsBuildifierLabel().get(), TargetAWT.to(buildifierExecutablePathField.getComponent()))
             .addComponent(myRunBuildifierOnSaveCheckBox);
 
@@ -131,14 +143,6 @@ class BazelProjectSettingsConfigurable implements ProjectConfigurable, Searchabl
     @Override
     public @Nullable Component createUIComponent(Disposable parentDisposable) {
         return TargetAWT.wrap(createPanel(parentDisposable));
-    }
-
-    private JTextField initProjectViewFileField() {
-        JTextField field = new JTextField();
-        field.setEditable(false);
-        // consulo: upstream columns(COLUMNS_SHORT)
-        field.setColumns(18);
-        return field;
     }
 
     @RequiredUIAccess
@@ -213,7 +217,6 @@ class BazelProjectSettingsConfigurable implements ProjectConfigurable, Searchabl
             it.reset();
         }
         BazelProjectSettings savedSettings = BazelProjectSettings.getBazelProjectSettings(myProject);
-        myProjectViewPathField.setText(String.valueOf(ProjectViewService.getInstance(myProject).getProjectViewPath()));
 
         myDetectedBuildifier = BuildifierUtil.detectBuildifierExecutable(myProject);
         Path buildifierExecutablePath = savedSettings.buildifierExecutablePath();

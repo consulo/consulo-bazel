@@ -1,5 +1,7 @@
 package org.jetbrains.bazel.clion.workspace;
 
+import org.jetbrains.bazel.clion.workspace.environment.BazelEnvironmentProvider;
+import org.jetbrains.bazel.clion.workspace.environment.BazelEnvironmentProvider.CcToolEnvironment;
 import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
 import org.jspecify.annotations.Nullable;
@@ -22,10 +24,9 @@ public record CcCompilerInfo(
     @Nullable OutputLocation sysroot
 ) {
 
-    // TODO: create specialized environment for clang-cl and MSVC
     // consulo: upstream `val toolEnvironment: CidrToolEnvironment by lazy`; a record has no lazy state, the environment
     // is created on every call (cheap, it only keeps the map)
-    CcToolEnvironment toolEnvironment() {
-        return buildCompilerSettings.createToolEnvironment(environment);
+    public CcToolEnvironment toolEnvironment() {
+        return BazelEnvironmentProvider.createToolEnvironment(this);
     }
 }

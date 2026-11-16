@@ -14,10 +14,10 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import org.jetbrains.bazel.flow.open.BazelProjectStoreDescriptor;
 import org.jetbrains.bazel.languages.projectview.ProjectView;
-import org.jetbrains.bazel.languages.projectview.ProjectViewFactory;
 import org.jetbrains.bazel.languages.projectview.ProjectViewService;
+import org.jetbrains.bazel.languages.projectview.ProjectViewServiceBase;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem;
 import org.jetbrains.bazel.languages.projectview.imports.Import;
-import org.jetbrains.bazel.languages.projectview.imports.ImportFactory;
 import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile;
 import org.jetbrains.bazel.utils.PathUtil;
 import org.jspecify.annotations.Nullable;
@@ -26,21 +26,27 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 @ServiceImpl
 @Singleton
-public class DefaultProjectViewService implements ProjectViewService {
+public class DefaultProjectViewService extends ProjectViewServiceBase {
     private static final Logger LOG = Logger.getInstance(DefaultProjectViewService.class);
 
+    // consulo: kept next to the protected project of ProjectViewServiceBase, so the class does not depend on its Java name
     private final Project myProject;
 
-    private final LazyValue<VirtualFile> myProjectViewFile = LazyValue.atomicNotNull(this::requireProjectViewVirtualFile);
-
-    // consulo: StateFlow replaced by current value
-    private volatile ProjectView myProjectViewState = ProjectView.EMPTY;
+    private final LazyValue<VirtualFile> myProjectViewFile = LazyValue.atomicNotNull(() -> {
+        VirtualFile file = PathUtil.findVirtualFile(requireProjectViewPath());
+        if (file == null) {
+            throw new IllegalStateException("Could not find project view file in VFS");
+        }
+        return file;
+    });
 
     @Inject
     public DefaultProjectViewService(Project project) {
+        super(project);
         myProject = project;
     }
 
@@ -49,27 +55,30 @@ public class DefaultProjectViewService implements ProjectViewService {
     }
 
     @Override
-    public ProjectView getProjectViewState() {
-        return myProjectViewState;
+    public @Nullable Path getProjectViewPath() {
+        // consulo: the Bazel store descriptor is persisted by BazelProjectStoreService (upstream project.stateStoreOrNull?.storeDescriptor)
+        BazelProjectStoreDescriptor descriptor = BazelProjectStoreService.getStoreDescriptor(myProject);
+        return descriptor != null ? descriptor.getProjectViewFile() : null;
     }
 
-    public CompletableFuture<Void> ensureProjectViewInitialized() {
-        if (myProjectViewState == ProjectView.EMPTY) {
-            ProjectView newProjectView = computeProjectView();
-            myProjectViewState = newProjectView;
+    public void ensureProjectViewInitialized() {
+        if (getProjectView() == ProjectView.EMPTY) {
+            loadProjectView(requireProjectViewPath());
         }
-        return CompletableFuture.completedFuture(null);
+    }
+
+    // Only to be used in monorepo devkit module
+    public void forceLoadProjectViewFile(VirtualFile newFile) {
+        LOG.info("Forcibly loading project view file content: " + newFile);
+        loadProjectView(newFile.toNioPath());
     }
 
     @Override
-    public CompletableFuture<Void> forceReparseCurrentProjectViewFiles() {
-        LOG.info("Reparsing currently opened project view file");
-        ProjectView newProjectView = computeProjectView();
-        myProjectViewState = newProjectView;
+    public CompletableFuture<Void> forceReparseCurrentProjectViewFiles(@Nullable Consumer<ProjectViewProblem> onEachProblem) {
+        loadProjectView(requireProjectViewPath(), onEachProblem);
         List<VirtualFile> resolvedImports = new ArrayList<>();
-        for (Import it : newProjectView.getImports()) {
-            Path resolvedPath = ImportFactory.resolvedPathOrNull(it);
-            VirtualFile file = resolvedPath != null ? PathUtil.findVirtualFile(resolvedPath) : null;
+        for (Import.Resolved it : getProjectView().getImports()) {
+            VirtualFile file = PathUtil.findVirtualFile(it.path());
             if (file != null) {
                 resolvedImports.add(file);
             }
@@ -83,39 +92,12 @@ public class DefaultProjectViewService implements ProjectViewService {
         })).<Void>thenApply(ignored -> null);
     }
 
-    private ProjectView computeProjectView() {
-        ProjectView projectView = ProjectViewFactory.fromOrNull(myProject, requireProjectViewPath());
-        return projectView != null ? projectView : ProjectViewFactory.fromDefault(myProject);
-    }
-
     private Path requireProjectViewPath() {
         Path projectViewPath = getProjectViewPath();
         if (projectViewPath == null) {
             throw new IllegalStateException("Missing project view path");
         }
         return projectViewPath;
-    }
-
-    private VirtualFile requireProjectViewVirtualFile() {
-        VirtualFile file = PathUtil.findVirtualFile(requireProjectViewPath());
-        if (file == null) {
-            throw new IllegalStateException("Could not find project view file in VFS");
-        }
-        return file;
-    }
-
-    // Only to be used in monorepo devkit module
-    public CompletableFuture<Void> forceLoadProjectViewFile(VirtualFile newFile) {
-        LOG.info("Forcibly loading project view file content: " + newFile);
-        myProjectViewState = ProjectViewFactory.from(myProject, newFile.toNioPath());
-        return CompletableFuture.completedFuture(null);
-    }
-
-    @Override
-    public @Nullable Path getProjectViewPath() {
-        // consulo: the Bazel store descriptor is persisted by BazelProjectStoreService (upstream project.stateStoreOrNull?.storeDescriptor)
-        BazelProjectStoreDescriptor descriptor = BazelProjectStoreService.getStoreDescriptor(myProject);
-        return descriptor != null ? descriptor.getProjectViewFile() : null;
     }
 
     public static DefaultProjectViewService getInstance(Project project) {

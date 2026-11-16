@@ -30,10 +30,11 @@ final class BazelOutputMessageParser implements Parser {
 
     private static final Pattern ERROR_IN_OUTPUT = Pattern.compile(
         """
-          ^               # start of line
-          ERROR:\\s*       # error indicator
-          (.*)            # error message
-          $               # end of line
+          ^                         # start of line
+          (?:\\(\\d\\d:\\d\\d:\\d\\d\\)\\s)? # optional timestamp
+          ERROR:\\s*                 # error indicator
+          (.*)                      # error message
+          $                         # end of line
           """,
         Pattern.COMMENTS
     );

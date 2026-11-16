@@ -1,8 +1,11 @@
 package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 
 import com.esotericsoftware.kryo.kryo5.Kryo;
+import com.esotericsoftware.kryo.kryo5.Registration;
+import com.esotericsoftware.kryo.kryo5.Serializer;
 import com.esotericsoftware.kryo.kryo5.io.Input;
 import com.esotericsoftware.kryo.kryo5.io.Output;
+import com.esotericsoftware.kryo.kryo5.serializers.FieldSerializer;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
@@ -17,6 +20,8 @@ import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputRoot;
 import org.jetbrains.bsp.protocol.StringsCollection;
+
+import org.jspecify.annotations.Nullable;
 
 import java.lang.reflect.Field;
 import java.nio.file.Path;
@@ -136,6 +141,27 @@ final class SnapshotSerializers {
         }
     }
 
+    static void rebindCollectionFieldSerializers(FieldSerializer<?> serializer) {
+        for (FieldSerializer.CachedField field : serializer.getFields()) {
+            Class<?> type = field.getField().getType();
+            CollectionFieldSerializer fieldSerializer;
+            // consulo: the empty types are the JDK empty collections registered in registerBuiltinTypes
+            if (type == List.class) {
+                fieldSerializer = new CollectionFieldSerializer(ArrayList.class, Collections.emptyList().getClass());
+            }
+            else if (type == Set.class) {
+                fieldSerializer = new CollectionFieldSerializer(HashSet.class, Collections.emptySet().getClass());
+            }
+            else if (type == Map.class) {
+                fieldSerializer = new CollectionFieldSerializer(HashMap.class, Collections.emptyMap().getClass());
+            }
+            else {
+                continue;
+            }
+            field.setValueClass(type, fieldSerializer);
+        }
+    }
+
     // consulo: upstream Kotlin extension functions of Kryo
 
     static void writePooledString(Kryo receiver, Output output, String str) {
@@ -242,6 +268,47 @@ final class SnapshotSerializers {
             default -> throw new IllegalStateException("invalid ref marker: " + marker);
         }
         return result;
+    }
+}
+
+final class CollectionFieldSerializer extends Serializer<Object> {
+    private final Class<?> myFallbackType;
+    private final Class<?> myEmptyType;
+
+    CollectionFieldSerializer(Class<?> fallbackType, Class<?> emptyType) {
+        super(/* acceptsNull = */ true);
+        myFallbackType = fallbackType;
+        myEmptyType = emptyType;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public void write(Kryo kryo, Output output, @Nullable Object value) {
+        if (value == null) {
+            kryo.writeClass(output, null);
+            return;
+        }
+        Registration registration = kryo.getClassResolver().getRegistration(value.getClass());
+        if (registration == null) {
+            registration = fallbackRegistration(kryo, value);
+        }
+        kryo.writeClass(output, registration.getType());
+        ((Serializer<Object>) registration.getSerializer()).write(kryo, output, value);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public @Nullable Object read(Kryo kryo, Input input, Class<? extends Object> type) {
+        Registration registration = kryo.readClass(input);
+        if (registration == null) {
+            return null;
+        }
+        return ((Serializer<Object>) registration.getSerializer()).read(kryo, input, (Class<? extends Object>) registration.getType());
+    }
+
+    private Registration fallbackRegistration(Kryo kryo, Object value) {
+        boolean isEmpty = value instanceof Map<?, ?> map ? map.isEmpty() : ((java.util.Collection<?>) value).isEmpty();
+        return kryo.getRegistration(isEmpty ? myEmptyType : myFallbackType);
     }
 }
 

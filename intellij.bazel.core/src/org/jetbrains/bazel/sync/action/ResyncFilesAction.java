@@ -19,14 +19,7 @@ import java.util.Set;
 // consulo: upstream sealed class; not sealed because the registered ResyncFilesActionXmlRegistered extends XmlRegistered
 public abstract class ResyncFilesAction extends BazelSyncAction {
     public static boolean isResyncable(VirtualFile receiver) {
-        if (receiver.isDirectory()) {
-            for (String it : Constants.BUILD_FILE_NAMES) {
-                if (receiver.findChild(it) != null) {
-                    return true;
-                }
-            }
-        }
-        return Arrays.asList(Constants.BUILD_FILE_NAMES).contains(receiver.getName());
+        return receiver.isDirectory() || Arrays.asList(Constants.BUILD_FILE_NAMES).contains(receiver.getName());
     }
 
     protected ResyncFilesAction() {

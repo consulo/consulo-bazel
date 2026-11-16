@@ -15,12 +15,28 @@
  */
 package com.intellij.aspect.lib;
 
+import static com.intellij.aspect.lib.Transformers.SCALA_TOOLCHAIN_CONSTANT;
+import static com.intellij.aspect.lib.Transformers.SCALA_TOOLCHAIN_VALUE;
+
+import java.util.List;
+
 // consulo: declared in upstream sdk/lib/transformers.kt
-public class TransformScalaToolchainType extends TransformFieldLoad {
-    public TransformScalaToolchainType(String scalaRepositoryName) {
-        super(
-            "SCALA_TOOLCHAIN_TYPE",
-            Transformers.label(scalaRepositoryName + "//scala:toolchain_type")
-        );
+class TransformScalaToolchainType implements Transformer {
+    private final String myScalaRepositoryName;
+
+    TransformScalaToolchainType(String scalaRepositoryName) {
+        myScalaRepositoryName = scalaRepositoryName;
+    }
+
+    public String getScalaRepositoryName() {
+        return myScalaRepositoryName;
+    }
+
+    @Override
+    public void apply(List<LoadStatement> loads, List<String> lines) {
+        boolean needsToolchain = lines.removeIf(line -> line.startsWith(SCALA_TOOLCHAIN_CONSTANT + " = "));
+        if (needsToolchain) {
+            lines.add(0, SCALA_TOOLCHAIN_CONSTANT + " = \"" + myScalaRepositoryName + SCALA_TOOLCHAIN_VALUE + "\"");
+        }
     }
 }

@@ -1,0 +1,12 @@
+# consulo: hand-written equivalent of upstream //config:cc_debug_aspect.textproto (private/rules/aspect_config.bzl),
+# see src/main/aspect/README.md
+file: "config/cc_debug_aspect.bzl"
+name: "intellij_cc_debug_aspect"
+modules {
+  file: "cc_debug_info"
+  rulesets: "CC"
+}
+modules {
+  file: "platform_info"
+  rulesets: "PLATFORMS"
+}

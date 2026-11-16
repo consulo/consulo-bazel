@@ -43,6 +43,7 @@ final class DefaultBazelProcessLauncher implements BazelProcessLauncher {
         Map<String, String> environment = new LinkedHashMap<>();
         environment.put("TERM", "xterm-256color");
         environment.putAll(myParentEnvironment);
+        environment.putAll(BazelProxyForwarding.environment());
         environment.putAll(executionDescriptor.environment());
         commandLine.withEnvironment(environment);
         commandLine.withWorkingDirectory(myWorkspaceRoot);

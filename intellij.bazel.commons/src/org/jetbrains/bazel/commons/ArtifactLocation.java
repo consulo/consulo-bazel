@@ -15,9 +15,8 @@
  */
 package org.jetbrains.bazel.commons;
 
-import com.google.common.collect.ComparisonChain;
-
 import java.nio.file.Paths;
+import java.util.Comparator;
 
 /** Represents a blaze-produced artifact.  */
 class ArtifactLocation implements Comparable<ArtifactLocation> {
@@ -79,12 +78,10 @@ class ArtifactLocation implements Comparable<ArtifactLocation> {
 
     @Override
     public int compareTo(ArtifactLocation o) {
-        return ComparisonChain
-            .start()
-            .compare(this.getRootExecutionPathFragment(), o.getRootExecutionPathFragment())
-            .compare(this.getRelativePath(), o.getRelativePath())
-            .compareFalseFirst(this.isSource(), o.isSource())
-            .compareFalseFirst(this.isExternal(), o.isExternal())
-            .result();
+        return Comparator.comparing(ArtifactLocation::getRootExecutionPathFragment)
+            .thenComparing(ArtifactLocation::getRelativePath)
+            .thenComparing(ArtifactLocation::isSource)
+            .thenComparing(ArtifactLocation::isExternal)
+            .compare(this, o);
     }
 }

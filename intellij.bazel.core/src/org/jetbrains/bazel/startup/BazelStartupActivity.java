@@ -8,6 +8,7 @@ import consulo.util.dataholder.Key;
 import org.jetbrains.annotations.TestOnly;
 import org.jetbrains.bazel.config.BazelFeatureFlags;
 import org.jetbrains.bazel.projectAware.BazelWorkspace;
+import org.jetbrains.bazel.settings.bazel.BazelApplicationSettingsService;
 import org.jetbrains.bazel.startup.utils.BazelProjectActivity;
 import org.jetbrains.bazel.sync.ProjectDirtyStateService;
 import org.jetbrains.bazel.sync.ProjectSyncScope;
@@ -16,7 +17,6 @@ import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.target.ModuleTargetService;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bazel.ui.settings.BazelApplicationSettingsService;
 import org.jetbrains.bazel.ui.widgets.fileTargets.BazelFileTargetsWidget;
 import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
 

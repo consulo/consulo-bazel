@@ -23,9 +23,11 @@ import org.jetbrains.bsp.protocol.TaskStartParams;
 import org.jetbrains.bsp.protocol.TextDocumentIdentifier;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 @ServiceAPI(ComponentScope.PROJECT)
 @ServiceImpl
@@ -112,6 +114,8 @@ public class BazelTaskEventsService implements BazelTaskEventsHandler {
     public void onBuildPublishDiagnostics(PublishDiagnosticsParams params) {
         withListener(params.taskId(), it -> {
             params.diagnostics().forEach(diag -> {
+                String summary = Arrays.stream(diag.message().split("\n", -1)).limit(2).collect(Collectors.joining(" "));
+                String labelReference = diag.targetLabel().isSynthetic() ? "" : "\n\nLabel: " + diag.targetLabel();
                 @Nullable TextDocumentIdentifier textDocument = params.textDocument();
                 @Nullable DiagnosticSeverity level = diag.level();
                 Kind severity;
@@ -133,7 +137,8 @@ public class BazelTaskEventsService implements BazelTaskEventsHandler {
                     diag.position().line(),
                     diag.position().character(),
                     severity,
-                    diag.message()
+                    summary,
+                    diag.message() + labelReference
                 );
             });
         });

@@ -1,21 +1,29 @@
 annotator.cannot.parse.value:
-    text: "{0} could not be parsed"
+    text: "Value ''{0}'' cannot be parsed"
 annotator.deprecated.section.test_sources:
-    text: "This section is deprecated. If it is used incorrectly or left outdated, it can cause false-positive unresolved references. Mark each Bazel target that contains test code with the 'testonly' Bazel attribute instead."
+    text: "Section 'test_sources' is deprecated. If it is used incorrectly or left outdated, it can cause false-positive unresolved references. Mark each Bazel target that contains test code with the 'testonly' Bazel attribute instead."
 annotator.deprecated.section.with.replacement.warning:
-    text: "This section is deprecated. Use the ''{0}'' section instead."
+    text: "Section ''{0}'' is deprecated. Use section ''{1}'' instead."
 annotator.flag.not.allowed.here.error:
-    text: "The flag {0} is not applicable to the {1} command."
+    text: "Flag ''{0}'' is not applicable to {1}"
+annotator.import.unresolved.error:
+    text: "Imported project view ''{0}'' does not exist. Provide the file or use ''try_import'' for an optional import."
 annotator.invalid.path.error:
-    text: "This is not a valid path"
+    text: "''{0}'' is not a valid path"
 annotator.path.not.exists.error:
-    text: "This path does not exist"
+    text: "Path ''{0}'' does not exist"
+annotator.path.outside.of.project.root.error:
+    text: "The path {0} is outside of the project root {1}. The plugin ignores this path."
 annotator.unknown.flag.error:
-    text: "Unrecognised flag: {0}"
+    text: "Unknown flag ''{0}''"
 annotator.unknown.variant.error:
     text: "''{0}'' is not one of the accepted variants: {1}"
 annotator.unsupported.section.warning:
-    text: "This section is not supported by the Bazel plugin and will be ignored"
+    text: "Section ''{0}'' is not supported and will be ignored"
+annotator.warning.options:
+    text: "Project view warning ''{0}'' options"
+annotator.warning.options.title:
+    text: "Bazel project view"
 bazel.language.codestyle.display.name:
     text: "Bazel ProjectView"
 bazel.language.project.parser.error:
@@ -38,6 +46,10 @@ bazel.language.projectview.docs.dot_idea_directory_location:
     text: "Specifies where the IntelliJ IDEA puts the .idea directory of the project. The path is relative to the workspace root. The directory does not have to exist yet."
 bazel.language.projectview.docs.enabled_rules:
     text: "A list of apparent names of the external rulesets that the sync uses. When the list is not empty, the plugin does not query Bazel for the rulesets. The rulesets that a listed ruleset needs are added automatically."
+bazel.language.projectview.docs.aspects_attrs:
+    text: "Attributes the aspect should walk. Default is to walk all attributes. Specifying this section and not adding all needed attributes will lead to incomplete sync."
+bazel.language.projectview.docs.drop_no_ide:
+    text: "Unconditionally drop all no-ide targets, even if a dependency of a target in the project view. This can lead to incomplete code insight."
 bazel.language.projectview.docs.gazelle_target:
     text: "Specifies a Gazelle target that IntelliJ IDEA runs automatically at the start of each Bazel sync."
 bazel.language.projectview.docs.import_depth:
@@ -66,10 +78,22 @@ bazel.language.projectview.docs.targets:
     text: "A list of Bazel target expressions. To resolve source files under an imported directory, the source must be reachable from one of your targets. Because these are full Bazel target expressions, they support /... notation."
 bazel.language.projectview.docs.test_sources:
     text: "<b>DEPRECATED: If it is used incorrectly or left outdated, it can cause false-positive unresolved references. Mark each Bazel target that contains test code with the <code>testonly</code> Bazel attribute instead. Read more about <code>testonly</code> at <a href=\"https://bazel.build/reference/be/common-definitions#common-attributes\">https://bazel.build/reference/be/common-definitions#common-attributes</a></b><br/><br/>A list of workspace-relative glob patterns matching directories. Determines which sources IntelliJ treats as tests."
-quickfix.deprecated.section.replace.description:
-    text: "Replace a deprecated section"
+project.view.file.not.regular.file:
+    text: "{0} is not a regular file"
+project.view.file.outside.of.project.root:
+    text: "{0} points outside of the project root {1}"
 quickfix.deprecated.section.replace.presentation:
     text: "Replace with {0}"
+suppress.batch.for.item:
+    text: "Suppress for item"
+suppress.batch.for.section:
+    text: "Suppress for section"
+suppress.family.name:
+    text: "Suppress a project view warning"
+suppress.for.item:
+    text: "Suppress ''{0}'' for item"
+suppress.for.section:
+    text: "Suppress ''{0}'' for section"
 bazel.language.project.parser.indented.line:
     text: "Indented lines must be items of a list section."
 bazel.language.project.parser.line.starts.with.colon:

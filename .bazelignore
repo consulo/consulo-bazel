@@ -1,7 +1,8 @@
 .jps-compiled
 out
 node_modules
-pluginTests
+pluginTests/testData/testProjects
+pluginTests/testData/testRegistry
 integrationTests/testProjects
 clion
 pluginTests.clion

@@ -198,7 +198,7 @@ public abstract sealed class Flag {
                 result.put(flagName(it), it);
             }
         }
-        // consulo: kotlinx toPersistentMap() keeps insertion order
+        // consulo: Kotlin associateBy keeps insertion order
         return Collections.unmodifiableMap(result);
     });
 
@@ -234,7 +234,7 @@ public abstract sealed class Flag {
                 result.put(name.getFirst(), name.getSecond());
             }
         }
-        // consulo: kotlinx toPersistentMap() keeps insertion order
+        // consulo: Kotlin toMap keeps insertion order
         return Collections.unmodifiableMap(result);
     });
 

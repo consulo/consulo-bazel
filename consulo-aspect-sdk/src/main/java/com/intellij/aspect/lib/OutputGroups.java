@@ -20,7 +20,8 @@ package com.intellij.aspect.lib;
 public enum OutputGroups {
     INFO("intellij-info"),
     SYNC("intellij-sync"),
-    BUILD("intellij-build");
+    BUILD("intellij-build"),
+    DEBUG("intellij-debug");
 
     private final String myGroupName;
 

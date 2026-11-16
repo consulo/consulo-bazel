@@ -24,7 +24,3 @@ cc.toolchain.unexpected.dependency.count:
     text: "Unexpected number of C/C++ toolchain dependencies for {0} target(s)"
 cc.workspace.importer.name:
     text: "C/C++ workspace importer"
-cc.xcode.locate.failed:
-    text: "Cannot locate Xcode {0} with macOS SDK {1}"
-cc.xcode.resolve.failed:
-    text: "Cannot resolve Xcode"

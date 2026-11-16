@@ -187,6 +187,7 @@ module consulo.bazel.base {
     exports org.jetbrains.bazel.languages.bazelrc.flags;
     exports org.jetbrains.bazel.languages.projectview.annotation;
     exports org.jetbrains.bazel.languages.projectview.annotation.quickfix;
+    exports org.jetbrains.bazel.languages.projectview.annotation.suppress;
     exports org.jetbrains.bazel.languages.projectview.base;
     exports org.jetbrains.bazel.languages.projectview.checker;
     exports org.jetbrains.bazel.languages.projectview.commenter;

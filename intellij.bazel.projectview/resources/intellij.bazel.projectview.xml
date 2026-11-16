@@ -3,7 +3,6 @@
   <dependencies>
     <module name="intellij.bazel.commons"/>
     <module name="intellij.libraries.jetbrains.annotations"/>
-    <module name="intellij.libraries.kotlinx.collections.immutable"/>
     <module name="intellij.platform.analysis"/>
     <module name="intellij.platform.buildView"/>
     <module name="intellij.platform.codeStyle"/>
@@ -64,6 +63,14 @@
     <annotator
       implementationClass="org.jetbrains.bazel.languages.projectview.annotation.ProjectViewProblemsAnnotator"
       language="ProjectView"
+    />
+    <lang.inspectionSuppressor
+      implementationClass="org.jetbrains.bazel.languages.projectview.annotation.suppress.ProjectViewAnnotatorSuppressor"
+      language="ProjectView"
+    />
+    <!--suppress SplitModeXmlApiUsage -->
+    <daemon.changeLocalityDetector
+      implementation="org.jetbrains.bazel.languages.projectview.annotation.suppress.ProjectViewSuppressionChangeLocalityDetector"
     />
 
     <completion.contributor

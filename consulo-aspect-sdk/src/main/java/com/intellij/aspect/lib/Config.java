@@ -17,27 +17,32 @@ package com.intellij.aspect.lib;
 
 import static com.intellij.aspect.lib.PathUtil.asBazelPath;
 
+import com.google.devtools.intellij.aspect.Aspect.Module;
+import org.jspecify.annotations.Nullable;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * consulo: top-level functions of upstream sdk/lib/config.kt.
+ * consulo: top-level functions of upstream sdk/lib/config.kt. {@code AspectConfig} is {@link AspectConfig}.
  */
-public final class Config {
+final class Config {
     private Config() {
     }
 
     /**
      * Creates the config directory and writes the config file as well as the
-     * required BUILD file.
+     * required BUILD file and the files of all bundled aspects.
      */
-    public static void writeAspectConfig(Path destination, Path relativeDestination, AspectConfig config) throws IOException {
+    static void writeAspectConfig(Path destination, Path relativeDestination, AspectConfig config) throws IOException {
         Path directory = destination.resolve("config");
         Files.createDirectories(directory);
 
@@ -47,8 +52,18 @@ public final class Config {
         Path configFile = directory.resolve("config.bzl");
         Utils.writeFileIfContentDiffers(configFile, generateConfigStruct(config));
 
-        Path aspectFile = directory.resolve("aspect.bzl");
-        Utils.writeFileIfContentDiffers(aspectFile, generateAspectConfig(relativeDestination, config));
+        Set<Rules> rulesets = config.rulesets();
+        if (rulesets == null) {
+            rulesets = new LinkedHashSet<>(config.useBuiltin());
+            rulesets.addAll(config.repoMapping().keySet());
+        }
+
+        for (AspectDefinition aspect : List.of(Definition.INTELLIJ_ASPECT, Definition.INTELLIJ_CC_DEBUG_ASPECT)) {
+            Utils.writeFileIfContentDiffers(
+                destination.resolve(aspect.getLocation().file()),
+                generateAspectFile(aspect, relativeDestination, rulesets, config.attrAspects(), config.dropNoIde())
+            );
+        }
     }
 
     private static String generateBuildFile(Path relativeDestination) {
@@ -77,20 +92,48 @@ public final class Config {
             """.formatted(config.bazelVersion(), System.getProperty("os.name").toLowerCase(Locale.ROOT));
     }
 
-    private static String generateAspectConfig(Path relativeDestination, AspectConfig config) {
-        Set<Rules> rulesets = config.rulesets();
-        if (rulesets == null) {
-            rulesets = new LinkedHashSet<>(config.useBuiltin());
-            rulesets.addAll(config.repoMapping().keySet());
-        }
-        List<Modules> modules = AspectChoice.modulesForRules(rulesets);
+    static String generateAspectFile(AspectDefinition definition, Path relativeDestination, Iterable<Rules> rulesets) {
+        return generateAspectFile(definition, relativeDestination, rulesets, null, false);
+    }
+
+    static String generateAspectFile(
+        AspectDefinition definition,
+        Path relativeDestination,
+        Iterable<Rules> rulesets,
+        @Nullable List<String> attrAspects
+    ) {
+        return generateAspectFile(definition, relativeDestination, rulesets, attrAspects, false);
+    }
+
+    /**
+     * Generates the content of the aspect file for a deployment to {@code relativeDestination}
+     * inside a workspace, enabling only the modules required for the given rule sets. If
+     * {@code attrAspects} is null, the aspect walks all attributes.
+     * <p>
+     * consulo: upstream is an extension function of {@link AspectDefinition}.
+     */
+    static String generateAspectFile(
+        AspectDefinition definition,
+        Path relativeDestination,
+        Iterable<Rules> rulesets,
+        @Nullable List<String> attrAspects,
+        boolean dropNoIde
+    ) {
+        List<Module> modules = definition.modulesFor(rulesets);
         String prefix = asBazelPath(relativeDestination);
 
-        String files = modules.stream().map(Modules::getFile).collect(Collectors.joining(", "));
-        String loads = modules.stream()
-            .map(Modules::getFile)
-            .map(it -> "load(\"//" + prefix + "/modules:" + it + ".bzl\", " + it + " = \"module\")")
-            .collect(Collectors.joining("\n"));
+        String loads = modules.stream().map(it -> encodeLoad(prefix, it)).collect(Collectors.joining("\n"));
+
+        Map<String, String> attrs = new LinkedHashMap<>();
+        attrs.put("modules", encodeList(modules.stream().map(Module::getFile).toList()));
+        attrs.put("container", encodeString("//" + prefix + "/config:module_container"));
+
+        if (attrAspects != null) {
+            attrs.put("attr_aspects", encodeList(attrAspects.stream().map(Config::encodeString).toList()));
+        }
+        if (dropNoIde) {
+            attrs.put("drop_no_ide", "True");
+        }
 
         return """
 
@@ -99,12 +142,28 @@ public final class Config {
             load("//%1$s/intellij:aspect.bzl", "intellij_configure_aspect")
             %2$s
 
-            MODULES = [%3$s]
-
-            intellij_aspect = intellij_configure_aspect(
-                modules = MODULES,
-                container = "//%1$s/config:module_container",
+            %3$s = intellij_configure_aspect(
+            %4$s
             )
-            """.formatted(prefix, loads, files);
+            """.formatted(prefix, loads, definition.getLocation().name(), encodeAttrs(attrs));
+    }
+
+    private static String encodeLoad(String prefix, Module module) {
+        String file = module.getFile();
+        return "load(\"//" + prefix + "/modules:" + file + ".bzl\", " + file + " = \"module\")";
+    }
+
+    private static String encodeString(String value) {
+        return "\"" + value + "\"";
+    }
+
+    private static String encodeList(List<String> elements) {
+        return elements.stream().collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    private static String encodeAttrs(Map<String, String> attrs) {
+        return attrs.entrySet().stream()
+            .map(entry -> "    " + entry.getKey() + " = " + entry.getValue() + ",")
+            .collect(Collectors.joining("\n"));
     }
 }

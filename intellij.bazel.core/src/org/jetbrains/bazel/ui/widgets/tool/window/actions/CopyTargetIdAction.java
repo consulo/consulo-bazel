@@ -11,7 +11,7 @@ import consulo.ui.ex.action.AnAction;
 import consulo.ui.ex.action.AnActionEvent;
 import consulo.ui.ex.action.CommonShortcuts;
 import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import javax.swing.JComponent;
@@ -28,19 +28,19 @@ public abstract class CopyTargetIdAction extends AnAction {
         if (project == null) {
             return;
         }
-        BuildTarget targetInfo = getTargetInfo();
+        BuildTargetInfo targetInfo = getTargetInfo();
         if (targetInfo != null) {
             copyIdToClipboard(targetInfo, project);
         }
     }
 
-    protected abstract @Nullable BuildTarget getTargetInfo();
+    protected abstract @Nullable BuildTargetInfo getTargetInfo();
 
     @RequiredUIAccess
-    private void copyIdToClipboard(BuildTarget receiver, Project project) {
+    private void copyIdToClipboard(BuildTargetInfo receiver, Project project) {
         CopyPasteManager clipboard = CopyPasteManager.getInstance();
         // consulo: DataTransfer instead of TextTransferable
-        DataTransfer transferable = DataTransfer.of(BazelRepoMappingUtils.toShortString(BuildTarget.getId(receiver), project));
+        DataTransfer transferable = DataTransfer.of(BazelRepoMappingUtils.toShortString(receiver.id(), project));
         clipboard.setContents(transferable);
     }
 
@@ -51,14 +51,14 @@ public abstract class CopyTargetIdAction extends AnAction {
     }
 
     public static class FromTargetInfo extends CopyTargetIdAction {
-        private final BuildTarget myTargetInfo;
+        private final BuildTargetInfo myTargetInfo;
 
-        public FromTargetInfo(BuildTarget targetInfo) {
+        public FromTargetInfo(BuildTargetInfo targetInfo) {
             myTargetInfo = targetInfo;
         }
 
         @Override
-        protected BuildTarget getTargetInfo() {
+        protected BuildTargetInfo getTargetInfo() {
             return myTargetInfo;
         }
     }

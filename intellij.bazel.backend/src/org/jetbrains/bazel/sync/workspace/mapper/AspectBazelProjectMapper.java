@@ -24,12 +24,12 @@ import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin;
 import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin.LanguageProjectMappers;
 import org.jetbrains.bazel.sync.workspace.snapshot.InterningOutputLocationCollection.OutputLocationCollectionBuilder;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelper;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTarget;
 import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService;
 import org.jetbrains.bazel.taskEvents.BazelTaskEventsService;
 import org.jetbrains.bsp.protocol.BazelTaskEventsHandler;
 import org.jetbrains.bsp.protocol.BazelTaskEventsHandler.BazelTaskLogger;
 import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
 import org.jetbrains.bsp.protocol.TaskId;
@@ -157,17 +157,19 @@ public class AspectBazelProjectMapper {
             target.getJvmTargetInfo().getResourcesList(),
             src -> MissingFileCategory.RESOURCES
         ).thenApply(resources -> {
-            BuildTarget workspaceTarget = new WorkspaceTarget(
-                WorkspaceHelper.toWorkspaceTargetKey(target.getKey()),
+            BuildTarget workspaceTarget = BuildTarget.create(
+                new BuildTargetInfo(
+                    WorkspaceHelper.toWorkspaceTargetKey(target.getKey()),
+                    targetKind,
+                    target.getGeneratorName(),
+                    target.getTestonly(),
+                    List.copyOf(target.getTagsList()),
+                    target.getWorkspaceName()
+                ),
                 target.getDepsList().stream().map(DependencyLabel::toDependencyLabel).toList(),
-                targetKind,
                 sources,
                 resources,
-                buildData,
-                target.getGeneratorName(),
-                target.getTestonly(),
-                List.copyOf(target.getTagsList()),
-                target.getWorkspaceName()
+                buildData
             );
             missingFilesReporter.report();
             return workspaceTarget;

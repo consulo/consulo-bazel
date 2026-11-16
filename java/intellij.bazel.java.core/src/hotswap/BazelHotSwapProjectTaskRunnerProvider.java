@@ -11,6 +11,7 @@ import org.jetbrains.bazel.buildTask.AdditionalProjectTaskRunnerProvider;
 import org.jetbrains.bazel.commons.BazelStatus;
 import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.target.ModuleTargetService;
+import org.jetbrains.bazel.utils.PathUtil;
 import org.jetbrains.bazel.workspacemodel.entities.JvmBinaryJarsEntity;
 import org.jspecify.annotations.Nullable;
 
@@ -96,11 +97,9 @@ class HotSwapTask implements AdditionalProjectTask {
         }
         List<Path> result = new ArrayList<>();
         for (URI uri : uris) {
-            try {
-                result.add(Path.of(uri).toRealPath());
-            }
-            catch (Exception ignored) {
-                // consulo: upstream runCatching { it.toRealPath() }.getOrNull()
+            Path realPath = PathUtil.toRealPathOrNull(Path.of(uri));
+            if (realPath != null) {
+                result.add(realPath);
             }
         }
         return result;

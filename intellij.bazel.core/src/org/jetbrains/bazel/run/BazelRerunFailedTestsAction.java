@@ -13,10 +13,10 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 
-class BazelRerunFailedTestsAction extends AbstractRerunFailedTestsAction {
+public class BazelRerunFailedTestsAction extends AbstractRerunFailedTestsAction {
     private final BazelTestRerunExtension myTestRerunExtension;
 
-    BazelRerunFailedTestsAction(SMTRunnerConsoleView consoleView, BazelTestRerunExtension testRerunExtension) {
+    public BazelRerunFailedTestsAction(SMTRunnerConsoleView consoleView, BazelTestRerunExtension testRerunExtension) {
         super(consoleView.getConsole());
         myTestRerunExtension = testRerunExtension;
         init(consoleView.getProperties());

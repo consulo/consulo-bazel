@@ -3,21 +3,18 @@
   <dependencies>
     <module name="intellij.bazel.protobuf"/>
     <module name="intellij.libraries.bazel.aspect.sdk"/>
-    <module name="intellij.libraries.commons.cli"/>
-    <module name="intellij.libraries.commons.io"/>
-    <module name="intellij.libraries.fastutil"/>
     <module name="intellij.libraries.gson"/>
     <module name="intellij.libraries.guava"/>
     <module name="intellij.libraries.hash4j"/>
-    <module name="intellij.libraries.jediterm.core"/>
     <module name="intellij.libraries.jetbrains.annotations"/>
-    <module name="intellij.libraries.kotlinx.datetime"/>
     <module name="intellij.libraries.opentelemetry"/>
+    <module name="intellij.libraries.opentelemetry.extension.kotlin"/>
     <module name="intellij.libraries.protobuf"/>
     <module name="intellij.platform.buildView"/>
     <module name="intellij.platform.core"/>
     <module name="intellij.platform.diagnostic.telemetry"/>
     <module name="intellij.platform.eel.provider"/>
+    <module name="intellij.platform.externalSystem"/>
     <module name="intellij.platform.ide.impl"/>
     <module name="intellij.platform.lang"/>
     <module name="intellij.platform.lang.impl"/>
@@ -131,6 +128,12 @@
       key="bazel.enable.log"
       restartRequired="false"
     />
+    <registryKey
+      defaultValue="true"
+      description="If true, the Bazel command in the Build tool window and in bazel.log masks passwords, tokens and other secrets. If false, these logs show secrets in plain text. Turn it off only to debug."
+      key="bazel.log.mask.secrets"
+      restartRequired="false"
+    />
 
     <registryKey defaultValue="false"
                  description="Enable running non-binary bazel targets using synthetically generated targets"
@@ -162,6 +165,7 @@
                  key="bazel.highlight.ignored.source.files"
                  restartRequired="false"
     />
+    <applicationSettings service="org.jetbrains.bazel.settings.bazel.BazelApplicationSettingsService"/>
     <projectSettings service="org.jetbrains.bazel.settings.bazel.BazelProjectSettingsService"/>
     <projectSettings service="org.jetbrains.bazel.settings.bazel.BazelJVMProjectSettingsService"/>
     <postStartupActivity implementation="org.jetbrains.bazel.sync.BazelEnvironmentService$StartupActivity"/>

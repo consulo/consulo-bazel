@@ -1,0 +1,78 @@
+# consulo: hand-written equivalent of upstream //config:aspect_ide.textproto (private/rules/aspect_config.bzl),
+# see src/main/aspect/README.md
+file: "config/aspect.bzl"
+name: "intellij_aspect"
+modules {
+  file: "run_info"
+}
+modules {
+  file: "test_info"
+}
+modules {
+  file: "extra_rules_info"
+}
+modules {
+  file: "cc_info"
+  rulesets: "CC"
+}
+modules {
+  file: "foreign_cc_info"
+  rulesets: "FOREIGN_CC"
+}
+modules {
+  file: "cc_toolchain_info"
+  rulesets: "CC"
+}
+modules {
+  file: "java_info"
+  rulesets: "JAVA"
+}
+modules {
+  file: "java_toolchain_info"
+  rulesets: "JAVA"
+}
+modules {
+  file: "java_common_info"
+  rulesets: "JAVA"
+  rulesets: "KOTLIN"
+  rulesets: "SCALA"
+}
+modules {
+  file: "jvm_info"
+  rulesets: "JAVA"
+  rulesets: "KOTLIN"
+  rulesets: "SCALA"
+}
+modules {
+  file: "kotlin_info"
+  rulesets: "KOTLIN"
+}
+modules {
+  file: "scala_info"
+  rulesets: "SCALA"
+}
+modules {
+  file: "go_info"
+  rulesets: "GO"
+}
+modules {
+  file: "py_info"
+  rulesets: "PYTHON"
+}
+modules {
+  file: "python_info"
+  rulesets: "PYTHON"
+}
+modules {
+  file: "protobuf_info"
+  rulesets: "PROTO"
+}
+modules {
+  file: "proto_info"
+  rulesets: "PROTO"
+  rulesets: "LEGACY_RULES_PROTO"
+}
+modules {
+  file: "rules_proto_info"
+  rulesets: "LEGACY_RULES_PROTO"
+}

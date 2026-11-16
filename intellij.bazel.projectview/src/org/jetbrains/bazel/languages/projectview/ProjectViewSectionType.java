@@ -2,6 +2,7 @@ package org.jetbrains.bazel.languages.projectview;
 
 import consulo.bazel.projectview.localize.BazelProjectViewLocalize;
 import consulo.language.editor.completion.CompletionProvider;
+import consulo.virtualFileSystem.VirtualFile;
 import org.jetbrains.bazel.commons.ExcludableValue;
 import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.languages.bazelrc.flags.Flag;
@@ -12,6 +13,8 @@ import org.jetbrains.bazel.languages.projectview.completion.PathCompletionProvid
 import org.jetbrains.bazel.languages.projectview.completion.SimpleCompletionProvider;
 import org.jetbrains.bazel.languages.projectview.completion.TargetCompletionProvider;
 import org.jetbrains.bazel.languages.projectview.psi.sections.ProjectViewPsiSection;
+import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jetbrains.bazel.utils.PathUtil;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.file.Files;
@@ -22,10 +25,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import static org.jetbrains.bazel.config.project.getRootDir;
-
-// consulo: the upstream typealias ProjectViewValueChecker is ProjectViewChecker<String>
 public interface ProjectViewSectionType<T> {
 
     @Nullable ProjectViewChecker<String> getValueChecker();
@@ -71,16 +73,29 @@ public interface ProjectViewSectionType<T> {
     }
 
     static Scalar<Path> path(boolean existing) {
-        return path(existing, null);
+        return path(existing, false);
     }
 
+    static Scalar<Path> path(boolean existing, boolean insideProjectRoot) {
+        return path(existing, insideProjectRoot, null);
+    }
+
+    // consulo: overload for the upstream default argument (insideProjectRoot = false)
     static Scalar<Path> path(
         boolean existing,
         @Nullable CompletionProvider completionProvider
     ) {
+        return path(existing, false, completionProvider);
+    }
+
+    static Scalar<Path> path(
+        boolean existing,
+        boolean insideProjectRoot,
+        @Nullable CompletionProvider completionProvider
+    ) {
         return scalar(
             ProjectViewSectionType::toNioPathOrNull,
-            pathChecker(ProjectViewSectionType::toNioPathOrNull, existing),
+            pathChecker(ProjectViewSectionType::toNioPathOrNull, existing, insideProjectRoot),
             completionProvider
         );
     }
@@ -160,11 +175,9 @@ public interface ProjectViewSectionType<T> {
     static <T> ProjectViewSectionType.Scalar<ExcludableValue<T>> excludable(ProjectViewSectionType.Scalar<T> receiver) {
         ProjectViewSectionType.Scalar<T> type = receiver;
         return new ProjectViewSectionType.Scalar<ExcludableValue<T>>() {
-            private final ProjectViewChecker<String> myValueChecker = (project, value, sink) -> {
+            private final ProjectViewChecker<String> myValueChecker = (project, value) -> {
                 ProjectViewChecker<String> valueChecker = type.getValueChecker();
-                if (valueChecker != null) {
-                    valueChecker.check(project, removePrefix(value, "-"), sink);
-                }
+                return valueChecker != null ? valueChecker.check(project, removePrefix(value, "-")) : Stream.empty();
             };
 
             @Override
@@ -217,96 +230,114 @@ public interface ProjectViewSectionType<T> {
     }
 
     private static <T> ProjectViewChecker<String> scalarChecker(Function<String, @Nullable T> read) {
-        return (project, subject, sink) -> {
+        return ProjectViewChecker.projectViewChecker((project, subject, sink) -> {
             if (read.apply(subject) == null) {
                 ProjectViewProblem problem = new ProjectViewProblem(
+                    ProjectViewProblem.Id.InvalidValue,
                     BazelProjectViewLocalize.annotatorCannotParseValue(subject),
-                    ProjectViewProblem.Severity.Error,
-                    ProjectViewProblem.Type.Message,
-                    List.of(),
-                    null
+                    ProjectViewProblem.Severity.Error
                 );
-                sink.report(problem);
+                sink.accept(problem);
             }
-        };
+        });
     }
 
-    private static ProjectViewChecker<String> pathChecker(Function<String, @Nullable Path> read, boolean existing) {
-        return (project, subject, sink) -> {
+    private static ProjectViewChecker<String> pathChecker(
+        Function<String, @Nullable Path> read,
+        boolean existing,
+        boolean insideProjectRoot
+    ) {
+        return ProjectViewChecker.projectViewChecker((project, subject, sink) -> {
             Path path = read.apply(subject);
             if (path == null) {
                 ProjectViewProblem problem = new ProjectViewProblem(
-                    BazelProjectViewLocalize.annotatorInvalidPathError(),
-                    ProjectViewProblem.Severity.Error,
-                    ProjectViewProblem.Type.Message,
-                    List.of(),
-                    null
+                    ProjectViewProblem.Id.InvalidValue,
+                    BazelProjectViewLocalize.annotatorInvalidPathError(subject),
+                    ProjectViewProblem.Severity.Error
                 );
-                sink.report(problem);
+                sink.accept(problem);
                 return;
             }
 
+            if (insideProjectRoot) {
+                Path rootDir = virtualFileToNioPathOrNull(BazelProjectInfoService.getBazelProjectInfo(project).getProjectRootDir());
+                Path resolvedPath = rootDir != null ? rootDir.resolve(path).normalize() : null;
+                if (rootDir != null && resolvedPath != null && !PathUtil.isRealPathInside(resolvedPath, rootDir)) {
+                    ProjectViewProblem problem = new ProjectViewProblem(
+                        ProjectViewProblem.Id.InvalidValue,
+                        BazelProjectViewLocalize.annotatorPathOutsideOfProjectRootError(resolvedPath, rootDir),
+                        ProjectViewProblem.Severity.Error
+                    );
+                    sink.accept(problem);
+                    return;
+                }
+            }
+
+            // consulo: upstream also returns when !TrustedProjects.isProjectTrusted(project); Consulo has no trusted projects
             if (!existing) {
                 return;
             }
 
-            Path resolvedPath = path.isAbsolute()
-                ? path
-                : getRootDir(project).toNioPath().resolve(path);
+            Path resolvedPath;
+            if (path.isAbsolute()) {
+                resolvedPath = path;
+            }
+            else {
+                VirtualFile projectRootDir = BazelProjectInfoService.getBazelProjectInfo(project).getProjectRootDir();
+                if (projectRootDir == null) {
+                    return;
+                }
+                resolvedPath = projectRootDir.toNioPath().resolve(path);
+            }
             if (!Files.exists(resolvedPath)) {
                 ProjectViewProblem problem = new ProjectViewProblem(
-                    BazelProjectViewLocalize.annotatorPathNotExistsError(),
-                    ProjectViewProblem.Severity.Warning,
-                    ProjectViewProblem.Type.Message,
-                    List.of(),
-                    null
+                    ProjectViewProblem.Id.MissingPath,
+                    BazelProjectViewLocalize.annotatorPathNotExistsError(resolvedPath.toString()),
+                    ProjectViewProblem.Severity.Warning
                 );
-                sink.report(problem);
+                sink.accept(problem);
             }
-        };
+        });
     }
 
     private static <T> ProjectViewChecker<String> variantsChecker(Function<String, @Nullable T> read, List<String> variants) {
-        return (project, subject, sink) -> {
+        return ProjectViewChecker.projectViewChecker((project, subject, sink) -> {
             if (read.apply(subject) == null) {
                 ProjectViewProblem problem = new ProjectViewProblem(
+                    ProjectViewProblem.Id.InvalidValue,
                     BazelProjectViewLocalize.annotatorUnknownVariantError(subject, String.join(", ", variants)),
-                    ProjectViewProblem.Severity.Error,
-                    ProjectViewProblem.Type.Message,
-                    List.of(),
-                    null
+                    ProjectViewProblem.Severity.Error
                 );
-                sink.report(problem);
+                sink.accept(problem);
             }
-        };
+        });
     }
 
     private static ProjectViewChecker<String> flagChecker(String[] commands) {
-        return (project, subject, sink) -> {
+        return ProjectViewChecker.projectViewChecker((project, subject, sink) -> {
             int equalsIndex = subject.indexOf('=');
             Flag flag = Flag.byName(equalsIndex >= 0 ? subject.substring(0, equalsIndex) : subject);
             if (flag == null) {
                 ProjectViewProblem problem = new ProjectViewProblem(
+                    ProjectViewProblem.Id.UnknownFlag,
                     BazelProjectViewLocalize.annotatorUnknownFlagError(subject),
-                    ProjectViewProblem.Severity.Warning,
-                    ProjectViewProblem.Type.Message,
-                    List.of(),
-                    null
+                    ProjectViewProblem.Severity.Warning
                 );
-                sink.report(problem);
+                sink.accept(problem);
                 return;
             }
             if (Arrays.stream(commands).anyMatch(it -> !Arrays.asList(flag.getOption().commands()).contains(it))) {
                 ProjectViewProblem problem = new ProjectViewProblem(
-                    BazelProjectViewLocalize.annotatorFlagNotAllowedHereError(subject, Arrays.toString(commands)),
-                    ProjectViewProblem.Severity.Warning,
-                    ProjectViewProblem.Type.Message,
-                    List.of(),
-                    null
+                    ProjectViewProblem.Id.FlagNotAllowed,
+                    BazelProjectViewLocalize.annotatorFlagNotAllowedHereError(
+                        subject,
+                        Arrays.stream(commands).map(it -> "'" + it + "'").collect(Collectors.joining(", "))
+                    ),
+                    ProjectViewProblem.Severity.Warning
                 );
-                sink.report(problem);
+                sink.accept(problem);
             }
-        };
+        });
     }
 
     // consulo: Kotlin stdlib/IntelliJ helpers used by the upstream code
@@ -338,6 +369,19 @@ public interface ProjectViewSectionType<T> {
             return Path.of(value);
         }
         catch (InvalidPathException e) {
+            return null;
+        }
+    }
+
+    // IntelliJ VirtualFile.toNioPathOrNull()
+    private static @Nullable Path virtualFileToNioPathOrNull(@Nullable VirtualFile file) {
+        if (file == null) {
+            return null;
+        }
+        try {
+            return file.toNioPath();
+        }
+        catch (UnsupportedOperationException e) {
             return null;
         }
     }

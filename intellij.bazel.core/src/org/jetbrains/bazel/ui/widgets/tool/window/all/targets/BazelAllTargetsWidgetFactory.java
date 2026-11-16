@@ -29,7 +29,7 @@ import org.jetbrains.bazel.target.TargetStorage;
 import org.jetbrains.bazel.ui.widgets.tool.window.components.BazelTargetsPanel;
 import org.jetbrains.bazel.ui.widgets.tool.window.components.BazelTargetsPanelModel;
 import org.jetbrains.bazel.ui.widgets.tool.window.components.BazelToolWindowPanel;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.awt.BorderLayout;
@@ -265,11 +265,11 @@ public class BazelAllTargetsWidgetFactory implements
         // First, apply the filter
         RepoMapping repoMapping = targetStorage.repoMapping();
         Set<Label> distinctIds = new HashSet<>();
-        List<Label> filteredTargets = targetStorage.allTargetSummaries()
+        List<Label> filteredTargets = TargetStorage.allTargetInfos(targetStorage)
             .stream()
-            .filter(it -> distinctIds.add(BuildTarget.getId(it)))
+            .filter(it -> distinctIds.add(it.id()))
             .filter(target -> BuildTargetUtils.isWorkspace(target, repoMapping) && model.getTargetFilter().predicate.test(target))
-            .map(BuildTarget::getId)
+            .map(BuildTargetInfo::id)
             .toList();
         boolean hasAnyTargets = targetStorage.getTotalTargetCount() > 0;
         // Then, apply the search query

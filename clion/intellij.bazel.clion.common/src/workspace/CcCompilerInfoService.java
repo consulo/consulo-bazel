@@ -79,6 +79,12 @@ public class CcCompilerInfoService {
         else if (id.equals("GCC")) {
             return CcCompilerKind.GCC;
         }
+        else if (id.equals("APPLE_CLANG")) {
+            return CcCompilerKind.APPLE_CLANG;
+        }
+        else if (id.equals("MSVC")) {
+            return CcCompilerKind.MSVC; // no wrapper required for MSVC
+        }
         else {
             return CcCompilerKind.UNKNOWN;
         }

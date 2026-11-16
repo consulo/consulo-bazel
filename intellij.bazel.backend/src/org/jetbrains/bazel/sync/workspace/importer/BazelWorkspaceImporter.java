@@ -41,14 +41,9 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface BazelWorkspaceImporter {
     /**
-     * Mark {@link BazelWorkspaceImporter} as named
+     * Internalized {@link BazelWorkspaceImporter} importer name
      */
-    interface Named extends BazelWorkspaceImporter {
-        /**
-         * Internalized {@link BazelWorkspaceImporter} importer name
-         */
-        LocalizeValue getImporterName();
-    }
+    LocalizeValue getImporterName();
 
     /**
      * Perform phased workspace import. Adhear to rules found in {@link WorkspaceImporterPhase} documentation.
@@ -56,6 +51,7 @@ public interface BazelWorkspaceImporter {
      * @param phase    Current importer phase
      * @param snapshot Immutable workspace snapshot
      * @param taskId   Parent {@link TaskId} of the current phase for this importer
+     * @return the result of the phase. The importer throws an exception when the phase fails.
      */
     CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId);
 

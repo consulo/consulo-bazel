@@ -1,20 +1,24 @@
 package org.jetbrains.bazel.tests.ui
 
 import com.intellij.driver.sdk.step
-import com.intellij.driver.sdk.ui.components.UiComponent.Companion.waitFound
+import com.intellij.driver.sdk.ui.components.common.IdeaFrameUI
+import com.intellij.driver.sdk.ui.components.common.editor
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.components.common.toolWindow
 import com.intellij.driver.sdk.ui.components.common.toolwindows.projectView
 import com.intellij.driver.sdk.ui.components.elements.popupMenu
 import com.intellij.driver.sdk.ui.components.elements.tree
+import com.intellij.driver.sdk.waitFor
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
 import org.jetbrains.bazel.base.IdeStarterBaseProjectTest
 import org.jetbrains.bazel.base.syncBazelProject
+import org.jetbrains.bazel.base.waitForSyncSucceeded
 import org.jetbrains.bazel.data.IdeaBazelCases
 import org.jetbrains.bazel.data.simpleBazelProject
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 private val RUN_ALL_TESTS_PROJECT = simpleBazelProject(
   path = "runAllTests",
@@ -36,15 +40,19 @@ class RunAllTestsActionTest : IdeStarterBaseProjectTest() {
       ideFrame {
         syncBazelProject()
         waitForIndicators(5.minutes)
+        waitForSyncSucceeded()
+
+        // The lookup must use the scope of the IDE frame, because the popup is not a child of the tree.
+        val menu = { popupMenu() }
 
         fun verifyTestsInRoot() {
-          popupMenu().waitFound()
           takeScreenshot("afterRightClicking")
           popupMenu().findMenuItemByText("Run 'Tests in 'runAllTests''").click()
           verifyTestStatus(
             listOf("3 tests passed"),
             setOf("AdditionTest", "testAddition", "MultiplicationTest", "testMultiplication", "DivisionTest", "testDivision"),
           )
+          verifyTestOutput()
         }
 
         fun verifyTestsInMy() {
@@ -54,6 +62,7 @@ class RunAllTestsActionTest : IdeStarterBaseProjectTest() {
             listOf("3 tests passed"),
             setOf("AdditionTest", "testAddition", "MultiplicationTest", "testMultiplication", "DivisionTest", "testDivision"),
           )
+          verifyTestOutput()
         }
 
         fun verifyTestsInMyPackage() {
@@ -63,23 +72,24 @@ class RunAllTestsActionTest : IdeStarterBaseProjectTest() {
             listOf("2 tests passed"),
             setOf("AdditionTest", "testAddition", "MultiplicationTest", "testMultiplication"),
           )
+          verifyTestOutput()
         }
 
         step("Run all tests in root directory") {
-          projectView().projectViewTree.rightClickRow { it.substringBefore(' ') == "runAllTests" }
+          projectView().projectViewTree.rightClickRowAndWaitForMenu("runAllTests", { it.substringBefore(' ') == "runAllTests" }, menu)
           verifyTestsInRoot()
         }
 
         step("Run all tests in a root/my/package directory") {
           projectView().projectViewTree.run {
             expandPath("runAllTests", "my", fullMatch = false)
-            rightClickRow { it.contains("package") }
+            rightClickRowAndWaitForMenu("package", { it.contains("package") }, menu)
           }
           verifyTestsInMyPackage()
         }
 
         step("Run all tests in root/my toolwindow path") {
-          toolWindow("Bazel") { tree().rightClickRow { it.contains("my") } }
+          toolWindow("Bazel") { tree().rightClickRowAndWaitForMenu("my", { it.contains("my") }, menu) }
           verifyTestsInMy()
         }
 
@@ -87,12 +97,27 @@ class RunAllTestsActionTest : IdeStarterBaseProjectTest() {
           toolWindow("Bazel") {
             tree().run {
               expandAll()
-              rightClickRow { it.contains("package") }
+              rightClickRowAndWaitForMenu("package", { it.contains("package") }, menu)
             }
           }
           verifyTestsInMyPackage()
         }
       }
+    }
+  }
+
+  private fun IdeaFrameUI.verifyTestOutput() {
+    step("Verify stdout and stderr in the test results console") {
+      testTreeView().clickRow { it.startsWith("Test Results") }
+      val testResults = x { byType("com.intellij.execution.testframework.sm.runner.ui.SMTestRunnerResultsForm") }
+      val console = testResults.x { byType("com.intellij.execution.impl.ConsoleViewImpl") }
+      val expectedOutput = listOf("AdditionTest stdout", "AdditionTest stderr")
+      waitFor(
+        message = "The test results console contains stdout and stderr",
+        timeout = 30.seconds,
+        getter = { console.editor().text },
+        checker = { text -> expectedOutput.all { it in text } },
+      )
     }
   }
 }

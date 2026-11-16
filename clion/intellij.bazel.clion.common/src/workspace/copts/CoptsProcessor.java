@@ -55,3 +55,24 @@ class GnuCoptsProcessor implements CoptsProcessor {
         myBody.accept(builder, resolvePath(ctx, value.startsWith(mySeparator) ? value.substring(mySeparator.length()) : value));
     }
 }
+
+class MsvcCoptsProcessor implements CoptsProcessor {
+    private final String myFlag;
+    private final BiConsumer<CcCompilerSwitches.Builder, String> myBody;
+
+    MsvcCoptsProcessor(String flag, BiConsumer<CcCompilerSwitches.Builder, String> body) {
+        myFlag = flag;
+        myBody = body;
+    }
+
+    @Override
+    public String getFlag() {
+        return myFlag;
+    }
+
+    @Override
+    public void apply(CcImportContext ctx, CcCompilerSwitches.Builder builder, String value) {
+        Path resolved = utils.resolveExecutionRootPath(ctx, value);
+        myBody.accept(builder, resolved != null ? resolved.toString() : value);
+    }
+}

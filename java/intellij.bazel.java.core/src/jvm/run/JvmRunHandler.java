@@ -3,6 +3,7 @@ package org.jetbrains.bazel.jvm.run;
 import com.intellij.java.debugger.impl.engine.AsyncStacksUtils;
 import com.intellij.java.execution.impl.JavaRunConfigurationExtensionManager;
 import com.intellij.java.execution.impl.RunConfigurationExtension;
+import consulo.bazel.core.localize.BazelPluginLocalize;
 import consulo.execution.BeforeRunTask;
 import consulo.execution.configuration.RunConfigurationBase;
 import consulo.execution.configuration.RunConfigurationExtensionsManager;
@@ -57,7 +58,7 @@ public class JvmRunHandler implements BazelRunHandler {
 
     @Override
     public String getName() {
-        return "Jvm Run Handler";
+        return BazelPluginLocalize.jvmRunHandlerName().get();
     }
 
     @Override
@@ -178,7 +179,7 @@ class RunScriptPathCommandLineState extends JvmDebuggableCommandLineState {
     }
 
     @Override
-    protected CompletableFuture<?> startBsp(
+    protected CompletableFuture<Integer> runCommand(
         BazelServerFacade server,
         CompletableFuture<@Nullable Long> pidDeferred,
         BazelProcessHandler handler

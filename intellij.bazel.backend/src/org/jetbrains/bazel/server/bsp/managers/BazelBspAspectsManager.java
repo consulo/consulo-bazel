@@ -16,10 +16,12 @@ import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.languages.projectview.ProjectView;
 import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
 import org.jetbrains.bazel.server.bep.BepOutput;
+import org.jetbrains.bazel.server.bep.BepOutputBuilder;
 import org.jetbrains.bazel.server.sync.ExecuteService;
 import org.jetbrains.bazel.util.BazelRuleSetProvider;
 import org.jetbrains.bazel.util.BazelRuleSetProvider.BazelRuleSet;
 import org.jetbrains.bsp.protocol.TaskId;
+import consulo.util.lang.StringUtil;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
@@ -32,6 +34,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class BazelBspAspectsManager {
@@ -45,11 +49,32 @@ public class BazelBspAspectsManager {
         }
 
         public BazelBspAspectsManagerResult merge(BazelBspAspectsManagerResult anotherResult) {
-            return new BazelBspAspectsManagerResult(bepOutput.merge(anotherResult.bepOutput()), status.merge(anotherResult.status()));
+            return mergeAll(List.of(this, anotherResult));
+        }
+
+        public static class Accumulator {
+            private final BepOutputBuilder myBepOutput = new BepOutputBuilder();
+            private BazelStatus myStatus = BazelStatus.SUCCESS;
+
+            public Accumulator add(BazelBspAspectsManagerResult result) {
+                myBepOutput.add(result.bepOutput());
+                myStatus = myStatus.merge(result.status());
+                return this;
+            }
+
+            public BazelBspAspectsManagerResult build() {
+                return new BazelBspAspectsManagerResult(myBepOutput.build(), myStatus);
+            }
         }
 
         public static BazelBspAspectsManagerResult emptyResult() {
             return new BazelBspAspectsManagerResult(new BepOutput(), BazelStatus.SUCCESS);
+        }
+
+        public static BazelBspAspectsManagerResult mergeAll(Iterable<BazelBspAspectsManagerResult> results) {
+            Accumulator accumulator = new Accumulator();
+            results.forEach(accumulator::add);
+            return accumulator.build();
         }
     }
 
@@ -115,6 +140,14 @@ public class BazelBspAspectsManager {
                 }
             }
             if (hostLocation != null) {
+                if (!versionMatch(ruleSet, hostLocation)) {
+                    // We have identified the rule, but it is the wrong version. If it cannot be used in bundled form,
+                    // we cannot use it at all.
+                    if (BazelRuleSetProvider.isBundledFor(ruleSet, myBazelRelease, externalAutoloads)) {
+                        result.add(new RulesetInstance(null, ruleSet));
+                    }
+                    continue;
+                }
                 String canonicalName = canonicalRepoByHostLocation.get(hostLocation);
                 result.add(new RulesetInstance(canonicalName != null ? new CanonicalRulesetName(canonicalName) : null, ruleSet));
                 continue;
@@ -131,10 +164,26 @@ public class BazelBspAspectsManager {
         return result;
     }
 
+    private boolean versionMatch(BazelRuleSet ruleSet, String hostLocation) {
+        Pattern versionRegex = ruleSet.versionRegex();
+        Integer minimalVersion = ruleSet.minimalVersion();
+        if (versionRegex == null || minimalVersion == null) {
+            return true; // no version constraint
+        }
+        Matcher match = versionRegex.matcher(hostLocation);
+        if (!match.matches()) {
+            return false; // versioning scheme outside  the supported one
+        }
+        int version = StringUtil.parseInt(match.group(1), 0);
+        return version >= minimalVersion;
+    }
+
     public void deployIntelliJAspect(
         List<RulesetInstance> ruleSetInstances,
         BazelRelease bazelRelease,
-        RepoMapping repoMapping
+        RepoMapping repoMapping,
+        @Nullable List<String> aspectAttrs,
+        boolean dropNoIde
     ) {
         // consulo: a workspace that depends on a published aspect module uses it as is (no templating is needed for a
         // module), the aspect is materialized only otherwise
@@ -179,7 +228,9 @@ public class BazelBspAspectsManager {
                     BazelInfo.toVersionString(bazelRelease),
                     ruleNameMapping,
                     builtInLanguages,
-                    ruleSetInstances.stream().map(it -> it.ruleset().aspectLanguage()).collect(Collectors.toCollection(LinkedHashSet::new))
+                    ruleSetInstances.stream().map(it -> it.ruleset().aspectLanguage()).collect(Collectors.toCollection(LinkedHashSet::new)),
+                    aspectAttrs,
+                    dropNoIde
                 )
             );
         }
@@ -218,7 +269,7 @@ public class BazelBspAspectsManager {
         }
         List<String> defaultFlags =
             List.of(
-                BazelFlag.aspect(aspects.stream().map(this::resolveAspectLabel).collect(Collectors.joining(","))),
+                BazelFlag.aspect(aspects.stream().map(this::resolveWorkspaceAspectLabel).collect(Collectors.joining(","))),
                 BazelFlag.outputGroups(outputGroups),
                 BazelFlag.keepGoing(),
                 // Validations don't contribute to the project model and only slow down sync, so disable them.
@@ -292,12 +343,20 @@ public class BazelBspAspectsManager {
         return myExternalAspect;
     }
 
-    private String resolveAspectLabel(String aspect) {
+    // consulo: upstream calls the top-level resolveAspectLabel(); the aspect of an external aspect module is used if detected
+    private String resolveWorkspaceAspectLabel(String aspect) {
         BazelAspectModule.Resolved externalAspect = myExternalAspect;
         if (externalAspect != null) {
             // consulo: the aspect of the module from the workspace's bazel_dep
             return externalAspect.aspectLabel(aspect);
         }
+        return resolveAspectLabel(aspect);
+    }
+
+    /**
+     * Returns the label of an aspect deployed to the {@code .bazelbsp} directory.
+     */
+    public static String resolveAspectLabel(String aspect) {
         return "//" + Constants.DOT_BAZELBSP_DIR_NAME + "/" + aspect;
     }
 }

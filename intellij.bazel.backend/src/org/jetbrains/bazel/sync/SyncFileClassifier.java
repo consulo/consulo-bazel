@@ -161,8 +161,7 @@ public class SyncFileClassifier {
             Constants.BAZEL_RC_FILE_NAME,
             Constants.BAZEL_IGNORE_FILE_NAME,
             Constants.BAZEL_VERSION_FILE_NAME,
-            Constants.BAZELISK_RC_FILE_NAME,
-            Constants.BAZELISK_VERSION_FILE_NAME
+            Constants.BAZELISK_RC_FILE_NAME
         );
 
     // consulo: upstream Constants.WORKSPACE_FILE_NAMES.toSet() - Constants.MODULE_BAZEL_FILE_NAME
@@ -227,7 +226,7 @@ public class SyncFileClassifier {
         else if (extension.equals(Constants.PROJECT_VIEW_FILE_EXTENSION)) {
             kind = SyncFileKind.ProjectView.INSTANCE;
         }
-        // .bazelrc, .bazelignore, .bazelversion, .bazeliskrc, .bazeliskversion
+        // .bazelrc, .bazelignore, .bazelversion, .bazeliskrc
         else if (BAZEL_DOT_FILE_NAMES.contains(name)) {
             kind = SyncFileKind.BazelDotFile.INSTANCE;
         }

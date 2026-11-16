@@ -8,11 +8,19 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.Out
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.TargetComplete
 import com.intellij.openapi.command.impl.DummyProject
 import io.kotest.matchers.shouldBe
-import org.jetbrains.bazel.commons.BazelInfo
 import org.jetbrains.bazel.commons.BazelPathsResolver
 import org.jetbrains.bazel.commons.BazelRelease
+import org.jetbrains.bazel.commons.BazelStatus
+import org.jetbrains.bazel.label.Label
+import org.jetbrains.bazel.server.bsp.managers.BazelBspAspectsManagerResult
 import org.jetbrains.bazel.server.diagnostics.DiagnosticsService
-import org.jetbrains.bazel.workspace.model.test.framework.MockProjectBaseTest
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationId
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfigurationSummary
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
+import org.jetbrains.bazel.test.framework.BazelTestApplication
+import org.jetbrains.bazel.test.framework.testproject.testProjectBazelInfo
+import org.jetbrains.bsp.protocol.BazelInvocationContext
 import org.jetbrains.bsp.protocol.BazelTaskEventsHandler
 import org.jetbrains.bsp.protocol.CachedTestLog
 import org.jetbrains.bsp.protocol.CoverageReport
@@ -25,7 +33,8 @@ import org.junit.jupiter.api.Test
 import kotlin.io.path.Path
 import kotlin.io.path.relativeToOrNull
 
-internal class BepOutputTest : MockProjectBaseTest() {
+@BazelTestApplication
+internal class BepOutputTest {
   private class EmptyBuildTaskEventsHandler : BazelTaskEventsHandler {
     override fun onBuildLogMessage(p0: LogMessageParams) {}
     override fun onBuildPublishDiagnostics(p0: PublishDiagnosticsParams) {}
@@ -35,24 +44,16 @@ internal class BepOutputTest : MockProjectBaseTest() {
     override fun onCachedTestLog(testLog: CachedTestLog) {}
   }
 
+  private val bazelInfo = testProjectBazelInfo(workspaceRoot = Path("workspaceRoot"))
+
   private fun newBepSever(): BepServer {
-    val workspaceRoot = Path("workspaceRoot")
-    val mockBazelInfo = BazelInfo(
-      execRoot = Path("execRoot"),
-      outputBase = Path("outputBase"),
-      workspaceRoot = workspaceRoot,
-      bazelBin = Path("bazel-bin"),
-      release = BazelRelease(8),
-      isBzlModEnabled = true,
-      isWorkspaceEnabled = false,
-      externalAutoloads = emptyList(),
-    )
     return BepServer(
       project = DummyProject.getInstance(),
       taskEventsHandler = EmptyBuildTaskEventsHandler(),
-      diagnosticsService = DiagnosticsService(workspaceRoot),
+      diagnosticsService = DiagnosticsService(bazelInfo.workspaceRoot),
       parentId = TaskGroupId("originId").task(""),
-      bazelPathsResolver = BazelPathsResolver(mockBazelInfo),
+      bazelPathsResolver = BazelPathsResolver(bazelInfo),
+      context = BazelInvocationContext.BUILD,
     )
   }
 
@@ -89,12 +90,12 @@ internal class BepOutputTest : MockProjectBaseTest() {
     server.handleBuildEventStreamProtosEvent(targetCompleted("//:foobar", mapOf("intellij-info" to listOf("1"), "foo" to listOf("0"))))
     val bepOutput = server.getOutputForTesting()
     bepOutput.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf("foo.intellij-info.txt", "bar.intellij-info.txt")
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf("foo.intellij-info.txt", "bar.intellij-info.txt")
 
     // Renaming should not affect output group
     val renamed = bepOutput.renameNamedSets(2)
     renamed.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf("foo.intellij-info.txt", "bar.intellij-info.txt")
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf("foo.intellij-info.txt", "bar.intellij-info.txt")
   }
 
   @Test
@@ -110,7 +111,7 @@ internal class BepOutputTest : MockProjectBaseTest() {
     )
     val firstResult = firstRunServer.getOutputForTesting().renameNamedSets(1)
     firstResult.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf("firstfoo.intellij-info.txt")
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf("firstfoo.intellij-info.txt")
 
     val secondRunServer = newBepSever()
     secondRunServer.handleBuildEventStreamProtosEvent(namedSet("0", listOf("secondbar.intellij-info.txt"), listOf()))
@@ -123,11 +124,11 @@ internal class BepOutputTest : MockProjectBaseTest() {
     )
     val secondResult = secondRunServer.getOutputForTesting().renameNamedSets(2)
     secondResult.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf("secondfoo.intellij-info.txt")
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf("secondfoo.intellij-info.txt")
 
     val combined = firstResult.merge(secondResult)
     combined.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf(
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf(
       "firstfoo.intellij-info.txt",
       "secondfoo.intellij-info.txt",
     )
@@ -150,7 +151,7 @@ internal class BepOutputTest : MockProjectBaseTest() {
     )
     val bepOutput = server.getOutputForTesting()
     bepOutput.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf(
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf(
       "baz.intellij-info.txt",
       "common_b.intellij-info.txt",
       "common_a.intellij-info.txt",
@@ -159,7 +160,7 @@ internal class BepOutputTest : MockProjectBaseTest() {
     // Renaming should not affect output group
     val renamed = bepOutput.renameNamedSets(42)
     renamed.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet() shouldBe setOf(
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet() shouldBe setOf(
       "baz.intellij-info.txt",
       "common_b.intellij-info.txt",
       "common_a.intellij-info.txt",
@@ -181,7 +182,7 @@ internal class BepOutputTest : MockProjectBaseTest() {
     )
     val afterFirstRun = firstServer.getOutputForTesting().renameNamedSets(1)
     val firstBuild = afterFirstRun.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet()
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet()
     firstBuild shouldBe setOf("common_a.intellij-info.txt", "common_b.intellij-info.txt", "build_only.intellij-info.txt")
 
     val secondServer = newBepSever()
@@ -190,7 +191,7 @@ internal class BepOutputTest : MockProjectBaseTest() {
     secondServer.handleBuildEventStreamProtosEvent(targetCompleted("//:two", mapOf("sync" to listOf("1"), "intellij-info" to listOf("0"))))
     val afterSecondRun = afterFirstRun.merge(secondServer.getOutputForTesting().renameNamedSets(2))
     val secondBuild = afterSecondRun.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet()
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet()
     secondBuild shouldBe firstBuild + setOf("build_2.intellij-info.txt")
 
     val thirdServer = newBepSever()
@@ -202,12 +203,103 @@ internal class BepOutputTest : MockProjectBaseTest() {
     thirdServer.handleBuildEventStreamProtosEvent(targetCompleted("//:three", mapOf("sync" to listOf("4"), "intellij-info" to listOf("3"))))
     val afterThirdRun = afterSecondRun.merge(thirdServer.getOutputForTesting().renameNamedSets(3))
     val thirdBuild = afterThirdRun.filesByInfoOutputGroup()
-      .map { it.relativeToOrNull(Path("execRoot"))?.toString() }.toSet()
+      .map { it.relativeToOrNull(bazelInfo.execRoot)?.toString() }.toSet()
     thirdBuild shouldBe secondBuild + setOf(
       "build_3.intellij-info.txt",
       "build_and_sync_3.intellij-info.txt",
       "more_build_and_sync_3.intellij-info.txt",
       "even_more_build_and_sync_3.intellij-info.txt",
     )
+  }
+
+  @Test
+  fun testMergeAllPreservesDuplicateKeys() {
+    val configurationId = WorkspaceConfigurationId.of("1234567")
+    val firstConfiguration = WorkspaceConfiguration(
+      configurationId,
+      WorkspaceConfigurationSummary("first", "first", "", "", false),
+      emptyList(),
+    )
+    val secondConfiguration = firstConfiguration.copy(summary = firstConfiguration.summary.copy(hash = "second"))
+    val firstTarget = WorkspaceTargetKey(Label.parse("//:first"))
+    val secondTarget = WorkspaceTargetKey(Label.parse("//:second"))
+    val first = BepOutput(
+      infoOutputGroupFileSets = setOf("shared"),
+      textProtoFileSets = mapOf(
+        "shared" to TextProtoDepSet(listOf(Path("first.txt")), listOf("first-child")),
+        "first-child" to TextProtoDepSet(listOf(Path("first-child.txt")), emptyList()),
+      ),
+      rootTargets = setOf(firstTarget),
+      options = listOf("--first"),
+      configurations = mapOf(configurationId to firstConfiguration),
+    )
+    val second = BepOutput(
+      infoOutputGroupFileSets = setOf("shared", "second-only"),
+      textProtoFileSets = mapOf(
+        "shared" to TextProtoDepSet(listOf(Path("second.txt")), listOf("second-child")),
+        "second-child" to TextProtoDepSet(listOf(Path("second-child.txt")), emptyList()),
+        "second-only" to TextProtoDepSet(listOf(Path("second-only.txt")), emptyList()),
+      ),
+      rootTargets = setOf(firstTarget, secondTarget),
+      options = listOf("--second", "--last"),
+      configurations = mapOf(configurationId to secondConfiguration),
+      buildToolVersion = BazelRelease(8),
+    )
+
+    val merged = BepOutput.mergeAll(listOf(first, second, BepOutput(buildToolVersion = BazelRelease(9))))
+    merged.filesByInfoOutputGroup().map { it.toString() }.toSet() shouldBe setOf(
+      "first.txt", "first-child.txt", "second.txt", "second-child.txt", "second-only.txt",
+    )
+    merged.rootTargets() shouldBe setOf(firstTarget, secondTarget)
+    merged.options shouldBe listOf("--first", "--second", "--last")
+    merged.configurations[configurationId] shouldBe secondConfiguration
+    merged.buildToolVersion shouldBe BazelRelease(8)
+    first.merge(second).filesByInfoOutputGroup().map { it.toString() }.toSet() shouldBe
+      merged.filesByInfoOutputGroup().map { it.toString() }.toSet()
+  }
+
+  @Test
+  fun testMergeAllPreservesNestedSetsAcrossManyShards() {
+    val shards = (1..128).map { shard ->
+      BepOutput(
+        infoOutputGroupFileSets = setOf("root"),
+        textProtoFileSets = mapOf(
+          "root" to TextProtoDepSet(listOf(Path("root-$shard.txt")), listOf("leaf")),
+          "leaf" to TextProtoDepSet(listOf(Path("leaf-$shard.txt")), emptyList()),
+        ),
+        options = listOf("--shard=$shard"),
+      ).renameNamedSets(shard)
+    }
+
+    val merged = BepOutput.mergeAll(shards)
+    merged.filesByInfoOutputGroup().map { it.toString() }.toSet() shouldBe (1..128).flatMap { shard ->
+      listOf("root-$shard.txt", "leaf-$shard.txt")
+    }.toSet()
+    merged.options shouldBe (1..128).map { "--shard=$it" }
+  }
+
+  @Test
+  fun testMergeAllAcceptsEmptyInput() {
+    val merged = BepOutput.mergeAll(emptyList())
+    merged.rootTargets() shouldBe emptySet()
+    merged.filesByInfoOutputGroup() shouldBe emptySet()
+    merged.options shouldBe emptyList()
+    merged.configurations shouldBe emptyMap()
+    merged.buildToolVersion shouldBe BazelRelease.FALLBACK_VERSION
+    BazelBspAspectsManagerResult.mergeAll(emptyList()).status shouldBe BazelStatus.SUCCESS
+  }
+
+  @Test
+  fun testMergeAllPreservesStatusPriority() {
+    val results = listOf(
+      BazelBspAspectsManagerResult(BepOutput(options = listOf("first")), BazelStatus.BUILD_ERROR),
+      BazelBspAspectsManagerResult(BepOutput(options = listOf("second")), BazelStatus.OOM_ERROR),
+      BazelBspAspectsManagerResult(BepOutput(options = listOf("third")), BazelStatus.FATAL_ERROR),
+    )
+
+    val merged = BazelBspAspectsManagerResult.mergeAll(results)
+    merged.status shouldBe BazelStatus.OOM_ERROR
+    merged.bepOutput.options shouldBe listOf("first", "second", "third")
+    results[0].merge(results[1]).merge(results[2]).status shouldBe merged.status
   }
 }

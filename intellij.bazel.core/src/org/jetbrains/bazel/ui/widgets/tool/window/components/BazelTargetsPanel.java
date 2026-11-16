@@ -103,7 +103,7 @@ public class BazelTargetsPanel extends JBPanel<BazelTargetsPanel> {
             showTargetTree();
         }
 
-        myTargetTree.updateTree(visibleTargets, displayAsTree);
+        myTargetTree.updateTree(visibleTargets, displayAsTree, searchRegex);
 
         // Refresh the panel
         revalidate();

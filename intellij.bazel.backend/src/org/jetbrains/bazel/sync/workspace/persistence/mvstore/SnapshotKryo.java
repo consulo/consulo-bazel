@@ -3,6 +3,7 @@ package org.jetbrains.bazel.sync.workspace.persistence.mvstore;
 import com.esotericsoftware.kryo.kryo5.Kryo;
 import com.esotericsoftware.kryo.kryo5.Registration;
 import com.esotericsoftware.kryo.kryo5.objenesis.strategy.StdInstantiatorStrategy;
+import com.esotericsoftware.kryo.kryo5.serializers.FieldSerializer;
 import com.esotericsoftware.kryo.kryo5.util.DefaultClassResolver;
 import com.esotericsoftware.kryo.kryo5.util.DefaultInstantiatorStrategy;
 import com.esotericsoftware.kryo.kryo5.util.MapReferenceResolver;
@@ -30,7 +31,7 @@ public class SnapshotKryo {
 
     // covers container layout, manifest codec, Kryo configuration, builtin registrations and the
     // binary formats of all handwritten serializers - bump on any change to those
-    static final int SNAPSHOT_FORMAT_VERSION = 8;
+    static final int SNAPSHOT_FORMAT_VERSION = 10;
 
     private final SnapshotTypeUniverse myUniverse;
 
@@ -89,11 +90,15 @@ public class SnapshotKryo {
             int registrationId = registration.registrationId();
             Class<?> type = registration.type();
             VersionedKryoSerializer<?> serializer = registration.serializer();
+            Registration kryoRegistration;
             if (serializer != null) {
-                kryo.register(type, serializer, registrationId);
+                kryoRegistration = kryo.register(type, serializer, registrationId);
             }
             else {
-                kryo.register(type, registrationId);
+                kryoRegistration = kryo.register(type, registrationId);
+            }
+            if (kryoRegistration.getSerializer() instanceof FieldSerializer<?> fieldSerializer) {
+                SnapshotSerializers.rebindCollectionFieldSerializers(fieldSerializer);
             }
         }
         return kryo;

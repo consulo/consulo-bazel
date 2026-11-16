@@ -31,13 +31,13 @@ public final class BazelVersionWorkspaceResolver {
 
     private static @Nullable BazelVersionLiteral resolveWorkspaceBazelVersionFile(Path workspace) {
         String text = readTextOrNull(workspace.resolve(Constants.BAZEL_VERSION_FILE_NAME));
-        return text != null ? BazelVersionLiteral.toBazelVersionLiteral(text) : null;
+        return text != null ? BazelVersionLiteral.fromString(text) : null;
     }
 
     // consulo: EnvironmentUtil.getValue(name) -> Platform.current().os().getEnvironmentVariable(name)
     private static @Nullable BazelVersionLiteral resolveBazelVersionEnvVariable() {
         String value = Platform.current().os().getEnvironmentVariable("USE_BAZEL_VERSION");
-        return value != null ? BazelVersionLiteral.toBazelVersionLiteral(value) : null;
+        return value != null ? BazelVersionLiteral.fromString(value) : null;
     }
 
     private static @Nullable BazelVersionLiteral resolveFallbackBazelVersion() {
@@ -48,10 +48,10 @@ public final class BazelVersionWorkspaceResolver {
         List<String> allowedPrefixes = List.of("error:", "warn:", "silent:");
         String prefix = allowedPrefixes.stream().filter(fallbackVersion::startsWith).findFirst().orElse(null);
         if (prefix == null) {
-            return BazelVersionLiteral.toBazelVersionLiteral(fallbackVersion);
+            return BazelVersionLiteral.fromString(fallbackVersion);
         }
         else {
-            return BazelVersionLiteral.toBazelVersionLiteral(fallbackVersion.substring(prefix.length()));
+            return BazelVersionLiteral.fromString(fallbackVersion.substring(prefix.length()));
         }
     }
 
@@ -65,7 +65,7 @@ public final class BazelVersionWorkspaceResolver {
         if (version == null) {
             return null;
         }
-        return BazelVersionLiteral.toBazelVersionLiteral(version);
+        return BazelVersionLiteral.fromString(version);
     }
 
     private static @Nullable String readTextOrNull(Path receiver) {

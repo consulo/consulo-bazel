@@ -1,12 +1,10 @@
 package org.jetbrains.bazel.run.task;
 
 import consulo.execution.test.sm.ServiceMessageBuilder;
+import consulo.process.ProcessHandler;
 import consulo.process.ProcessOutputType;
-import consulo.process.event.ProcessEvent;
-import consulo.process.event.ProcessListener;
 import consulo.process.util.AnsiEscapeDecoder;
 import org.jetbrains.bazel.commons.BazelStatus;
-import org.jetbrains.bazel.run.BazelProcessHandler;
 import org.jetbrains.bazel.taskEvents.BazelTaskListener;
 import org.jetbrains.bsp.protocol.TaskFinishParams.JUnitStyleTestCaseData;
 import org.jetbrains.bsp.protocol.TaskFinishParams.JUnitStyleTestSuiteData;
@@ -21,23 +19,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 public class BazelTestTaskListener implements BazelTaskListener {
-    private final BazelProcessHandler myHandler;
+    private final ProcessHandler myHandler;
     private final @Nullable Consumer<Path> myCoverageReportListener;
     private final AnsiEscapeDecoder myAnsiEscapeDecoder = new AnsiEscapeDecoder();
 
-    public BazelTestTaskListener(BazelProcessHandler handler, @Nullable Consumer<Path> coverageReportListener) {
+    public BazelTestTaskListener(ProcessHandler handler, @Nullable Consumer<Path> coverageReportListener) {
         myHandler = handler;
         myCoverageReportListener = coverageReportListener;
-        handler.addProcessListener(
-            new ProcessListener() {
-                @Override
-                public void processWillTerminate(ProcessEvent event, boolean willBeDestroyed) {
-                }
-            }
-        );
     }
 
-    public BazelTestTaskListener(BazelProcessHandler handler) {
+    public BazelTestTaskListener(ProcessHandler handler) {
         this(handler, null);
     }
 

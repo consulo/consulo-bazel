@@ -2,6 +2,8 @@ package org.jetbrains.bazel.clion.workspace;
 
 import consulo.bazel.cpp.workspace.CcCompilerSwitches;
 import consulo.bazel.cpp.workspace.CcWorkspaceModel;
+import consulo.cpp.lang.CHeaderFileType;
+import consulo.cpp.lang.CPPHeaderFileType;
 import consulo.cpp.lang.CPPSourceFileType;
 import consulo.cpp.lang.CSourceFileType;
 import consulo.virtualFileSystem.fileType.FileType;
@@ -10,8 +12,10 @@ import org.jetbrains.bazel.clion.workspace.copts.applyCopts;
 import org.jetbrains.bsp.protocol.OutputLocation;
 
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -54,19 +58,17 @@ public final class buildWorkspaceModel {
                 config.shared().cxxopts()
             );
 
+            Set<FileType> sourceLanguageKinds = new LinkedHashSet<>();
             for (String file : config.sources()) {
-                FileType languageKind = getDeclaredLanguageKind(fileName(file));
-                CcWorkspaceModel.CompilerSettings fileConfig = workspaceConfig.addSource(file, languageKind);
+                FileType languageKind = getSourceLanguageKind(fileName(file));
+                sourceLanguageKinds.add(languageKind);
+                addFile(ctx, workspaceConfig, settings, cSwitches, cppSwitches, file, languageKind);
+            }
 
-                if (languageKind == CSourceFileType.INSTANCE) {
-                    fileConfig.setCompiler(settings.cCompilerKind(), settings.cCompiler(), ctx.getExecroot());
-                    fileConfig.setCompilerSwitches(cSwitches);
-                }
-
-                if (languageKind == CPPSourceFileType.INSTANCE) {
-                    fileConfig.setCompiler(settings.cppCompilerKind(), settings.cppCompiler(), ctx.getExecroot());
-                    fileConfig.setCompilerSwitches(cppSwitches);
-                }
+            // A header has no language of its own, so it takes the one language of the sources of its target.
+            FileType headerLanguageKind = sourceLanguageKinds.size() == 1 ? sourceLanguageKinds.iterator().next() : DEFAULT_LANGUAGE_KIND;
+            for (String file : config.headers()) {
+                addFile(ctx, workspaceConfig, settings, cSwitches, cppSwitches, file, headerLanguageKind);
             }
 
             CcWorkspaceModel.CompilerSettings cSettings = workspaceConfig.getLanguageCompilerSettings(CSourceFileType.INSTANCE);
@@ -80,6 +82,29 @@ public final class buildWorkspaceModel {
             cppSettings.setCompilerSwitches(
                 buildSwitches(ctx, config, settings.cppCompilerKind(), settings.cppSwitches(), config.shared().cxxopts())
             );
+        }
+    }
+
+    // consulo: upstream local fun addFile(file, languageKind) of buildWorkspaceModel(), the captured values are parameters
+    private static void addFile(
+        CcImportContext ctx,
+        CcWorkspaceModel.Configuration workspaceConfig,
+        CcCompilerInfo settings,
+        CcCompilerSwitches cSwitches,
+        CcCompilerSwitches cppSwitches,
+        String file,
+        FileType languageKind
+    ) {
+        CcWorkspaceModel.CompilerSettings fileConfig = workspaceConfig.addSource(file, languageKind);
+
+        if (languageKind == CSourceFileType.INSTANCE) {
+            fileConfig.setCompiler(settings.cCompilerKind(), settings.cCompiler(), ctx.getExecroot());
+            fileConfig.setCompilerSwitches(cSwitches);
+        }
+
+        if (languageKind == CPPSourceFileType.INSTANCE) {
+            fileConfig.setCompiler(settings.cppCompilerKind(), settings.cppCompiler(), ctx.getExecroot());
+            fileConfig.setCompilerSwitches(cppSwitches);
         }
     }
 
@@ -108,9 +133,19 @@ public final class buildWorkspaceModel {
         resolve(ctx, config.shared().transitiveSystemIncludes().getOutputLocations()).forEach(receiver::withSystemIncludePath);
     }
 
+    private static FileType getSourceLanguageKind(String sourceFileName) {
+        // consulo: CIDR OCFileTypeHelpers.getLanguageKind(name) -> the consulo-cpp C or C++ source file type of the name
+        FileType fileType = FileTypeRegistry.getInstance().getFileTypeByFileName(sourceFileName);
+        if (fileType == CSourceFileType.INSTANCE || fileType == CPPSourceFileType.INSTANCE) {
+            return fileType;
+        }
+        return DEFAULT_LANGUAGE_KIND;
+    }
+
     /**
-     * consulo: upstream is private; the file options contributor uses it for the files that are not a source of a
-     * configuration, CIDR OCFileTypeHelpers is replaced by the consulo-cpp file type of the name
+     * consulo: upstream removed this function (replaced by {@link #getSourceLanguageKind}); it is kept for the Consulo-only
+     * file options contributor, for the files that are not in a configuration. CIDR OCFileTypeHelpers is replaced by the
+     * consulo-cpp file type of the name
      */
     public static FileType getDeclaredLanguageKind(String sourceOrHeaderFileName) {
         String name = sourceOrHeaderFileName;
@@ -132,6 +167,14 @@ public final class buildWorkspaceModel {
     static boolean isSourceFile(String name) {
         FileType fileType = FileTypeRegistry.getInstance().getFileTypeByFileName(name);
         return fileType == CSourceFileType.INSTANCE || fileType == CPPSourceFileType.INSTANCE;
+    }
+
+    /**
+     * consulo: CIDR {@code OCFileTypeHelpers.isHeaderFile(name)}: a C or C++ header by the consulo-cpp file type of its name.
+     */
+    static boolean isHeaderFile(String name) {
+        FileType fileType = FileTypeRegistry.getInstance().getFileTypeByFileName(name);
+        return fileType == CHeaderFileType.INSTANCE || fileType == CPPHeaderFileType.INSTANCE;
     }
 
     // consulo: VirtualFileUrl.fileName of a VFS url string

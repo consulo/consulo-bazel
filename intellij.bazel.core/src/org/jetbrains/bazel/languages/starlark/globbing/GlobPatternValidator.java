@@ -1,6 +1,5 @@
 package org.jetbrains.bazel.languages.starlark.globbing;
 
-import com.google.common.base.Splitter;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -39,7 +38,8 @@ public final class GlobPatternValidator {
                 }
             }
         }
-        Iterable<String> segments = Splitter.on('/').split(pattern);
+        // consulo: limit -1 keeps the trailing empty segments, like Kotlin split('/')
+        String[] segments = pattern.split("/", -1);
         for (String segment : segments) {
             if (segment.isEmpty()) {
                 return "empty segment not permitted";

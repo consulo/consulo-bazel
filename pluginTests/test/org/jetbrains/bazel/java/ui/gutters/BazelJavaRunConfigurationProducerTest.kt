@@ -1,6 +1,5 @@
 package org.jetbrains.bazel.java.ui.gutters
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.runReadActionBlocking
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiFile
@@ -10,7 +9,6 @@ import com.intellij.psi.impl.source.tree.LeafPsiElement
 import com.intellij.psi.util.childrenOfType
 import com.intellij.testFramework.ExtensionTestUtil
 import com.intellij.testFramework.fixtures.CodeInsightTestFixture
-import com.intellij.testFramework.junit5.TestDisposable
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.jetbrains.bazel.commons.RuleType
@@ -22,7 +20,8 @@ import org.jetbrains.bazel.label.Label
 import org.jetbrains.bazel.sync.JavaLanguageClass
 import org.jetbrains.bazel.test.framework.BazelTestApplication
 import org.jetbrains.bazel.test.framework.bazelCodeInsightFixture
-import org.jetbrains.bazel.ui.gutters.NonImportedBuildTarget
+import org.jetbrains.bazel.test.framework.testBazel
+import org.jetbrains.bsp.protocol.BuildTargetInfo
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtClassBody
 import org.jetbrains.kotlin.psi.KtNamedFunction
@@ -33,10 +32,7 @@ import org.junit.jupiter.api.Test
 class BazelJavaRunConfigurationProducerTest {
   private val myFixture by bazelCodeInsightFixture()
 
-  @TestDisposable
-  lateinit var disposable: Disposable
-
-  private val mockTarget = NonImportedBuildTarget(
+  private val mockTarget = BuildTargetInfo(
     Label.synthetic("mock"),
     TargetKind(
       kind = "java_binary",
@@ -45,7 +41,7 @@ class BazelJavaRunConfigurationProducerTest {
     ),
   )
 
-  private val jetBrainsTestRunnerTarget = NonImportedBuildTarget(
+  private val jetBrainsTestRunnerTarget = BuildTargetInfo(
     Label.synthetic("mock-test"),
     TargetKind(
       kind = "java_test",
@@ -227,7 +223,7 @@ class BazelJavaRunConfigurationProducerTest {
   }
 
   private fun registerJetBrainsTestRunner() =
-    ExtensionTestUtil.maskExtensions(JvmTestFilterExtension.ep, listOf(JetBrainsTestFilterExtension()), disposable)
+    ExtensionTestUtil.maskExtensions(JvmTestFilterExtension.ep, listOf(JetBrainsTestFilterExtension()), myFixture.testBazel.disposable)
 
   @Test
   fun `should keep $ in a nested test class for the JetBrains test runner`() {

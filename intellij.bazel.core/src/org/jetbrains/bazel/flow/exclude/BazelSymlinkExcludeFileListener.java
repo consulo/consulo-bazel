@@ -7,7 +7,7 @@ import consulo.util.io.FileAttributes;
 import consulo.virtualFileSystem.event.AsyncFileListener;
 import consulo.virtualFileSystem.event.VFileCreateEvent;
 import consulo.virtualFileSystem.event.VFileEvent;
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.file.InvalidPathException;
@@ -22,7 +22,7 @@ import java.util.Map;
 public class BazelSymlinkExcludeFileListener implements AsyncFileListener {
     @Override
     public @Nullable ChangeApplier prepareChange(List<? extends VFileEvent> events) {
-        Map<Project, List<Path>> project2Paths = new LinkedHashMap<>();
+        Map<Project, List<Path>> projectPaths = new LinkedHashMap<>();
         for (VFileEvent event : events) {
             if (!(event instanceof VFileCreateEvent createEvent)) {
                 continue;
@@ -32,10 +32,26 @@ public class BazelSymlinkExcludeFileListener implements AsyncFileListener {
                 continue;
             }
             for (ProjectAndPath it : toListOfProjectAndPath(createEvent)) {
-                if (BazelSymlinksCalculator.isBazelSymlink(org.jetbrains.bazel.config.project.getBazelProjectName(it.project()), it.path())) {
-                    project2Paths.computeIfAbsent(it.project(), k -> new ArrayList<>()).add(it.path());
+                projectPaths.computeIfAbsent(it.project(), k -> new ArrayList<>()).add(it.path());
+            }
+        }
+        Map<Project, List<Path>> project2Paths = new LinkedHashMap<>();
+        for (Map.Entry<Project, List<Path>> entry : projectPaths.entrySet()) {
+            Project project = entry.getKey();
+            BazelConvenienceSymlinksScanner scanner =
+                new BazelConvenienceSymlinksScanner(org.jetbrains.bazel.config.project.getRootDir(project).toNioPath());
+            List<Path> bazelSymlinks = new ArrayList<>();
+            for (Path it : entry.getValue()) {
+                if (scanner.isBazelSymlink(it)) {
+                    bazelSymlinks.add(it);
                 }
             }
+            if (!bazelSymlinks.isEmpty()) {
+                project2Paths.put(project, bazelSymlinks);
+            }
+        }
+        if (project2Paths.isEmpty()) {
+            return null;
         }
         return new ChangeApplier() {
             @Override

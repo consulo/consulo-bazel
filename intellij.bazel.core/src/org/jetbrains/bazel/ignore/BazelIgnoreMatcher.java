@@ -1,6 +1,5 @@
 package org.jetbrains.bazel.ignore;
 
-import com.google.common.cache.Cache;
 import consulo.application.ReadAction;
 import consulo.language.psi.PsiElement;
 import consulo.language.psi.PsiFileFactory;
@@ -23,6 +22,7 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 public interface BazelIgnoreMatcher {
@@ -116,7 +116,7 @@ public interface BazelIgnoreMatcher {
             }
 
             return new BazelIgnoreMatcher() {
-                private final Cache<String, Pattern> myCache = StarlarkGlob.createCache();
+                private final ConcurrentHashMap<String, Pattern> myCache = StarlarkGlob.createCache();
 
                 @Override
                 public boolean match(Path relativePath) {

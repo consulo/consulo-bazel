@@ -4,12 +4,11 @@ import consulo.logging.Logger;
 import org.jetbrains.bazel.commons.LanguageClass;
 import org.jetbrains.bazel.commons.TargetKind;
 import org.jetbrains.bazel.label.DependencyLabel;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
 import org.jetbrains.bsp.protocol.BuildTarget;
 import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
-import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -54,7 +53,14 @@ public class WorkspaceTargetMerger {
             List<BuildTarget> group = entry.getValue();
             if (group.size() == 1) {
                 BuildTarget target = group.get(0);
-                result.add(new DelegatingBuildTarget(target, key));
+                result.add(BuildTarget.copy(
+                    target,
+                    withKey(target.getInfo(), key, target.getKind()),
+                    target.getDependencies(),
+                    target.getSources(),
+                    target.getResources(),
+                    target.getData()
+                ));
             }
             else {
                 // keep it deterministic
@@ -93,32 +99,25 @@ public class WorkspaceTargetMerger {
 
         List<BuildTargetData> data = mergeBuildData(Stream.concat(left.getData().stream(), right.getData().stream()));
 
-        return new DelegatingBuildTarget(left, key) {
-            @Override
-            public TargetKind getKind() {
-                return kind;
-            }
+        return BuildTarget.create(
+            withKey(left.getInfo(), key, kind),
+            dependencies,
+            sources,
+            resources,
+            data
+        );
+    }
 
-            @Override
-            public List<DependencyLabel> getDependencies() {
-                return dependencies;
-            }
-
-            @Override
-            public OutputLocationCollection getSources() {
-                return sources;
-            }
-
-            @Override
-            public OutputLocationCollection getResources() {
-                return resources;
-            }
-
-            @Override
-            public List<BuildTargetData> getData() {
-                return data;
-            }
-        };
+    // consulo: Kotlin data class copy(key = ..., kind = ...) of BuildTargetInfo
+    private static BuildTargetInfo withKey(BuildTargetInfo receiver, WorkspaceTargetKey key, TargetKind kind) {
+        return new BuildTargetInfo(
+            key,
+            kind,
+            receiver.generatorName(),
+            receiver.isTestOnly(),
+            receiver.tags(),
+            receiver.workspaceName()
+        );
     }
 
     private static boolean isCompatibleWith(BuildTarget receiver, BuildTarget other) {
@@ -175,71 +174,5 @@ public class WorkspaceTargetMerger {
                 return Stream.concat(left.getOutputLocations(), right.getOutputLocations()).distinct();
             }
         };
-    }
-
-    // consulo: Kotlin interface delegation `object : BuildTarget by target { override val key = key }`
-    private static class DelegatingBuildTarget implements BuildTarget {
-        private final BuildTarget myDelegate;
-        private final WorkspaceTargetKey myKey;
-
-        private DelegatingBuildTarget(BuildTarget delegate, WorkspaceTargetKey key) {
-            myDelegate = delegate;
-            myKey = key;
-        }
-
-        @Override
-        public WorkspaceTargetKey getKey() {
-            return myKey;
-        }
-
-        @Override
-        public TargetKind getKind() {
-            return myDelegate.getKind();
-        }
-
-        @Override
-        public TargetLoadOptions getLoaded() {
-            return myDelegate.getLoaded();
-        }
-
-        @Override
-        public @Nullable String getGeneratorName() {
-            return myDelegate.getGeneratorName();
-        }
-
-        @Override
-        public boolean isTestOnly() {
-            return myDelegate.isTestOnly();
-        }
-
-        @Override
-        public List<String> getTags() {
-            return myDelegate.getTags();
-        }
-
-        @Override
-        public String getWorkspaceName() {
-            return myDelegate.getWorkspaceName();
-        }
-
-        @Override
-        public List<DependencyLabel> getDependencies() {
-            return myDelegate.getDependencies();
-        }
-
-        @Override
-        public OutputLocationCollection getSources() {
-            return myDelegate.getSources();
-        }
-
-        @Override
-        public OutputLocationCollection getResources() {
-            return myDelegate.getResources();
-        }
-
-        @Override
-        public List<BuildTargetData> getData() {
-            return myDelegate.getData();
-        }
     }
 }

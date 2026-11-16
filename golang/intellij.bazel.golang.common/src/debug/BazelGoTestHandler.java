@@ -2,6 +2,7 @@ package org.jetbrains.bazel.golang.debug;
 
 import com.goide.runconfig.testing.GoTestRunConfiguration;
 import consulo.bazel.core.localize.BazelPluginLocalize;
+import consulo.bazel.go.localize.BazelGoLocalize;
 import consulo.execution.BeforeRunTask;
 import consulo.execution.configuration.RunProfileState;
 import consulo.execution.debug.DefaultDebugExecutor;
@@ -55,7 +56,7 @@ public class BazelGoTestHandler implements BazelRunHandler {
 
     @Override
     public String getName() {
-        return "Bazel Go Test Handler";
+        return BazelGoLocalize.goTestHandlerName().get();
     }
 
     @Override

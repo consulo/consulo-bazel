@@ -135,28 +135,23 @@ public class PersistentWorkspaceSnapshot {
         }
     }
 
-    public static class WorkspaceTargetDeps {
+    public static class WorkspaceTargetContent {
         private final List<DependencyLabel> myDependencies;
+        private final OutputLocationCollection mySources;
+        private final OutputLocationCollection myResources;
 
-        public WorkspaceTargetDeps(List<DependencyLabel> dependencies) {
+        public WorkspaceTargetContent(
+            List<DependencyLabel> dependencies,
+            OutputLocationCollection sources,
+            OutputLocationCollection resources
+        ) {
             myDependencies = dependencies;
+            mySources = sources;
+            myResources = resources;
         }
 
         public List<DependencyLabel> getDependencies() {
             return myDependencies;
-        }
-    }
-
-    public static class HeavyWorkspaceTarget {
-        private final OutputLocationCollection mySources;
-        private final OutputLocationCollection myResources;
-
-        public HeavyWorkspaceTarget(
-            OutputLocationCollection sources,
-            OutputLocationCollection resources
-        ) {
-            mySources = sources;
-            myResources = resources;
         }
 
         public OutputLocationCollection getSources() {

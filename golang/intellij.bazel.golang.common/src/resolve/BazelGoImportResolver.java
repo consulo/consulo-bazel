@@ -19,7 +19,6 @@ package org.jetbrains.bazel.golang.resolve;
 import com.goide.psi.impl.imports.GoImportReference;
 import com.goide.psi.impl.imports.GoImportResolver;
 import consulo.annotation.component.ExtensionImpl;
-import com.google.common.collect.ImmutableList;
 import consulo.annotation.access.RequiredReadAction;
 import consulo.ide.impl.idea.codeInsight.navigation.CtrlMouseHandler;
 import consulo.language.editor.documentation.DocumentationProviderEx;
@@ -62,7 +61,7 @@ public class BazelGoImportResolver implements GoImportResolver {
             return null;
         }
         BazelGoPackage goPackage = resolveGoPackage(project, importPath);
-        return goPackage != null ? ImmutableList.of(goPackage) : null;
+        return goPackage != null ? List.of(goPackage) : null;
     }
 
     @Override

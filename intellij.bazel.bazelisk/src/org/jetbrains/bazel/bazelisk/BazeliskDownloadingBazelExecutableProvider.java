@@ -2,29 +2,40 @@ package org.jetbrains.bazel.bazelisk;
 
 import consulo.annotation.component.ExtensionImpl;
 import consulo.application.Application;
+import consulo.application.concurrent.ApplicationConcurrency;
 import consulo.application.progress.ProgressIndicator;
-import consulo.application.progress.ProgressManager;
+import consulo.application.progress.Task;
 import consulo.bazel.bazelisk.localize.BazelBazeliskLocalize;
+import consulo.component.ProcessCanceledException;
 import consulo.container.boot.ContainerPathManager;
 import consulo.http.HttpRequests;
 import consulo.logging.Logger;
-import consulo.platform.CpuArchitecture;
 import consulo.platform.Platform;
-import consulo.platform.PlatformOperatingSystem;
 import consulo.project.Project;
 import consulo.util.io.NioFiles;
-import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.sync.BazelEnvironmentService;
 import org.jetbrains.bazel.sync.environment.BazelApplicationContextService;
-import org.jetbrains.bazel.sync.environment.BazelProjectInfoService;
+import org.jetbrains.bazel.sync.environment.BazeliskDownload;
 import org.jetbrains.bazel.workspace.BazelExecutableProvider;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
+/**
+ * Finds Bazel on `PATH`, or downloads Bazelisk.
+ * <p>
+ * {@link BazelApplicationContextService#getForcedBazeliskDownload()} can force the download and skip the lookup on `PATH`.
+ * The plugin keeps the download in {@code <system>/bazel-plugin/bazelisk-<version>}.
+ */
 @ExtensionImpl
 public class BazeliskDownloadingBazelExecutableProvider implements BazelExecutableProvider {
     private static final Logger LOG = Logger.getInstance(BazeliskDownloadingBazelExecutableProvider.class);
@@ -33,54 +44,34 @@ public class BazeliskDownloadingBazelExecutableProvider implements BazelExecutab
 
     @Override
     public CompletableFuture<@Nullable Path> computeBazelExecutable(Project project) {
-        Path workspaceRoot = BazelProjectInfoService.getProjectRootDirOrThrow(project.getInstance(BazelProjectInfoService.class))
-            .toNioPath();
-        String bazeliskVersion = readBazeliskVersion(workspaceRoot);
-        if (bazeliskVersion != null) {
-            // If requested a specific version, download it
-            Path downloaded = downloadBazelisk(bazeliskVersion);
-            if (downloaded == null) {
-                return CompletableFuture.failedFuture(new IllegalStateException("Failed to download bazelisk " + bazeliskVersion));
+        BazeliskDownload.@Nullable BazeliskFile forcedFile = Application.get().getInstance(BazelApplicationContextService.class)
+            .getForcedBazeliskDownload()
+            .bazeliskFile(Platform.current().os(), Platform.current().jvm().arch());
+        CompletableFuture<@Nullable Path> inPath = forcedFile == null
+            ? BazelEnvironmentService.getInstance(project).findInPath("bazel", "bazelisk")
+            : CompletableFuture.completedFuture(null);
+        return inPath.thenCompose(found -> {
+            if (found != null) {
+                return CompletableFuture.completedFuture(found);
             }
-            return CompletableFuture.completedFuture(downloaded);
-        }
-
-        if (!Application.get().getInstance(BazelApplicationContextService.class).getForceBazeliskDownload()) {
-            // Otherwise try to find bazel or bazelisk on PATH
-            return BazelEnvironmentService.getInstance(project).findInPath("bazel", "bazelisk").thenApply(found -> {
-                if (found != null) {
-                    return found;
-                }
-                // If not found, try to download any version of bazelisk
-                return downloadBazelisk(null);
-            });
-        }
-
-        // If not found, try to download any version of bazelisk
-        return CompletableFuture.completedFuture(downloadBazelisk(null));
+            BazeliskDownload.@Nullable BazeliskFile bazeliskFile = forcedFile != null
+                ? forcedFile
+                : BazeliskDownload.GitHub.INSTANCE.bazeliskFile(Platform.current().os(), Platform.current().jvm().arch());
+            if (bazeliskFile == null) {
+                LOG.error("Unsupported platform or architecture for bazelisk download");
+                return CompletableFuture.completedFuture(null);
+            }
+            // consulo: upstream withContext(Dispatchers.IO)
+            return CompletableFuture.supplyAsync(
+                () -> downloadBazelisk(project, bazeliskFile),
+                Application.get().getInstance(ApplicationConcurrency.class).executor()
+            );
+        });
     }
 
-    /**
-     * Logic specific to IntelliJ monorepo, see https://youtrack.jetbrains.com/issue/BAZEL-2573/Hermetic-workflow-.bazeliskversion
-     */
-    private @Nullable String readBazeliskVersion(Path workspaceRoot) {
-        Path bazeliskVersionFile = workspaceRoot.resolve(Constants.BAZELISK_VERSION_FILE_NAME);
-        String text;
-        try {
-            text = Files.readString(bazeliskVersionFile);
-        }
-        catch (Exception e) {
-            return null;
-        }
-        String trimmed = text.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    private @Nullable Path downloadBazelisk(@Nullable String bazeliskVersion) {
-        String downloadUrl = calculateBazeliskDownloadLink(bazeliskVersion);
-        if (downloadUrl == null) {
-            return null;
-        }
+    private @Nullable Path downloadBazelisk(Project project, BazeliskDownload.BazeliskFile file) {
+        String expectedSha256 = file.sha256();
+        String downloadUrl = file.url();
 
         // Use IntelliJ's system cache directory
         Path cacheDir = Path.of(ContainerPathManager.get().getSystemPath(), "bazel-plugin");
@@ -92,60 +83,77 @@ public class BazeliskDownloadingBazelExecutableProvider implements BazelExecutab
             return null;
         }
 
-        // Download bazelisk to the cache folder
-        String targetFileName = bazeliskVersion == null ? "bazelisk" : "bazelisk-" + bazeliskVersion;
-        Path bazeliskFile = cacheDir.resolve(targetFileName);
+        Path bazeliskFile = cacheDir.resolve("bazelisk-" + file.version());
         if (Files.exists(bazeliskFile)) {
-            LOG.info("Bazelisk already exists in the cache folder: " + bazeliskFile.toAbsolutePath());
-            return bazeliskFile;
+            try {
+                checkFileSha256Checksum(bazeliskFile, expectedSha256);
+                LOG.trace("Bazelisk already exists in the cache folder: " + bazeliskFile.toAbsolutePath());
+                return bazeliskFile;
+            }
+            catch (Exception e) {
+                LOG.warn("Bazelisk in the cache folder failed the checksum check, downloading it again", e);
+            }
         }
 
-        LOG.info("Downloading bazelisk to the cache folder: " + bazeliskFile.toAbsolutePath());
+        LOG.info("Downloading Bazelisk to the cache folder: " + bazeliskFile.toAbsolutePath());
 
-        // Download with progress indicator
+        // Each download has its own file. The plugin moves the download to bazeliskFile only after the checksum check.
+        Path downloadFile;
         try {
-            // consulo: upstream runs a Task.WithResult through ProgressManager.run(task)
-            ProgressManager.getInstance().<Boolean, IOException>runProcessWithProgressSynchronously(
-                () -> {
-                    ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
-                    if (indicator != null) {
-                        indicator.setText(BazelBazeliskLocalize.bazelProjectDownloadingBazeliskBinary());
-                        indicator.setIndeterminate(false);
-                    }
+            downloadFile = Files.createTempFile(cacheDir, bazeliskFile.getFileName() + "-", ".download");
+        }
+        catch (IOException e) {
+            LOG.error("Could not create a temporary file for the Bazelisk download", e);
+            return null;
+        }
+        try {
+            // consulo: upstream withBackgroundProgress + reportSequentialProgress -> a background task, the steps set the
+            // progress text and fraction; this method already runs on a pooled thread, so it waits for the task
+            CompletableFuture<Void> task = new CompletableFuture<>();
+            Task.Backgroundable.queue(project, BazelBazeliskLocalize.bazelProjectDownloadingBazelisk(), true, indicator -> {
+                try {
+                    indicator.setText(BazelBazeliskLocalize.bazelProjectDownloadingBazeliskBinary());
+                    indicator.setIndeterminate(false);
+                    downloadWithRetry(downloadUrl, downloadFile, indicator);
 
-                    downloadWithRetry(downloadUrl, bazeliskFile, indicator);
-
-                    if (indicator != null) {
-                        indicator.setText(BazelBazeliskLocalize.bazelProjectDownloadingBazeliskSetting_permissions());
-                    }
-                    NioFiles.setExecutable(bazeliskFile);
-                    // consulo: the computation has no result, the type variable is non-null
-                    return Boolean.TRUE;
-                },
-                BazelBazeliskLocalize.bazelProjectDownloadingBazelisk(),
-                true,
-                null
-            );
+                    indicator.setFraction(0.95);
+                    indicator.setText(BazelBazeliskLocalize.bazelProjectDownloadingBazeliskSetting_permissions());
+                    checkFileSha256Checksum(downloadFile, expectedSha256);
+                    NioFiles.setExecutable(downloadFile);
+                    Files.move(downloadFile, bazeliskFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                    indicator.setFraction(1.0);
+                    task.complete(null);
+                }
+                catch (Throwable e) {
+                    task.completeExceptionally(e);
+                }
+            });
+            try {
+                task.join();
+            }
+            catch (CompletionException e) {
+                throw e.getCause() != null ? e.getCause() : e;
+            }
             LOG.info("Downloaded bazelisk successfully");
             return bazeliskFile;
         }
-        catch (Exception e) {
-            LOG.error("Failed to download bazelisk", e);
+        catch (Throwable e) {
             try {
-                Files.deleteIfExists(bazeliskFile);
+                Files.deleteIfExists(downloadFile);
             }
             catch (IOException ignored) {
                 // consulo: Kotlin has no checked exceptions, upstream propagates this one
             }
+            // consulo: IntelliJ rethrowControlFlowException(e)
+            if (e instanceof ProcessCanceledException processCanceledException) {
+                throw processCanceledException;
+            }
+            LOG.error("Failed to download bazelisk", e);
             return null;
         }
     }
 
-    private void downloadWithRetry(
-        String downloadUrl,
-        Path bazeliskFile,
-        @Nullable ProgressIndicator indicator
-    ) throws IOException {
+    private void downloadWithRetry(String downloadUrl, Path bazeliskFile, @Nullable ProgressIndicator indicator) throws IOException {
         int attempt = 1;
         while (true) {
             try {
@@ -171,49 +179,32 @@ public class BazeliskDownloadingBazelExecutableProvider implements BazelExecutab
         }
     }
 
-    private @Nullable String calculateBazeliskDownloadLink(@Nullable String bazeliskVersion) {
-        String downloadSegment;
-        if (bazeliskVersion != null) {
-            downloadSegment = "download/v" + bazeliskVersion;
+    /**
+     * Throws an {@link IOException} when the SHA-256 checksum of {@code file} is not {@code expectedSha256}.
+     */
+    public static void checkFileSha256Checksum(Path file, String expectedSha256) throws IOException {
+        String actualSha256 = sha256Hex(file);
+        if (!actualSha256.equalsIgnoreCase(expectedSha256)) {
+            throw new IOException(BazelBazeliskLocalize.bazelBazeliskChecksumMismatch(file, actualSha256, expectedSha256).get());
         }
-        else {
-            downloadSegment = "latest/download";
-        }
-        String base = "https://github.com/bazelbuild/bazelisk/releases/" + downloadSegment + "/bazelisk-";
+    }
 
-        PlatformOperatingSystem os = Platform.current().os();
-        String platform;
-        if (os.isWindows()) {
-            platform = "windows";
+    // consulo: IntelliJ com.intellij.util.io.sha256Hex(Path)
+    private static String sha256Hex(Path file) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
         }
-        else if (os.isMac()) {
-            platform = "darwin";
+        catch (NoSuchAlgorithmException e) {
+            throw new IOException(e);
         }
-        else if (os.isLinux()) {
-            platform = "linux";
+        try (InputStream input = Files.newInputStream(file)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
         }
-        else {
-            platform = null;
-        }
-
-        CpuArchitecture cpuArch = Platform.current().jvm().arch();
-        String arch;
-        if (CpuArchitecture.X86_64.equals(cpuArch)) {
-            arch = "amd64";
-        }
-        else if (CpuArchitecture.AARCH64.equals(cpuArch)) {
-            arch = "arm64";
-        }
-        else {
-            arch = null;
-        }
-
-        if (platform == null || arch == null) {
-            LOG.error("Unsupported platform or architecture for bazelisk download");
-            return null;
-        }
-
-        String suffix = platform + "-" + arch;
-        return !os.isWindows() ? base + suffix : base + suffix + ".exe";
+        return HexFormat.of().formatHex(digest.digest());
     }
 }

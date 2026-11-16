@@ -32,7 +32,7 @@ import org.jetbrains.bazel.ui.gutters.BazelRunLocation;
 import org.jetbrains.bazel.ui.gutters.ExecutorActionsUtil;
 import org.jetbrains.bazel.ui.widgets.BazelJumpToBuildFileAction;
 import org.jetbrains.bazel.ui.widgets.tool.window.actions.CopyTargetIdAction;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import javax.swing.SwingUtilities;
@@ -54,7 +54,7 @@ public abstract class LoadedTargetsMouseListener extends PopupHandler {
 
     public abstract boolean isPointSelectable(Point point);
 
-    public abstract @Nullable BuildTarget getSelectedBuildTarget();
+    public abstract @Nullable BuildTargetInfo getSelectedBuildTarget();
 
     public abstract @Nullable VirtualFile getSelectedDirectory();
 
@@ -67,7 +67,7 @@ public abstract class LoadedTargetsMouseListener extends PopupHandler {
     @Override
     public void mouseClicked(MouseEvent mouseEvent) {
         if (isDoubleClick(mouseEvent) && isPointSelectable(mouseEvent.getPoint())) {
-            BuildTarget target = getSelectedBuildTarget();
+            BuildTargetInfo target = getSelectedBuildTarget();
             if (target == null) {
                 return;
             }
@@ -96,7 +96,7 @@ public abstract class LoadedTargetsMouseListener extends PopupHandler {
         int x,
         int y
     ) {
-        BuildTarget selectedBuildTarget = getSelectedBuildTarget();
+        BuildTargetInfo selectedBuildTarget = getSelectedBuildTarget();
         ActionGroup actionGroup;
         if (selectedBuildTarget != null) {
             actionGroup = calculatePopupGroup(selectedBuildTarget);
@@ -116,15 +116,15 @@ public abstract class LoadedTargetsMouseListener extends PopupHandler {
             .show(component, x, y);
     }
 
-    private ActionGroup calculatePopupGroup(BuildTarget target) {
+    private ActionGroup calculatePopupGroup(BuildTargetInfo target) {
         DefaultActionGroup group = new DefaultActionGroup();
         group.addAction(getCopyTargetIdAction());
         group.addSeparator();
-        group.addAction(new BuildTargetAction(BuildTarget.getId(target)));
+        group.addAction(new BuildTargetAction(target.id()));
         // We're on EDT so use runReadActionBlocking
         group.addAll(ReadAction.<List<AnAction>, RuntimeException>compute(() -> ExecutorActionsUtil.getExecutorActions(myProject, target)));
         group.addAction(getBazelJumpToBuildFileAction());
-        group.add(new StarlarkDebugAction(BuildTarget.getId(target)));
+        group.add(new StarlarkDebugAction(target.id()));
         return group;
     }
 
@@ -149,8 +149,8 @@ public abstract class LoadedTargetsMouseListener extends PopupHandler {
     }
 
     @RequiredUIAccess
-    public static void runOrBuildTarget(Project project, BuildTarget target) {
-        RuleType ruleType = target.getKind().ruleType();
+    public static void runOrBuildTarget(Project project, BuildTargetInfo target) {
+        RuleType ruleType = target.kind().ruleType();
         if (ruleType == RuleType.TEST || ruleType == RuleType.BINARY) {
             BazelRunLocation location = new BazelRunLocation(project, target);
             DataContext dataContext = DataContext.builder()
@@ -193,7 +193,7 @@ public abstract class LoadedTargetsMouseListener extends PopupHandler {
             }
         }
         else {
-            BuildTargetAction.buildTarget(project, BuildTarget.getId(target));
+            BuildTargetAction.buildTarget(project, target.id());
         }
     }
 }

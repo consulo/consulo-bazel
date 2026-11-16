@@ -80,17 +80,18 @@ public final class RepoMapping {
                     return CompletableFuture.<org.jetbrains.bazel.commons.RepoMapping>completedFuture(RepoMappingDisabled.INSTANCE);
                 }
 
-                List<String> canonicalNamesOfNotCoveredRules = new ArrayList<>();
+                Set<String> bcrNameOfReposWithTransitiveNeeds = new LinkedHashSet<>();
                 for (Map.Entry<String, List<String>> it : rootRulesToNeededTransitiveRules.entrySet()) {
                     if (!coveredByMap(it.getValue(), moduleApparentNameToCanonicalName)) {
-                        String canonicalName = moduleApparentNameToCanonicalName.get(it.getKey());
-                        if (canonicalName != null) {
-                            canonicalNamesOfNotCoveredRules.add(canonicalName);
-                        }
+                        bcrNameOfReposWithTransitiveNeeds.add(it.getKey());
                     }
                 }
 
-                return moduleResolver.getRepoMappings(canonicalNamesOfNotCoveredRules).thenApply(repoMappings -> {
+                List<String> reposToAskTransitively = moduleApparentNameToCanonicalName.values().stream()
+                    .filter(canonicalName -> bcrNameOfReposWithTransitiveNeeds.stream().anyMatch(canonicalName::contains))
+                    .toList();
+
+                return moduleResolver.getRepoMappings(reposToAskTransitively).thenApply(repoMappings -> {
                     // consulo: upstream values.reduceOrNull { acc, map -> acc + map }.orEmpty()
                     Map<String, String> moduleApparentNameToCanonicalNameForNeededTransitiveRules = new LinkedHashMap<>();
                     for (Map<String, String> map : repoMappings.values()) {

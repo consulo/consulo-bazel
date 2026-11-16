@@ -20,7 +20,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
-public class CcWorkspaceImporter implements BazelWorkspaceImporter, BazelWorkspaceImporter.Named {
+public class CcWorkspaceImporter implements BazelWorkspaceImporter {
     // consulo: the upstream nested `Factory` is the top-level CcWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
     public static final String CC_CLIENT_KEY = "BAZEL_CC";
@@ -53,7 +53,7 @@ public class CcWorkspaceImporter implements BazelWorkspaceImporter, BazelWorkspa
             return CompletableFuture.completedFuture(WorkspaceImporterResult.Abort);
         }
 
-        // consulo: Kotlin Result -> a failed future
+        // consulo: an exception of a failed phase -> a failed future
         try {
             if (phase instanceof WorkspaceImporterPhase.Initialize) {
                 return onInitialize(snapshot, taskId);

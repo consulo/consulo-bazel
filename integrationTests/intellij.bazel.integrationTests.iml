@@ -4,13 +4,13 @@
     <facet type="kotlin-language" name="Kotlin">
       <configuration version="5" platform="JVM 25" allPlatforms="JVM [25]" useProjectSettings="false">
         <compilerSettings>
-          <option name="additionalArguments" value="-Xjvm-default=all -XXLanguage:+AllowEagerSupertypeAccessibilityChecks -progressive" />
+          <option name="additionalArguments" value="-Xjvm-default=all -XXLanguage:+AllowEagerSupertypeAccessibilityChecks -XXLanguage:-WrapContinuationForTailCallFunctions -progressive" />
         </compilerSettings>
         <compilerArguments>
           <stringArguments>
             <stringArg name="jvmTarget" arg="25" />
-            <stringArg name="apiVersion" arg="2.4" />
-            <stringArg name="languageVersion" arg="2.4" />
+            <stringArg name="apiVersion" arg="2.5" />
+            <stringArg name="languageVersion" arg="2.5" />
           </stringArguments>
           <arrayArguments>
             <arrayArg name="pluginClasspaths">
@@ -31,11 +31,11 @@
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
-    <orderEntry type="library" name="kotlin-stdlib" level="project" />
+    <orderEntry type="library" scope="TEST" name="kotlin-stdlib" level="project" />
     <orderEntry type="module" module-name="intellij.ide.starter.extended" scope="TEST" />
     <orderEntry type="module" module-name="intellij.libraries.junit6" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.libraries.kodein.di.jvm" />
-    <orderEntry type="module" module-name="intellij.tools.ide.starter.junit5" />
+    <orderEntry type="module" module-name="intellij.libraries.kodein.di.jvm" scope="TEST" />
+    <orderEntry type="module" module-name="intellij.tools.ide.starter.junit5" scope="TEST" />
     <orderEntry type="module" module-name="intellij.libraries.junit6.params" scope="TEST" />
     <orderEntry type="module" module-name="intellij.tools.ide.starter" scope="TEST" />
     <orderEntry type="module" module-name="intellij.tools.ide.starter.product.pycharm" scope="TEST" />
@@ -46,7 +46,7 @@
     <orderEntry type="module" module-name="intellij.platform.util" scope="TEST" />
     <orderEntry type="module" module-name="intellij.protoeditor" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.core" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.platform.testFramework.common" />
+    <orderEntry type="module" module-name="intellij.platform.testFramework.common" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.testFramework.core" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.ide.impl" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.ide.playback" scope="TEST" />
@@ -66,13 +66,7 @@
     <orderEntry type="module" module-name="intellij.idea.ultimate.build" scope="TEST" />
     <orderEntry type="module" module-name="intellij.idea.community.build.tasks" scope="TEST" />
     <orderEntry type="module" module-name="intellij.libraries.teamcity.service.messages" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.platform.images.tests" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.regexp.tests" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.platform.debugger.impl.tests" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.python.venv.tests" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.python.community.services.systemPython.tests" scope="TEST" />
     <orderEntry type="module" module-name="intellij.python.pyproject.tests" scope="TEST" />
-    <orderEntry type="module" module-name="intellij.python.community.services.internal.impl.tests" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.ijent.impl.tests" scope="TEST" />
     <orderEntry type="module" module-name="intellij.bazel" scope="TEST" />
     <orderEntry type="module" module-name="intellij.bazel.bazelisk" scope="TEST" />
@@ -120,5 +114,6 @@
     <orderEntry type="module" module-name="intellij.platform.projectModel.impl" scope="TEST" />
     <orderEntry type="module" module-name="intellij.libraries.junit4" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.execution" scope="TEST" />
+    <orderEntry type="module" module-name="intellij.platform.scratch.plugin" scope="TEST" />
   </component>
 </module>

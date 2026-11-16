@@ -117,6 +117,7 @@ module consulo.bazel.java {
     exports org.jetbrains.bazel.hotswap;
     exports org.jetbrains.bazel.inspections;
     exports org.jetbrains.bazel.java.analysis;
+    exports org.jetbrains.bazel.java.compiler;
     exports org.jetbrains.bazel.java.coverage;
     exports org.jetbrains.bazel.java.navigation;
     exports org.jetbrains.bazel.java.run;

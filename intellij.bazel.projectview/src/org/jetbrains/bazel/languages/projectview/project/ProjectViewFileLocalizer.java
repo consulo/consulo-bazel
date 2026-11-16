@@ -1,5 +1,6 @@
 package org.jetbrains.bazel.languages.projectview.project;
 
+import consulo.bazel.projectview.localize.BazelProjectViewLocalize;
 import consulo.platform.Platform;
 import org.jetbrains.bazel.flow.open.ProjectViewFileUtils;
 import org.jetbrains.bazel.utils.PathUtil;
@@ -7,9 +8,12 @@ import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Objects;
 
 import static org.jetbrains.bazel.commons.constants.Constants.DEFAULT_PROJECT_VIEW_FILE_NAME;
@@ -90,11 +94,20 @@ public final class ProjectViewFileLocalizer {
         return null;
     }
 
+    /**
+     * The plugin calls this function before the user trusts the project.
+     * Thus a symlink in the project must not move the created file out of the project.
+     */
     private static Path useDotBazelBspProjectViewFile(Path rootDir) {
         // consulo: IntelliJ Path.findOrCreateDirectory(relativePath)
         Path dotBazelBspDirectory = rootDir.resolve(DOT_BAZELBSP_DIR_NAME);
         try {
             Files.createDirectories(dotBazelBspDirectory);
+            if (!dotBazelBspDirectory.toRealPath().startsWith(rootDir.toRealPath())) {
+                throw new IllegalStateException(
+                    BazelProjectViewLocalize.projectViewFileOutsideOfProjectRoot(dotBazelBspDirectory, rootDir).get()
+                );
+            }
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -111,7 +124,17 @@ public final class ProjectViewFileLocalizer {
 
         String projectViewTemplate = ProjectViewFileUtils.projectViewTemplate(Objects.requireNonNull(PathUtil.findVirtualFile(rootDir)));
         try {
-            Files.writeString(projectViewFile, projectViewTemplate);
+            // CREATE_NEW fails on any existing entry, also on a dangling symlink
+            Files.writeString(
+                projectViewFile,
+                projectViewTemplate,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE
+            );
+        }
+        catch (FileAlreadyExistsException e) {
+            throw new IllegalStateException(BazelProjectViewLocalize.projectViewFileNotRegularFile(projectViewFile).get());
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);

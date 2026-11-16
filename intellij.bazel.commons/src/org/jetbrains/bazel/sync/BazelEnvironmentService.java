@@ -19,12 +19,15 @@ import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static org.jetbrains.bazel.config.project.isBazelProject;
 
@@ -70,23 +73,66 @@ public class BazelEnvironmentService {
     public CompletableFuture<@Nullable Path> findInPath(String... executableNames) {
         return getEnvironment().thenApply(environment -> {
             String pathValue = environment.get("PATH");
-            // consulo: Kotlin String.split(delimiter) keeps empty entries and does not use regular expressions
-            List<String> paths = pathValue != null ? List.of(pathValue.split(Pattern.quote(File.pathSeparator), -1)) : List.of();
-            for (String pathStr : paths) {
-                for (String executableName : executableNames) {
-                    String actualExecutableName = Platform.current().os().isWindows() ? executableName + ".exe" : executableName;
-                    Path path = Path.of(pathStr, actualExecutableName);
-                    if (Files.exists(path) && Files.isExecutable(path)) {
-                        return path;
-                    }
-                }
+            if (pathValue == null) {
+                return null;
             }
-            return null;
+            return findExecutableInPath(pathValue, executableNames);
         });
     }
 
     public static BazelEnvironmentService getInstance(Project project) {
         return project.getInstance(BazelEnvironmentService.class);
+    }
+
+    /**
+     * Returns the first executable regular file with one of {@code executableNames} in the directories of {@code pathValue}.
+     * The directory order comes first, as in a shell: the first directory with any of the names wins.
+     * In one directory, the order of {@code executableNames} decides.
+     * The search skips a directory with a matching name, and an empty or a relative entry of {@code pathValue}.
+     * On Windows, the search accepts only {@code <name>.exe}.
+     * A Windows process cannot run a file without an extension, and every file on Windows is executable.
+     */
+    // consulo: upstream top-level function of BazelEnvironmentService.kt
+    public static @Nullable Path findExecutableInPath(String pathValue, String... executableNames) {
+        List<String> fileNames = Platform.current().os().isWindows()
+            ? Stream.of(executableNames).map(it -> it + ".exe").toList()
+            : List.of(executableNames);
+        for (Path dir : getPathDirs(pathValue)) {
+            for (String name : fileNames) {
+                Path file = findFirst(name, dir);
+                if (file != null) {
+                    return file;
+                }
+            }
+        }
+        return null;
+    }
+
+    // consulo: IntelliJ PathEnvironmentVariableUtil.getPathDirs(pathValue), missing in Consulo PathEnvironmentVariableUtil
+    private static List<Path> getPathDirs(String pathValue) {
+        List<Path> result = new ArrayList<>();
+        for (String entry : pathValue.split(Pattern.quote(File.pathSeparator))) {
+            if (entry.isEmpty()) {
+                continue;
+            }
+            Path dir;
+            try {
+                dir = Path.of(entry);
+            }
+            catch (InvalidPathException e) {
+                continue;
+            }
+            if (dir.isAbsolute()) {
+                result.add(dir);
+            }
+        }
+        return result;
+    }
+
+    // consulo: IntelliJ PathEnvironmentVariableUtil.findFirst(name, dir), missing in Consulo PathEnvironmentVariableUtil
+    private static @Nullable Path findFirst(String name, Path dir) {
+        Path file = dir.resolve(name);
+        return Files.isRegularFile(file) && Files.isExecutable(file) ? file : null;
     }
 }
 

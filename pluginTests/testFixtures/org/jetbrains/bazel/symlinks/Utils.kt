@@ -7,6 +7,21 @@ import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 
+/**
+ * Conditions for `@EnabledIf` and `@DisabledIf`, for example `@EnabledIf(SymlinkTestConditions.IS_SYM_LINK_CREATION_SUPPORTED)`.
+ */
+@Suppress("unused")  // JUnit calls the methods by name
+object SymlinkTestConditions {
+  const val IS_SYM_LINK_CREATION_SUPPORTED: String = "org.jetbrains.bazel.symlinks.SymlinkTestConditions#isSymLinkCreationSupported"
+  const val IS_FILE_SYSTEM_CASE_SENSITIVE: String = "org.jetbrains.bazel.symlinks.SymlinkTestConditions#isFileSystemCaseSensitive"
+
+  @JvmStatic
+  fun isSymLinkCreationSupported(): Boolean = IoTestUtil.isSymLinkCreationSupported
+
+  @JvmStatic
+  fun isFileSystemCaseSensitive(): Boolean = SystemInfoRt.isFileSystemCaseSensitive
+}
+
 fun Path.createSymlinkOrJunction(target: Path): Path {
   when {
     SystemInfoRt.isWindows -> createJunction(target)

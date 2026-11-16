@@ -9,8 +9,6 @@
     <module name="intellij.bazel.projectview"/>
     <module name="intellij.go.frontback"/>
     <module name="intellij.go.impl"/>
-    <module name="intellij.libraries.guava"/>
-    <module name="intellij.libraries.stream"/>
     <module name="intellij.platform.analysis"/>
     <module name="intellij.platform.backend.workspace"/>
     <module name="intellij.platform.buildView"/>
@@ -78,6 +76,7 @@
     <targetsToBuildProvider implementation="org.jetbrains.bazel.golang.workspace.GoTargetsToBuildProvider"/>
     <testLocationHintProvider implementation="org.jetbrains.bazel.golang.run.BazelGoTestLocationHintProvider"/>
     <testLocatorProvider implementation="org.jetbrains.bazel.golang.run.BazelGoTestLocatorProvider"/>
+    <testRerunExtension implementation="org.jetbrains.bazel.golang.run.BazelGoTestRerunExtension"/>
   </extensions>
   <extensions defaultExtensionNs="com.goide">
     <dlv.positionConverterFactory

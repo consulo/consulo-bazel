@@ -9,8 +9,6 @@ import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarEx
 import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity.CompiledSourceCodeInsideJarExcludeId;
 import org.jetbrains.bazel.workspacemodel.entities.CompiledSourceCodeInsideJarExcludeEntity.LibraryCompiledSourceCodeInsideJarExcludeEntity;
 import org.jetbrains.bazel.workspacemodel.entities.extensions.BazelLibraryExtensionEntity;
-import org.jetbrains.bsp.protocol.BuildTarget;
-import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.WorkspaceLibraries.LibraryItem;
 import org.jspecify.annotations.Nullable;
 
@@ -24,9 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
 
 // https://youtrack.jetbrains.com/issue/BAZEL-1672
 // RC: replaces `CompiledSourceCodeInsideJarExcludeTransformer` + `CompiledSourceCodeInsideJarExcludeEntityUpdater`
@@ -35,12 +31,11 @@ public final class CompiledSourceCodeInsideJarExcludeBuilder {
     }
 
     public static void write(
-        Collection<BuildTarget> targets,
+        List<Path> productionSources,
         List<LibraryItem> libraries,
-        Function<OutputLocation, @Nullable Path> resolveLocation,
         BazelModelBuilder storage
     ) {
-        write(targets, libraries, resolveLocation, storage, null);
+        write(productionSources, libraries, storage, null);
     }
 
     /**
@@ -61,9 +56,8 @@ public final class CompiledSourceCodeInsideJarExcludeBuilder {
      * consulo: the entities are the project data / library data of {@link BazelModelBuilder}
      */
     public static void write(
-        Collection<BuildTarget> targets,
+        List<Path> productionSources,
         List<LibraryItem> libraries,
-        Function<OutputLocation, @Nullable Path> resolveLocation,
         BazelModelBuilder storage,
         @Nullable CompiledSourceCodeInsideJarExcludeEntity currentExcludeEntity
     ) {
@@ -72,7 +66,7 @@ public final class CompiledSourceCodeInsideJarExcludeBuilder {
             return;
         }
 
-        Set<String> relativePathsInsideJarToExclude = calculateSourceFilePaths(targets, resolveLocation);
+        Set<String> relativePathsInsideJarToExclude = calculateSourceFilePaths(productionSources);
 
         CompiledSourceCodeInsideJarExcludeId nextExcludeEntityId;
         if (currentExcludeEntity != null &&
@@ -134,18 +128,12 @@ public final class CompiledSourceCodeInsideJarExcludeBuilder {
      * The package of a source file is unknown, so the paths of the source files are stored instead of the paths inside jars.
      * {@link CompiledSourceFileIndex} approximates the package by the relative path inside the jar and matches it against them.
      */
-    public static Set<String> calculateSourceFilePaths(
-        Collection<BuildTarget> targets,
-        Function<OutputLocation, @Nullable Path> resolveLocation
-    ) {
+    public static Set<String> calculateSourceFilePaths(List<Path> sources) {
         HashSet<String> result = new HashSet<>();
-        for (BuildTarget target : targets) {
-            List<Path> sources = BuildTarget.nonGeneratedSources(target).map(resolveLocation).filter(Objects::nonNull).toList();
-            for (Path source : sources) {
-                String extension = BuilderUtils.extension(source);
-                if (extension.equals("java") || extension.equals("kt")) {
-                    result.add(invariantSeparatorsPathString(source));
-                }
+        for (Path source : sources) {
+            String extension = BuilderUtils.extension(source);
+            if (extension.equals("java") || extension.equals("kt")) {
+                result.add(invariantSeparatorsPathString(source));
             }
         }
         return result;

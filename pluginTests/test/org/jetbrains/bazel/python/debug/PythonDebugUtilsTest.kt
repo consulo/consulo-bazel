@@ -1,30 +1,20 @@
 package org.jetbrains.bazel.python.debug
 
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.testFramework.LightVirtualFile
-import com.intellij.testFramework.junit5.TestApplication
-import com.intellij.testFramework.junit5.TestDisposable
-import com.intellij.testFramework.junit5.fixture.projectFixture
-import com.intellij.testFramework.junit5.fixture.tempPathFixture
 import com.intellij.testFramework.replaceService
 import com.intellij.util.execution.ParametersListUtil
+import io.kotest.matchers.nulls.shouldNotBeNull
 import org.jetbrains.bazel.commons.RuleType
-import org.jetbrains.bazel.commons.TargetKind
 import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.project.BazelProjectFixtures.initializeBazelProject
-import org.jetbrains.bazel.python.lang.PythonBuildTarget
-import org.jetbrains.bazel.python.lang.PythonLanguageClass
 import org.jetbrains.bazel.sync.environment.BazelProjectInfoService
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.test.framework.target.TestBuildTarget
-import org.jetbrains.bazel.workspace.model.test.framework.setTargets
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bazel.workspace.model.test.framework.testLocation
-import org.jetbrains.bsp.protocol.StringsCollection
+import org.jetbrains.bazel.test.framework.BazelTestApplication
+import org.jetbrains.bazel.test.framework.testproject.outputBase
+import org.jetbrains.bazel.test.framework.testproject.pythonTarget
+import org.jetbrains.bazel.test.framework.testproject.sync
+import org.jetbrains.bazel.test.framework.testproject.testBazelProjectFixture
+import org.jetbrains.bazel.test.framework.testproject.workspaceRoot
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertNotNull
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -35,13 +25,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-@TestApplication
+@BazelTestApplication
 class PythonDebugUtilsTest {
-  private val tempDirFixture = tempPathFixture()
-  private val tempDir by tempDirFixture
-
-  private val projectFixture = projectFixture(pathFixture = tempDirFixture)
-  private val project by projectFixture
+  private val testBazel by testBazelProjectFixture()
 
   @Test
   fun `pytest debug target uses runfiles package working directory`() {
@@ -53,7 +39,7 @@ class PythonDebugUtilsTest {
       imports = listOf("python/imports"),
     )
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertPythonDebugInfo(fixture, debugInfo)
   }
@@ -68,7 +54,7 @@ class PythonDebugUtilsTest {
       imports = listOf("python/imports"),
     )
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertPythonDebugInfo(fixture, debugInfo)
   }
@@ -83,7 +69,7 @@ class PythonDebugUtilsTest {
       imports = listOf("tools/imports"),
     )
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertPythonDebugInfo(fixture, debugInfo)
   }
@@ -103,10 +89,10 @@ class PythonDebugUtilsTest {
       .resolve("_${target.targetName}_stage2_bootstrap.py")
       .createFile()
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertEquals(
-      listOf(tempDir, fixture.runfilesWorkspaceRoot),
+      listOf(testBazel.workspaceRoot, fixture.runfilesWorkspaceRoot),
       debugInfo.environmentVariables.getValue("IDE_PROJECT_ROOTS").toPaths(),
     )
     assertEquals(
@@ -128,20 +114,20 @@ class PythonDebugUtilsTest {
       mainFileName = "main.py",
     )
 
-    val debugInfoBefore = preparePythonDebug(project, target).assertNotNull()
+    val debugInfoBefore = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
     assertEquals(fixture.runnerScript, debugInfoBefore.pythonFile)
 
     Files.writeString(fixture.runnerScript, "#!/usr/bin/env bash\necho debug target\n")
     VirtualFileManager.getInstance().refreshAndFindFileByNioPath(fixture.runnerScript)
 
-    val debugInfoAfter = preparePythonDebug(project, target).assertNotNull()
+    val debugInfoAfter = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
     assertEquals(fixture.mainFile, debugInfoAfter.pythonFile)
   }
 
   @Test
   fun `Bazel-declared venv interpreter is used as python binary`() {
     val target = Label.parse("//tools/scripts:runner")
-    val basePythonBinary = tempDir.resolve("bazel-out/bin/rules_python/bin/python3")
+    val basePythonBinary = testBazel.outputBase.resolve("bazel-out/bin/rules_python/bin/python3")
     val fixture = registerPythonTarget(
       target = target,
       ruleKind = "py_binary",
@@ -164,7 +150,7 @@ class PythonDebugUtilsTest {
     assertTrue(venvPythonBinary.toFile().setExecutable(true))
     writeRunfilesManifest(fixture, venvPythonBinary)
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertEquals(fixture.mainFile, debugInfo.pythonFile)
     assertEquals(venvPythonBinary, debugInfo.pythonBinary)
@@ -174,7 +160,7 @@ class PythonDebugUtilsTest {
   @Test
   fun `target interpreter is used when runfiles contain stale undeclared venv`() {
     val target = Label.parse("//tools/scripts:runner")
-    val pythonBinary = tempDir.resolve("bazel-out/bin/rules_python/bin/python3")
+    val pythonBinary = testBazel.outputBase.resolve("bazel-out/bin/rules_python/bin/python3")
     val fixture = registerPythonTarget(
       target = target,
       ruleKind = "py_binary",
@@ -192,7 +178,7 @@ class PythonDebugUtilsTest {
     staleVenvPythonBinary.createFile()
     writeRunfilesManifest(fixture)
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertEquals(pythonBinary, debugInfo.pythonBinary)
   }
@@ -215,7 +201,7 @@ class PythonDebugUtilsTest {
       interpreter = null,
     )
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertNull(debugInfo.pythonBinary)
   }
@@ -270,25 +256,22 @@ class PythonDebugUtilsTest {
 
   @Test
   fun `locating source file - source file inside project`() {
-    val workspaceRoot = tempDir.resolve("workspace")
-    initializeProject(workspaceRoot)
-    val file = workspaceRoot.resolve("src/source.py")
+    val file = testBazel.workspaceRoot.resolve("src/source.py")
     file.parent.createDirectories()
     file.createFile()
 
-    val sourceFile = PythonDebugUtils.findRealSourceFile(project, Label.parse("//src:target"), file.toString())
+    val sourceFile = PythonDebugUtils.findRealSourceFile(testBazel.project, Label.parse("//src:target"), file.toString())
 
     assertEquals(file.toRealPath().toString(), sourceFile)
   }
 
   @Test
   fun `locating source file - source file outside project`() {
-    initializeProject(tempDir.resolve("workspace"))
-    val file = tempDir.resolve("external/source.py")
+    val file = testBazel.outputBase.resolve("external/source.py")
     file.parent.createDirectories()
     file.createFile()
 
-    val sourceFile = PythonDebugUtils.findRealSourceFile(project, Label.parse("//src:target"), file.toString())
+    val sourceFile = PythonDebugUtils.findRealSourceFile(testBazel.project, Label.parse("//src:target"), file.toString())
 
     assertEquals(file.toString(), sourceFile)
   }
@@ -302,36 +285,32 @@ class PythonDebugUtilsTest {
       ruleType = RuleType.BINARY,
       imports = emptyList(),
     )
-    val workspaceRoot = tempDir.resolve("workspace")
-    initializeProject(workspaceRoot)
     val runfilesFile = fixture.runfilesWorkspaceRoot.resolve("src/source.py")
     runfilesFile.parent.createDirectories()
     runfilesFile.createFile()
 
-    val sourceFile = PythonDebugUtils.findRealSourceFile(project, target, runfilesFile.toString())
+    val sourceFile = PythonDebugUtils.findRealSourceFile(testBazel.project, target, runfilesFile.toString())
 
-    assertEquals(workspaceRoot.resolve("src/source.py").toString(), sourceFile)
+    assertEquals(testBazel.workspaceRoot.resolve("src/source.py").toString(), sourceFile)
   }
 
   @Test
-  fun `locating source file - project root path not found`(@TestDisposable disposable: Disposable) {
-    val projectContext = project.getService(BazelProjectInfoService::class.java)
+  fun `locating source file - project root path not found`() {
+    val projectContext = testBazel.project.getService(BazelProjectInfoService::class.java)
     val nonLocalProjectContext = object : BazelProjectInfoService by projectContext {
       override val projectRootDir = LightVirtualFile("workspace")
     }
-    project.replaceService(BazelProjectInfoService::class.java, nonLocalProjectContext, disposable)
+    testBazel.project.replaceService(BazelProjectInfoService::class.java, nonLocalProjectContext, testBazel.disposable)
     val file = "src/source.py"
 
-    val sourceFile = PythonDebugUtils.findRealSourceFile(project, Label.parse("//src:target"), file)
+    val sourceFile = PythonDebugUtils.findRealSourceFile(testBazel.project, Label.parse("//src:target"), file)
 
     assertEquals(file, sourceFile)
   }
 
   @Test
   fun `locating source file - source file missing`() {
-    initializeProject(tempDir.resolve("workspace"))
-
-    val sourceFile = PythonDebugUtils.findRealSourceFile(project, Label.parse("//src:target"), tempDir.resolve("missing.py").toString())
+    val sourceFile = PythonDebugUtils.findRealSourceFile(testBazel.project, Label.parse("//src:target"), testBazel.workspaceRoot.resolve("missing.py").toString())
 
     assertNull(sourceFile)
   }
@@ -366,7 +345,7 @@ class PythonDebugUtilsTest {
       targetArgs = targetArgs,
     )
 
-    val debugInfo = preparePythonDebug(project, target).assertNotNull()
+    val debugInfo = PythonDebugUtils.preparePythonDebug(testBazel.project, target).shouldNotBeNull()
 
     assertEquals(targetArgs, debugInfo.targetArgs)
   }
@@ -392,18 +371,16 @@ class PythonDebugUtilsTest {
     runnerScriptName: String = "${target.targetName}.py",
     runnerScriptContent: String = "print('debug target')\n",
     mainFileName: String? = null,
-    interpreter: Path? = tempDir.resolve("python3"),
+    interpreter: Path? = testBazel.outputBase.resolve("python3"),
     targetArgs: List<String> = emptyList(),
   ): PythonTargetFixture {
-    initializeProject(tempDir)
-
-    val runnerScript = tempDir.resolve("bazel-out/bin").resolve(target.packagePath.toString()).resolve(runnerScriptName)
+    val runnerScript = testBazel.outputBase.resolve("bazel-out/bin").resolve(target.packagePath.toString()).resolve(runnerScriptName)
     runnerScript.parent.createDirectories()
     Files.writeString(runnerScript, runnerScriptContent)
 
     val mainFile =
       mainFileName?.let {
-        tempDir.resolve(target.packagePath.toString()).resolve(it).also { mainFile ->
+        testBazel.workspaceRoot.resolve(target.packagePath.toString()).resolve(it).also { mainFile ->
           mainFile.parent.createDirectories()
           Files.writeString(mainFile, "print('main file')\n")
         }
@@ -415,31 +392,20 @@ class PythonDebugUtilsTest {
     val importRoots = imports.map { runfilesWorkspaceRoot.resolve(it).createDirectories() }
     val sitePackagesRoot = runfilesRoot.resolve("rules_python++pip+pypi__pytest/site-packages").createDirectories()
 
-    project.setTargets(
-      listOf(
-        TestBuildTarget(
-          key = WorkspaceTargetKey(label = target),
-          dependencies = emptyList(),
-          kind = TargetKind(
-            kind = ruleKind,
-            languageClasses = setOf(PythonLanguageClass.PYTHON),
-            ruleType = ruleType,
-          ),
-          sources = OutputLocationCollection.EMPTY,
-          resources = OutputLocationCollection.EMPTY,
-          data = listOf(
-            PythonBuildTarget(
-              version = "3.8",
-              interpreter = interpreter?.let(::testLocation),
-              imports = StringsCollection.of(imports),
-              mainFile = testLocation(mainFile),
-              runnerScript = runnerScript,
-              targetArgs = StringsCollection.of(targetArgs),
-            ),
-          ),
+    testBazel.sync {
+      targets(
+        pythonTarget(
+          target,
+          ruleKind,
+          ruleType,
+          interpreter = interpreter,
+          imports = imports,
+          mainFile = mainFile,
+          runnerScript = runnerScript,
+          targetArgs = targetArgs,
         ),
-      ),
-    )
+      )
+    }
 
     return PythonTargetFixture(
       target = target,
@@ -474,22 +440,6 @@ class PythonDebugUtilsTest {
     assertTrue(fixture.sitePackagesRoot.toString() in pythonPathEntries)
   }
 
-  private fun preparePythonDebug(project: Project, target: Label): PythonDebugUtils.PythonDebugInfo? =
-    PythonDebugUtils.preparePythonDebug(project, target)
-
-  private fun createFileIfAbsent(path: Path) {
-    path.parent?.createDirectories()
-    if (!Files.exists(path)) {
-      path.createFile()
-    }
-  }
-
-  private fun initializeProject(root: Path) {
-    root.createDirectories()
-    createFileIfAbsent(root.resolve("MODULE.bazel"))
-    initializeBazelProject(project, root)
-  }
-
   private fun String.toPaths(): List<Path> = split(File.pathSeparator).map { Path.of(it) }
 
   private fun writeRunfilesManifest(fixture: PythonTargetFixture, vararg files: Path) {
@@ -511,9 +461,4 @@ class PythonDebugUtilsTest {
     val sitePackagesRoot: Path,
     val interpreter: Path?,
   )
-}
-
-private fun <T> T?.assertNotNull(): T {
-  assertNotNull(this)
-  return this
 }

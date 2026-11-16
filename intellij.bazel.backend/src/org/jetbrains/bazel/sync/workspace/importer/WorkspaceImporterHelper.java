@@ -1,11 +1,8 @@
 package org.jetbrains.bazel.sync.workspace.importer;
 
-import consulo.application.Application;
 import consulo.application.progress.ProgressIndicator;
 import consulo.bazel.backend.localize.BazelBackendLocalize;
 import consulo.bazel.workspace.BazelModelBuilder;
-import consulo.build.ui.event.BuildEventFactory;
-import consulo.logging.Logger;
 import consulo.project.Project;
 import org.jetbrains.bazel.commons.BazelInfo;
 import org.jetbrains.bazel.progress.TaskConsole;
@@ -24,18 +21,17 @@ import org.jetbrains.bsp.protocol.TaskId;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.function.Function;
 
 // consulo: the workspace model builder (MutableEntityStorage) is the classic BazelModelBuilder;
 // suspend functions return CompletableFuture, importers of a phase run one after another as upstream
 public class WorkspaceImporterHelper {
-    private static final Logger LOG = Logger.getInstance(WorkspaceImporterHelper.class);
-
     private final Project myProject;
     private final TaskConsole myTaskConsole;
     private final ProgressIndicator myProgressReporter;
@@ -47,6 +43,15 @@ public class WorkspaceImporterHelper {
 
     private final Set<BazelWorkspaceImporter> myToSkip = new HashSet<>();
     private List<BazelWorkspaceImporter> myImporters = List.of();
+
+    private final Map<String, Long> myImporterToTime = new HashMap<>();
+
+    /**
+     * Time spent by each {@link BazelWorkspaceImporter} in milliseconds
+     */
+    public Map<String, Long> getTimePerImporter() {
+        return myImporterToTime;
+    }
 
     public WorkspaceImporterHelper(
         Project project,
@@ -164,46 +169,33 @@ public class WorkspaceImporterHelper {
         return chain;
     }
 
-    private void logExceptionIfNeeded(TaskId taskId, Throwable throwable) {
-        LOG.error(throwable);
-        util.getSyncConsole(myProject).finishSubtask(
-            taskId,
-            null,
-            Application.get().getInstance(BuildEventFactory.class).createFailureResult(throwable)
-        );
-    }
-
     // MAYBE RC: using context parameters for `TaskId` would be great fit here
-    // consulo: Kotlin Result -> the future completes with null on failure (after logging), like Result.failure
     private CompletableFuture<@Nullable WorkspaceImporterResult> runContextual(
         BazelWorkspaceImporter importer,
         TaskId taskId,
         WorkspaceImporterPhase phase,
         WorkspaceSnapshot snapshot
     ) {
-        CompletableFuture<WorkspaceImporterResult> result;
-        try {
-            if (importer instanceof BazelWorkspaceImporter.Named named) {
+        return util.isolateSubtaskFailure(myTaskConsole, taskId, () -> {
+            long startTime = System.currentTimeMillis();
+            CompletableFuture<WorkspaceImporterResult> result;
+            try {
                 result = util.withSubtask(
                     myTaskConsole,
                     taskId.uniqueSubTask("importer"),
-                    BazelBackendLocalize.workspaceImporterPhaseExecuting(named.getImporterName()),
+                    BazelBackendLocalize.workspaceImporterPhaseExecuting(importer.getImporterName()),
                     importerTaskId -> importer.doImport(phase, snapshot, importerTaskId)
                 );
             }
-            else {
-                result = importer.doImport(phase, snapshot, taskId);
+            catch (Throwable e) {
+                result = CompletableFuture.failedFuture(e);
             }
-        }
-        catch (Throwable e) {
-            result = CompletableFuture.failedFuture(e);
-        }
-        return result.handle((value, error) -> {
-            if (error != null) {
-                logExceptionIfNeeded(taskId, error instanceof CompletionException && error.getCause() != null ? error.getCause() : error);
-                return null;
-            }
-            return value;
+            // consulo: the upstream finally block runs when the future completes
+            return result.whenComplete((value, error) -> {
+                long endTime = System.currentTimeMillis();
+                String importerName = importer.getClass().getName();
+                myImporterToTime.merge(importerName, endTime - startTime, Long::sum);
+            });
         });
     }
 }

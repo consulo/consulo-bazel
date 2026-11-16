@@ -1,47 +1,73 @@
 package org.jetbrains.bazel.languages.projectview.language
 
-import com.intellij.testFramework.junit5.fixture.moduleFixture
-import com.intellij.testFramework.junit5.fixture.projectFixture
 import com.intellij.testFramework.junit5.fixture.tempPathFixture
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldBeSingleton
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.jetbrains.bazel.commons.ExcludableValue
 import org.jetbrains.bazel.label.Label
 import org.jetbrains.bazel.languages.projectview.DIRECTORIES_KEY
 import org.jetbrains.bazel.languages.projectview.IMPORT_DEPTH_KEY
-import org.jetbrains.bazel.languages.projectview.ProjectView
-import org.jetbrains.bazel.languages.projectview.ProjectViewFactory
 import org.jetbrains.bazel.languages.projectview.SHARD_SYNC_KEY
 import org.jetbrains.bazel.languages.projectview.TARGETS_KEY
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem
 import org.jetbrains.bazel.languages.projectview.imports.Import
-import org.jetbrains.bazel.project.BazelProjectFixtures.initializeBazelProject
 import org.jetbrains.bazel.test.framework.BazelTestApplication
-import org.junit.jupiter.api.BeforeEach
+import org.jetbrains.bazel.test.framework.testproject.parseProjectView
+import org.jetbrains.bazel.test.framework.testproject.testBazelProjectFixture
+import org.jetbrains.bazel.test.framework.testproject.workspaceRoot
+import org.jetbrains.bazel.test.framework.testproject.writeFile
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 import kotlin.io.path.Path
+import kotlin.io.path.createSymbolicLinkPointingTo
+import kotlin.io.path.invariantSeparatorsPathString
+import kotlin.io.path.writeText
 
 @BazelTestApplication
 class ProjectViewImportTest {
-  private val projectFixture = projectFixture(openAfterCreation = true)
-  private val tempDirFixture = tempPathFixture()
-  private val moduleFixture = projectFixture.moduleFixture(tempDirFixture, addPathToSourceRoot = true)
+  private val testBazel by testBazelProjectFixture()
+  private val outsideDir by tempPathFixture()
 
-  private val project get() = projectFixture.get()
-  private val rootDir by tempDirFixture
+  @Test
+  fun `test an import cycle through a symbolic link stops`() {
+    val main = testBazel.writeFile(
+      "main.bazelproject",
+      """
+      import link.bazelproject
+      directories:
+        dirA
+      """.trimIndent(),
+    ).toNioPath()
+    testBazel.workspaceRoot.resolve("link.bazelproject").createSymbolicLinkPointingTo(main)
 
-  @BeforeEach
-  fun setUp() {
-    moduleFixture.get()
-    initializeBazelProject(project, rootDir)
+    val projectView = testBazel.parseProjectView(main)
+
+    projectView.getSection(DIRECTORIES_KEY) shouldContainExactly listOf(ExcludableValue.included(Path("dirA")))
+    projectView.imports.shouldBeSingleton { it.path shouldBe testBazel.workspaceRoot.resolve("link.bazelproject") }
+  }
+
+  @Test
+  fun `test the last import of a file wins`() {
+    testBazel.writeFile("shared.bazelproject", "shard_sync: false").toNioPath()
+    testBazel.writeFile("other.bazelproject", "import shared.bazelproject").toNioPath()
+    val main = testBazel.writeFile(
+      "main.bazelproject",
+      """
+      import shared.bazelproject
+      shard_sync: true
+      import other.bazelproject
+      """.trimIndent(),
+    ).toNioPath()
+
+    testBazel.parseProjectView(main).getSection(SHARD_SYNC_KEY) shouldBe false
   }
 
   @Test
   fun `test import no overlap`() {
-    rootDir.writeProjectViewFile(
+    testBazel.writeFile(
       "A.bazelproject",
       """
       import_depth: 123
@@ -51,7 +77,7 @@ class ProjectViewImportTest {
       """.trimIndent(),
     )
     val main =
-      rootDir.writeProjectViewFile(
+      testBazel.writeFile(
         "B.bazelproject",
         """
         shard_sync: false
@@ -61,8 +87,8 @@ class ProjectViewImportTest {
 
         import A.bazelproject
         """.trimIndent(),
-      )
-    val projectView = parse(main)
+      ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
     projectView.getSection(IMPORT_DEPTH_KEY) shouldBe 123
     projectView.getSection(SHARD_SYNC_KEY) shouldBe false
     projectView.getSection(TARGETS_KEY) shouldContainExactly
@@ -79,7 +105,7 @@ class ProjectViewImportTest {
 
   @Test
   fun `test import full overlap`() {
-    rootDir.writeProjectViewFile(
+    testBazel.writeFile(
       "A.bazelproject",
       """
       import_depth: 123
@@ -89,7 +115,7 @@ class ProjectViewImportTest {
       """.trimIndent(),
     )
     val main =
-      rootDir.writeProjectViewFile(
+      testBazel.writeFile(
         "B.bazelproject",
         """
         import_depth: 321
@@ -99,8 +125,8 @@ class ProjectViewImportTest {
 
         import A.bazelproject
         """.trimIndent(),
-      )
-    val projectView = parse(main)
+      ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
     projectView.getSection(IMPORT_DEPTH_KEY) shouldBe 123
     projectView.getSection(TARGETS_KEY) shouldContainExactly
       listOf(
@@ -113,7 +139,7 @@ class ProjectViewImportTest {
 
   @Test
   fun `test import full overlap import first`() {
-    rootDir.writeProjectViewFile(
+    testBazel.writeFile(
       "A.bazelproject",
       """
       import_depth: 123
@@ -123,7 +149,7 @@ class ProjectViewImportTest {
       """.trimIndent(),
     )
     val main =
-      rootDir.writeProjectViewFile(
+      testBazel.writeFile(
         "B.bazelproject",
         """
         import A.bazelproject
@@ -133,8 +159,8 @@ class ProjectViewImportTest {
           targetC
           targetD
         """.trimIndent(),
-      )
-    val projectView = parse(main)
+      ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
     projectView.getSection(IMPORT_DEPTH_KEY) shouldBe 321
     projectView.getSection(TARGETS_KEY) shouldContainExactly
       listOf(
@@ -147,9 +173,9 @@ class ProjectViewImportTest {
 
   @Test
   fun `test resolved import mapping`() {
-    val importedFile = rootDir.writeProjectViewFile("A.bazelproject", "import_depth: 1")
-    val main = rootDir.writeProjectViewFile("B.bazelproject", "import A.bazelproject")
-    val projectView = parse(main)
+    val importedFile = testBazel.writeFile("A.bazelproject", "import_depth: 1").toNioPath()
+    val main = testBazel.writeFile("B.bazelproject", "import A.bazelproject").toNioPath()
+    val projectView = testBazel.parseProjectView(main)
     projectView.imports.shouldBeSingleton {
       val resolved = it.shouldBeInstanceOf<Import.Resolved>()
       resolved.path shouldBe importedFile
@@ -158,9 +184,9 @@ class ProjectViewImportTest {
   }
 
   @Test
-  fun `test unresolved import mapping`() {
+  fun `test unresolved import is not in the project view`() {
     val main =
-      rootDir.writeProjectViewFile(
+      testBazel.writeFile(
         "B.bazelproject",
         """
         directories:
@@ -168,22 +194,41 @@ class ProjectViewImportTest {
 
         import missing.bazelproject
         """.trimIndent(),
-      )
-    val projectView = parse(main)
-    projectView.imports.shouldBeSingleton {
-      val unresolved = it.shouldBeInstanceOf<Import.Unresolved>()
-      unresolved.isRequired shouldBe true
-      unresolved.text shouldBe "missing.bazelproject"
-      val position = unresolved.position.shouldNotBeNull()
-      position.startLine shouldBe 3
-      position.startColumn shouldBe 7
+      ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
+    projectView.imports.shouldBeEmpty()
+  }
+
+  @Test
+  fun `test an import outside of the project root is not read`() {
+    val outside = outsideDir.resolve("outside.bazelproject")
+    outside.writeText("shard_sync: false")
+    val relativeOutside = testBazel.workspaceRoot.relativize(outside).invariantSeparatorsPathString
+    for (importPath in listOf(relativeOutside, outside.toString())) {
+      val main = testBazel.writeFile("main.bazelproject", "import $importPath").toNioPath()
+
+      val projectView = testBazel.parseProjectView(main)
+
+      projectView.isEmpty() shouldBe true
     }
+  }
+
+  @Test
+  fun `test an import outside of the project root whose real path is inside is not read`() {
+    val shared = testBazel.writeFile("shared.bazelproject", "shard_sync: false").toNioPath()
+    val link = outsideDir.resolve("link.bazelproject")
+    link.createSymbolicLinkPointingTo(shared)
+    val main = testBazel.writeFile("main.bazelproject", "import $link").toNioPath()
+
+    val projectView = testBazel.parseProjectView(main)
+
+    projectView.isEmpty() shouldBe true
   }
 
   @Test
   fun `test other sections are mapped when import is missing`() {
     val main =
-      rootDir.writeProjectViewFile(
+      testBazel.writeFile(
         "B.bazelproject",
         """
         import_depth: 42
@@ -193,11 +238,9 @@ class ProjectViewImportTest {
 
         import missing.bazelproject
         """.trimIndent(),
-      )
-    val projectView = parse(main)
-    projectView.imports.shouldBeSingleton {
-      it.shouldBeInstanceOf<Import.Unresolved>()
-    }
+      ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
+    projectView.imports.shouldBeEmpty()
     projectView.getSection(IMPORT_DEPTH_KEY) shouldBe 42
     projectView.getSection(DIRECTORIES_KEY) shouldContainExactly
       listOf(
@@ -208,7 +251,7 @@ class ProjectViewImportTest {
 
   @Test
   fun `import should work with subdirectories`() {
-    rootDir.writeProjectViewFile(
+    testBazel.writeFile(
       "subdirectory/imported.bazelproject",
       """
       directories:
@@ -217,21 +260,21 @@ class ProjectViewImportTest {
     )
 
     val main =
-      rootDir.writeProjectViewFile(
+      testBazel.writeFile(
         "main.bazelproject",
         """
         import subdirectory/imported.bazelproject
         """.trimIndent(),
-      )
+      ).toNioPath()
 
-    val projectView = parse(main)
+    val projectView = testBazel.parseProjectView(main)
 
     projectView.getSection(DIRECTORIES_KEY) shouldContainExactly listOf(ExcludableValue.included(Path("dirA")))
   }
 
   @Test
   fun `test self import does not recurse infinitely nor duplicate sections`() {
-    val main = rootDir.writeProjectViewFile(
+    val main = testBazel.writeFile(
       "A.bazelproject",
       """
         targets:
@@ -239,8 +282,8 @@ class ProjectViewImportTest {
 
         import A.bazelproject
         """.trimIndent(),
-    )
-    val projectView = parse(main)
+    ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
     projectView.getSection(TARGETS_KEY) shouldContainExactly listOf(ExcludableValue.included(Label.parse("targetA")))
     projectView.imports.shouldBeSingleton {
       it.shouldBeInstanceOf<Import.Resolved>()
@@ -249,7 +292,7 @@ class ProjectViewImportTest {
 
   @Test
   fun `test import cycle back to root terminates without duplicating sections`() {
-    rootDir.writeProjectViewFile(
+    testBazel.writeFile(
       "B.bazelproject",
       """
       targets:
@@ -258,7 +301,7 @@ class ProjectViewImportTest {
       import A.bazelproject
       """.trimIndent(),
     )
-    val main = rootDir.writeProjectViewFile(
+    val main = testBazel.writeFile(
       "A.bazelproject",
       """
         targets:
@@ -266,13 +309,94 @@ class ProjectViewImportTest {
 
         import B.bazelproject
         """.trimIndent(),
-    )
-    val projectView = parse(main)
+    ).toNioPath()
+    val projectView = testBazel.parseProjectView(main)
     projectView.getSection(TARGETS_KEY) shouldContainExactly listOf(
       ExcludableValue.included(Label.parse("targetA")),
       ExcludableValue.included(Label.parse("targetB")),
     )
   }
 
-  private fun parse(source: Path): ProjectView = ProjectViewFactory.from(project, source = source, root = rootDir)
+  @Test
+  fun `test reports problems of imported files`() {
+    val imported = testBazel.writeFile("imported.bazelproject", "shard_sync: not_a_boolean").toNioPath()
+    val main = testBazel.writeFile("main.bazelproject", "import imported.bazelproject").toNioPath()
+
+    val problem = problems(main).single()
+    problem.id shouldBe ProjectViewProblem.Id.InvalidValue
+    problem.sourcePath shouldBe imported
+  }
+
+  @Test
+  fun `test reports a file that is imported two times only once`() {
+    val shared = testBazel.writeFile("shared.bazelproject", "not_supported_section: someValue").toNioPath()
+    testBazel.writeFile("a.bazelproject", "import shared.bazelproject").toNioPath()
+    testBazel.writeFile("b.bazelproject", "import shared.bazelproject").toNioPath()
+    val main = testBazel.writeFile(
+      "main.bazelproject",
+      """
+      import a.bazelproject
+      import b.bazelproject
+      """.trimIndent(),
+    ).toNioPath()
+
+    problems(main).map { it.sourcePath } shouldContainExactly listOf(shared)
+  }
+
+  @Test
+  fun `test reports a file that one file imports two times only once`() {
+    val shared = testBazel.writeFile("shared.bazelproject", "not_supported_section: someValue").toNioPath()
+    val main = testBazel.writeFile(
+      "main.bazelproject",
+      """
+      import shared.bazelproject
+      import shared.bazelproject
+      """.trimIndent(),
+    ).toNioPath()
+
+    problems(main).map { it.sourcePath } shouldContainExactly listOf(shared)
+  }
+
+  @Test
+  fun `test reports a file that is imported through a symbolic link only once`() {
+    val shared = testBazel.writeFile("shared.bazelproject", "not_supported_section: someValue").toNioPath()
+    testBazel.workspaceRoot.resolve("link.bazelproject").createSymbolicLinkPointingTo(shared)
+    val main = testBazel.writeFile(
+      "main.bazelproject",
+      """
+      import shared.bazelproject
+      import link.bazelproject
+      """.trimIndent(),
+    ).toNioPath()
+
+    problems(main).map { it.sourcePath } shouldContainExactly listOf(shared)
+  }
+
+  @Test
+  fun `test problem reporting stops at an import cycle`() {
+    testBazel.writeFile("a.bazelproject", "import main.bazelproject").toNioPath()
+    val main = testBazel.writeFile("main.bazelproject", "import a.bazelproject").toNioPath()
+
+    problems(main).shouldBeEmpty()
+  }
+
+  @Test
+  fun `test a suppression comment in an imported file covers its problems`() {
+    testBazel.writeFile(
+      "imported.bazelproject",
+      """
+      # suppress: unsupported_section
+      not_supported_section: someValue
+      """.trimIndent(),
+    ).toNioPath()
+    val main = testBazel.writeFile("main.bazelproject", "import imported.bazelproject").toNioPath()
+
+    problems(main).shouldBeEmpty()
+  }
+
+  private fun problems(path: Path): List<ProjectViewProblem> {
+    val problems = mutableListOf<ProjectViewProblem>()
+    testBazel.parseProjectView(path, problems::add)
+    return problems
+  }
 }

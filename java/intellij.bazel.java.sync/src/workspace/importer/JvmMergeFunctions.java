@@ -25,6 +25,7 @@ public final class JvmMergeFunctions {
                 WorkspaceTargetMerger.mergeLocationCollections(left.binaryOutputs(), right.binaryOutputs()),
                 left.environmentVariables(),
                 left.mainClass(),
+                left.testClass(),
                 left.jvmArgs(),
                 left.programArgs(),
                 left.resolvedResourceStripPrefix(),

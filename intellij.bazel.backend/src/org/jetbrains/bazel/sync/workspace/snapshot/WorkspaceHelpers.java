@@ -2,7 +2,6 @@ package org.jetbrains.bazel.sync.workspace.snapshot;
 
 import consulo.project.Project;
 import consulo.util.lang.Pair;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
 import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
 import org.jetbrains.bsp.protocol.BuildTarget;
@@ -37,7 +36,7 @@ public final class WorkspaceHelpers {
 
     public static Stream<BuildTarget> getAllTargets(WorkspaceSnapshot receiver) {
         return receiver.targetGraph().getAllTargets()
-            .map(it -> receiver.targets().findTargetByKey(it, TargetLoadOptions.ALL))
+            .map(it -> receiver.targets().findTargetByKey(it))
             .filter(Objects::nonNull);
     }
 

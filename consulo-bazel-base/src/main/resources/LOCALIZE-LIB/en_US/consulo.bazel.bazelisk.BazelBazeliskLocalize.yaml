@@ -1,6 +1,8 @@
 bazel.project.downloading.bazelisk:
     text: "Downloading Bazelisk"
 bazel.project.downloading.bazelisk.binary:
-    text: "Downloading Bazelisk binary..."
+    text: "Downloading Bazelisk binary…"
 bazel.project.downloading.bazelisk.setting_permissions:
-    text: "Setting executable permissions..."
+    text: "Setting executable permissions…"
+bazel.bazelisk.checksum.mismatch:
+    text: "The SHA-256 checksum of {0} is {1}. The expected checksum is {2}."

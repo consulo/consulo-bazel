@@ -15,7 +15,6 @@ import consulo.util.lang.Pair;
 import consulo.util.lang.lazy.LazyValue;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntComparator;
 import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import org.h2.mvstore.MVMap;
@@ -24,19 +23,14 @@ import org.h2.mvstore.type.DataType;
 import org.h2.mvstore.type.IntegerDataType;
 import org.h2.mvstore.type.LongDataType;
 import org.h2.mvstore.type.StringDataType;
-import org.jetbrains.bazel.label.DependencyLabel;
 import org.jetbrains.bazel.label.Label;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions.BuildTargetLoadHint;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions.TargetSection;
-import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.HeavyWorkspaceTarget;
 import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.PartialWorkspaceTarget;
-import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.WorkspaceTargetDeps;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.WorkspaceTargetContent;
 import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.WorkspaceTargetToSave;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 import org.jetbrains.bsp.protocol.BuildTarget;
 import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
-import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationCollection;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.io.UncheckedIOException;
@@ -49,7 +43,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -74,7 +67,7 @@ import static org.jetbrains.bazel.sync.workspace.persistence.mvstore.SnapshotStr
 
 /**
  * Storage is split into {@link SnapshotGeneration}, each generation is set of MVStore maps
- * that together are used to reconstruct original {@link BuildTarget} based on loading conditions {@link TargetLoadOptions},
+ * that together are used to reconstruct the original {@link BuildTarget}, or only its {@link BuildTargetInfo},
  * <p>
  * We must always keep previous snapshot generation in order to have fallback in case of update failure/cancellation,
  * this might cause storage file on disk be 2x larger than actual data, but the good news is that is barely impact read/write
@@ -100,11 +93,6 @@ public class SnapshotStorage {
     private static final int INITIAL_VALUE_BUFFER_SIZE = 8 * 1024;
     private static final int ENCODE_CHUNK_SIZE = 256;
 
-    private static final HeavyWorkspaceTarget EMPTY_FILE_SETS = new HeavyWorkspaceTarget(
-        OutputLocationCollection.EMPTY,
-        OutputLocationCollection.EMPTY
-    );
-
     // limit frame encoder threads to avoid lock contention on kryo instance pool
     // consulo: Dispatchers.IO.limitedParallelism(KRYO_POOL_INSTANCES), created lazily because it needs the application
     private static final LazyValue<ExecutorService> ENCODE_DISPATCHER = LazyValue.atomicNotNull(() -> {
@@ -123,7 +111,7 @@ public class SnapshotStorage {
     private static final Logger LOG = Logger.getInstance(SnapshotStorage.class);
 
     private static final List<String> GENERATION_MAP_SUFFIXES =
-        List.of("id2PartialTarget", "id2TargetDeps", "id2HeavyTarget", "id2TargetData", "file2KeyIds", "executables", "strings", "refs");
+        List.of("id2PartialTarget", "id2TargetContent", "id2TargetData", "file2KeyIds", "executables", "strings", "refs");
 
     private static String mapName(int generation, String suffix) {
         return "snapshot.g" + generation + "." + suffix;
@@ -230,8 +218,7 @@ public class SnapshotStorage {
             generation,
             this,
             openFrameMap(mapName(generation, "id2PartialTarget"), IntegerDataType.INSTANCE),
-            openFrameMap(mapName(generation, "id2TargetDeps"), IntegerDataType.INSTANCE),
-            openFrameMap(mapName(generation, "id2HeavyTarget"), IntegerDataType.INSTANCE),
+            openFrameMap(mapName(generation, "id2TargetContent"), IntegerDataType.INSTANCE),
             openFrameMap(mapName(generation, "id2TargetData"), LongDataType.INSTANCE),
             openMap(mapName(generation, "file2KeyIds"), LongDataType.INSTANCE, IntListDataType.INSTANCE),
             openMap(mapName(generation, "executables"), IntegerDataType.INSTANCE, IntListDataType.INSTANCE),
@@ -409,8 +396,7 @@ public class SnapshotStorage {
         private final int myGeneration;
         private final SnapshotStorage myStorage;
         private final MVMap<Integer, ValueFrame> myId2PartialTarget;
-        private final MVMap<Integer, ValueFrame> myId2TargetDeps;
-        private final MVMap<Integer, ValueFrame> myId2HeavyTarget;
+        private final MVMap<Integer, ValueFrame> myId2TargetContent;
 
         // key: (keyId, buildTargetId) packed into long
         private final MVMap<Long, ValueFrame> myId2TargetData;
@@ -436,8 +422,7 @@ public class SnapshotStorage {
             int generation,
             SnapshotStorage storage,
             MVMap<Integer, ValueFrame> id2PartialTarget,
-            MVMap<Integer, ValueFrame> id2TargetDeps,
-            MVMap<Integer, ValueFrame> id2HeavyTarget,
+            MVMap<Integer, ValueFrame> id2TargetContent,
             MVMap<Long, ValueFrame> id2TargetData,
             MVMap<Long, IntArrayList> file2KeyIds,
             MVMap<Integer, IntArrayList> executables,
@@ -447,8 +432,7 @@ public class SnapshotStorage {
             myGeneration = generation;
             myStorage = storage;
             myId2PartialTarget = id2PartialTarget;
-            myId2TargetDeps = id2TargetDeps;
-            myId2HeavyTarget = id2HeavyTarget;
+            myId2TargetContent = id2TargetContent;
             myId2TargetData = id2TargetData;
             myFile2KeyIds = file2KeyIds;
             myExecutables = executables;
@@ -470,11 +454,45 @@ public class SnapshotStorage {
             return myStorage.decodeFrame(frame, type, myStringTable, myRefTable);
         }
 
-        private @Nullable BuildTarget composeNewWorkspaceTarget(
-            PersistentWorkspaceSnapshot partialSnapshot,
-            WorkspaceTargetKey key,
-            TargetLoadOptions options
+        private BuildTargetInfo decodeInfo(WorkspaceTargetKey key, ValueFrame frame) {
+            PartialWorkspaceTarget partial = decodeValue(frame, PartialWorkspaceTarget.class);
+            return new BuildTargetInfo(
+                key,
+                partial.getKind(),
+                partial.getGeneratorName(),
+                partial.isTestOnly(),
+                partial.getTags(),
+                partial.getWorkspaceName()
+            );
+        }
+
+        private BuildTarget composeTarget(
+            BuildTargetInfo info,
+            ValueFrame contentFrame,
+            // invoked in ascending typeId order, so the bulk scan may back this with a forward-only cursor over the packed-key map
+            IntFunction<@Nullable ValueFrame> dataFrameForType
         ) {
+            WorkspaceTargetContent content = decodeValue(contentFrame, WorkspaceTargetContent.class);
+            IntList typeIds = myStorage.getAllBuildTargetIds();
+            List<BuildTargetData> data = new ArrayList<>();
+            for (int n = 0; n < typeIds.size(); n++) {
+                // a target has frames only for the data types it holds
+                ValueFrame frame = dataFrameForType.apply(typeIds.getInt(n));
+                if (frame == null) {
+                    continue;
+                }
+                data.add(decodeValue(frame, BuildTargetData.class));
+            }
+            return BuildTarget.create(
+                info,
+                content.getDependencies(),
+                content.getSources(),
+                content.getResources(),
+                data
+            );
+        }
+
+        private @Nullable BuildTarget loadTarget(PersistentWorkspaceSnapshot partialSnapshot, WorkspaceTargetKey key) {
             int keyId = partialSnapshot.getKeyId2Target().getReverseOrDefault(key, -1);
             if (keyId < 0) {
                 // TODO: assert
@@ -484,123 +502,82 @@ public class SnapshotStorage {
             if (partialFrame == null) {
                 return null;
             }
-            PartialWorkspaceTarget partialData = decodeValue(partialFrame, PartialWorkspaceTarget.class);
-            return composeFromFrames(
-                key,
-                options,
-                partialData,
-                () -> frameOf(myId2TargetDeps, keyId),
-                () -> frameOf(myId2HeavyTarget, keyId),
-                typeId -> frameOf(myId2TargetData, BuildTargetPack.pack(keyId, typeId))
+            ValueFrame contentFrame = myId2TargetContent.get(keyId);
+            if (contentFrame == null) {
+                return null;
+            }
+            return composeTarget(
+                decodeInfo(key, partialFrame),
+                contentFrame,
+                typeId -> myId2TargetData.get(BuildTargetPack.pack(keyId, typeId))
             );
         }
 
-        private BuildTarget composeFromFrames(
-            WorkspaceTargetKey key,
-            TargetLoadOptions options,
-            PartialWorkspaceTarget partialData,
-            Supplier<@Nullable ValueFrame> depsFrame,
-            Supplier<@Nullable ValueFrame> heavyFrame,
-            // invoked in ascending typeId order (both id sources below are sorted), so the bulk scan may
-            // back this with a forward-only cursor over the packed-key map
-            IntFunction<@Nullable ValueFrame> dataFrameForType
-        ) {
-            LazyTargetSection<List<DependencyLabel>> depsSection =
-                new LazyTargetSection<>(options.sections().contains(TargetSection.DEPS), () -> decodeDeps(depsFrame.get()));
-            LazyTargetSection<HeavyWorkspaceTarget> fileSetsSection =
-                new LazyTargetSection<>(options.sections().contains(TargetSection.FILE_SETS), () -> decodeFileSets(heavyFrame.get()));
-            BuildTargetLoadHint hint = options.targetData();
-            IntList dataTypeIds;
-            if (hint instanceof BuildTargetLoadHint.Subset subset) {
-                dataTypeIds = typeIdsOf(subset.data());
-            }
-            else {
-                dataTypeIds = myStorage.getAllBuildTargetIds();
-            }
-            LazyTargetSection<List<BuildTargetData>> dataSection = new LazyTargetSection<>(
-                !options.targetData().equals(BuildTargetLoadHint.None.INSTANCE),
-                () -> decodeData(dataTypeIds, dataFrameForType)
-            );
-            Set<TargetSection> loadedSections = new LinkedHashSet<>(options.sections());
-            loadedSections.add(TargetSection.INFO);
-            return new LazyWorkspaceTarget(
-                key,
-                partialData.getKind(),
-                partialData.getGeneratorName(),
-                partialData.isTestOnly(),
-                partialData.getTags(),
-                partialData.getWorkspaceName(),
-                new TargetLoadOptions(loadedSections, options.targetData()),
-                depsSection,
-                fileSetsSection,
-                dataSection
-            );
-        }
-
-        // an absent frame is a valid state, e.g. a retired generation, and decodes to an empty section
-        private List<DependencyLabel> decodeDeps(@Nullable ValueFrame frame) {
-            return frame == null ? List.of() : decodeValue(frame, WorkspaceTargetDeps.class).getDependencies();
-        }
-
-        private HeavyWorkspaceTarget decodeFileSets(@Nullable ValueFrame frame) {
-            return frame == null ? EMPTY_FILE_SETS : decodeValue(frame, HeavyWorkspaceTarget.class);
-        }
-
-        private List<BuildTargetData> decodeData(IntList typeIds, IntFunction<@Nullable ValueFrame> dataFrameForType) {
-            List<BuildTargetData> loadedData = new ArrayList<>(typeIds.size());
-            for (int n = 0; n < typeIds.size(); n++) {
-                // a target has frames only for the data types it holds
-                ValueFrame frame = dataFrameForType.apply(typeIds.getInt(n));
-                if (frame == null) {
-                    continue;
-                }
-                loadedData.add(decodeValue(frame, BuildTargetData.class));
-            }
-            return loadedData;
-        }
-
-        private IntList typeIdsOf(Set<Class<? extends BuildTargetData>> types) {
-            IntArrayList typeIds = new IntArrayList(types.size());
-            for (Class<? extends BuildTargetData> type : types) {
-                int typeId = myStorage.getKryo().getUniverse().getType2Id().getOrDefault(type, -1);
-                if (typeId < 0) {
-                    // TODO: assert
-                    continue;
-                }
-                typeIds.add(typeId);
-            }
-            // ascending, per the dataFrameForType ordering contract
-            typeIds.sort((IntComparator) null);
-            return typeIds;
-        }
-
-        // guarded frame read
-        private <K> @Nullable ValueFrame frameOf(MVMap<K, ValueFrame> map, K mapKey) {
+        public @Nullable BuildTargetInfo findTargetInfo(PersistentWorkspaceSnapshot partialSnapshot, WorkspaceTargetKey key) {
             if (!isLive()) {
                 return null;
             }
-            return map.get(mapKey);
+            BuildTarget cached = myFullTargetCache.get(key);
+            if (cached != null) {
+                return cached.getInfo();
+            }
+            int keyId = partialSnapshot.getKeyId2Target().getReverseOrDefault(key, -1);
+            if (keyId < 0) {
+                return null;
+            }
+            ValueFrame partialFrame = myId2PartialTarget.get(keyId);
+            if (partialFrame == null) {
+                return null;
+            }
+            return decodeInfo(key, partialFrame);
         }
 
         // consulo: Kotlin sequence { } -> lazily evaluated stream, the body runs when the terminal operation starts
-        public Stream<BuildTarget> scanAllTargets(PersistentWorkspaceSnapshot partialSnapshot, TargetLoadOptions options) {
-            return StreamSupport.stream(
-                () -> Spliterators.spliteratorUnknownSize(scanAllTargetsIterator(partialSnapshot, options), Spliterator.ORDERED | Spliterator.NONNULL),
-                Spliterator.ORDERED | Spliterator.NONNULL,
-                false
-            );
+        public Stream<BuildTargetInfo> scanAllTargetInfos(PersistentWorkspaceSnapshot partialSnapshot) {
+            return lazyStream(() -> scanAllTargetInfosIterator(partialSnapshot));
         }
 
-        private Iterator<BuildTarget> scanAllTargetsIterator(PersistentWorkspaceSnapshot partialSnapshot, TargetLoadOptions options) {
+        private Iterator<BuildTargetInfo> scanAllTargetInfosIterator(PersistentWorkspaceSnapshot partialSnapshot) {
+            if (!isLive()) {
+                return List.<BuildTargetInfo>of().iterator();
+            }
+            Iterator<Map.Entry<Integer, ValueFrame>> entries = myId2PartialTarget.entrySet().iterator();
+            return new AbstractIterator<>() {
+                @Override
+                protected @Nullable BuildTargetInfo computeNext() {
+                    while (entries.hasNext()) {
+                        Map.Entry<Integer, ValueFrame> entry = entries.next();
+                        WorkspaceTargetKey key = partialSnapshot.getKeyId2Target().get(entry.getKey());
+                        if (key == null) {
+                            continue;
+                        }
+                        return decodeInfo(key, entry.getValue());
+                    }
+                    return endOfData();
+                }
+            };
+        }
+
+        public @Nullable BuildTarget findOrLoadTarget(PersistentWorkspaceSnapshot partialSnapshot, WorkspaceTargetKey key) {
+            // TODO consulo: SlowOperations.assertSlowOperationsAreAllowed() - consulo.application.internal.SlowOperations is not exported
+            if (!isLive()) {
+                return null;
+            }
+            return myFullTargetCache.computeIfAbsent(key, it -> loadTarget(partialSnapshot, it));
+        }
+
+        // consulo: Kotlin sequence { } -> lazily evaluated stream, the body runs when the terminal operation starts
+        public Stream<BuildTarget> scanAllTargets(PersistentWorkspaceSnapshot partialSnapshot) {
+            return lazyStream(() -> scanAllTargetsIterator(partialSnapshot));
+        }
+
+        private Iterator<BuildTarget> scanAllTargetsIterator(PersistentWorkspaceSnapshot partialSnapshot) {
+            // TODO consulo: SlowOperations.assertSlowOperationsAreAllowed() - consulo.application.internal.SlowOperations is not exported
             if (!isLive()) {
                 return List.<BuildTarget>of().iterator();
             }
-            boolean skipDeps = !options.sections().contains(TargetSection.DEPS);
-            boolean skipFileSets = !options.sections().contains(TargetSection.FILE_SETS);
-            boolean skipData = options.targetData().equals(BuildTargetLoadHint.None.INSTANCE);
-            PeekingEntryCursor<Integer, ValueFrame> depsCursor = skipDeps ? null : new PeekingEntryCursor<>(myId2TargetDeps, it -> it.longValue());
-            PeekingEntryCursor<Integer, ValueFrame> heavyCursor = skipFileSets ? null : new PeekingEntryCursor<>(myId2HeavyTarget, it -> it.longValue());
-            PeekingEntryCursor<Long, ValueFrame> dataCursor = skipData ? null : new PeekingEntryCursor<>(myId2TargetData, it -> it);
+            PeekingEntryCursor<Integer, ValueFrame> contentCursor = new PeekingEntryCursor<>(myId2TargetContent, it -> it.longValue());
+            PeekingEntryCursor<Long, ValueFrame> dataCursor = new PeekingEntryCursor<>(myId2TargetData, it -> it);
 
             Iterator<Map.Entry<Integer, ValueFrame>> entries = myId2PartialTarget.entrySet().iterator();
             return new AbstractIterator<>() {
@@ -614,29 +591,18 @@ public class SnapshotStorage {
                         if (key == null) {
                             continue;
                         }
-                        PartialWorkspaceTarget partialData = decodeValue(partialFrame, PartialWorkspaceTarget.class);
+                        ValueFrame contentFrame = contentCursor.advanceTo(keyId);
+                        if (contentFrame == null) {
+                            continue;
+                        }
 
-                        ValueFrame depsFrame = depsCursor != null ? depsCursor.advanceTo(keyId) : null;
-                        ValueFrame heavyFrame = heavyCursor != null ? heavyCursor.advanceTo(keyId) : null;
-
-                        // composeFromFrames requests typeIds ascending and keyIds ascend across iterations, so the
+                        // composeTarget requests typeIds ascending and keyIds ascend across iterations, so the
                         // packed keys form one ascending pass over the data map, stale rows of skipped keyIds are
                         // discarded raw by the next advanceTo
-                        return composeFromFrames(
-                            key,
-                            options,
-                            partialData,
-                            () -> depsFrame != null ? depsFrame : frameOf(myId2TargetDeps, keyId),
-                            () -> heavyFrame != null ? heavyFrame : frameOf(myId2HeavyTarget, keyId),
-                            typeId -> {
-                                long packedKey = BuildTargetPack.pack(keyId, typeId);
-                                if (dataCursor == null) {
-                                    return frameOf(myId2TargetData, packedKey);
-                                }
-                                else {
-                                    return dataCursor.advanceTo(packedKey);
-                                }
-                            }
+                        return composeTarget(
+                            decodeInfo(key, partialFrame),
+                            contentFrame,
+                            typeId -> dataCursor.advanceTo(BuildTargetPack.pack(keyId, typeId))
                         );
                     }
                     return endOfData();
@@ -644,23 +610,44 @@ public class SnapshotStorage {
             };
         }
 
-        public @Nullable BuildTarget findOrLoadTarget(PersistentWorkspaceSnapshot partialSnapshot, WorkspaceTargetKey key, TargetLoadOptions options) {
+        public <T extends BuildTargetData> @Nullable T findTargetData(
+            PersistentWorkspaceSnapshot partialSnapshot,
+            WorkspaceTargetKey key,
+            Class<T> type
+        ) {
+            // TODO consulo: SlowOperations.assertSlowOperationsAreAllowed() - consulo.application.internal.SlowOperations is not exported
             if (!isLive()) {
                 return null;
             }
-            // cached full target satisfies any request
             BuildTarget cached = myFullTargetCache.get(key);
             if (cached != null) {
-                return cached;
+                return BuildTarget.data(cached, type);
             }
-            if (options.equals(TargetLoadOptions.ALL)) {
-                return myFullTargetCache.computeIfAbsent(key, it -> composeNewWorkspaceTarget(partialSnapshot, it, TargetLoadOptions.ALL));
+            int keyId = partialSnapshot.getKeyId2Target().getReverseOrDefault(key, -1);
+            if (keyId < 0) {
+                return null;
             }
-            // partial loads are the memory-light bulk path: composed fresh, never cached
-            return composeNewWorkspaceTarget(partialSnapshot, key, options);
+            int typeId = myStorage.getKryo().getUniverse().getType2Id().getOrDefault(type, -1);
+            if (typeId < 0) {
+                // TODO: assert
+                return null;
+            }
+            ValueFrame frame = myId2TargetData.get(BuildTargetPack.pack(keyId, typeId));
+            if (frame == null) {
+                return null;
+            }
+            return type.cast(decodeValue(frame, BuildTargetData.class));
         }
 
-        // TODO: assert not partial
+        // consulo: helper for the Kotlin sequence { } builders
+        private static <T> Stream<T> lazyStream(Supplier<Iterator<T>> iterator) {
+            return StreamSupport.stream(
+                () -> Spliterators.spliteratorUnknownSize(iterator.get(), Spliterator.ORDERED | Spliterator.NONNULL),
+                Spliterator.ORDERED | Spliterator.NONNULL,
+                false
+            );
+        }
+
         public void saveTarget(WorkspaceTargetToSave target) {
             EncodedWorkspaceTarget encoded = KryoHelper.use(
                 myStorage.getKryo().getValuePool(),
@@ -753,8 +740,8 @@ public class SnapshotStorage {
                 raw.getTags(),
                 raw.getWorkspaceName()
             );
-            WorkspaceTargetDeps targetDeps = new WorkspaceTargetDeps(raw.getDependencies());
-            HeavyWorkspaceTarget heavyTarget = new HeavyWorkspaceTarget(
+            WorkspaceTargetContent content = new WorkspaceTargetContent(
+                raw.getDependencies(),
                 raw.getSources(),
                 raw.getResources()
             );
@@ -777,8 +764,7 @@ public class SnapshotStorage {
             return new EncodedWorkspaceTarget(
                 target.getKeyId(),
                 myStorage.encodeFrame(kryo, output, partialTarget, stringTable, refTable),
-                myStorage.encodeFrame(kryo, output, targetDeps, stringTable, refTable),
-                myStorage.encodeFrame(kryo, output, heavyTarget, stringTable, refTable),
+                myStorage.encodeFrame(kryo, output, content, stringTable, refTable),
                 dataFrames
             );
         }
@@ -787,8 +773,7 @@ public class SnapshotStorage {
         private void appendTarget(EncodedWorkspaceTarget encoded) {
             int keyId = encoded.getKeyId();
             myId2PartialTarget.append(keyId, encoded.getPartialFrame());
-            myId2TargetDeps.append(keyId, encoded.getDepsFrame());
-            myId2HeavyTarget.append(keyId, encoded.getHeavyFrame());
+            myId2TargetContent.append(keyId, encoded.getContentFrame());
             for (Pair<Integer, ValueFrame> entry : encoded.getDataFrames()) {
                 myId2TargetData.append(BuildTargetPack.pack(keyId, entry.getFirst()), entry.getSecond());
             }
@@ -884,8 +869,7 @@ public class SnapshotStorage {
 final class EncodedWorkspaceTarget {
     private final int myKeyId;
     private final ValueFrame myPartialFrame;
-    private final ValueFrame myDepsFrame;
-    private final ValueFrame myHeavyFrame;
+    private final ValueFrame myContentFrame;
 
     // (dataId, frame) sorted ascending by dataId
     // TODO: maybe Int2ArrayMap<...> here?
@@ -894,14 +878,12 @@ final class EncodedWorkspaceTarget {
     EncodedWorkspaceTarget(
         int keyId,
         ValueFrame partialFrame,
-        ValueFrame depsFrame,
-        ValueFrame heavyFrame,
+        ValueFrame contentFrame,
         List<Pair<Integer, ValueFrame>> dataFrames
     ) {
         myKeyId = keyId;
         myPartialFrame = partialFrame;
-        myDepsFrame = depsFrame;
-        myHeavyFrame = heavyFrame;
+        myContentFrame = contentFrame;
         myDataFrames = dataFrames;
     }
 
@@ -913,12 +895,8 @@ final class EncodedWorkspaceTarget {
         return myPartialFrame;
     }
 
-    ValueFrame getDepsFrame() {
-        return myDepsFrame;
-    }
-
-    ValueFrame getHeavyFrame() {
-        return myHeavyFrame;
+    ValueFrame getContentFrame() {
+        return myContentFrame;
     }
 
     List<Pair<Integer, ValueFrame>> getDataFrames() {

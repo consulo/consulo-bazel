@@ -10,14 +10,19 @@ import java.util.Objects;
 
 /**
  * consulo: upstream declares this data class in buildEquivalenceClasses.kt; a public Java type needs a file of its own.
- * The sources are VFS url strings (upstream {@code VirtualFileUrl}).
+ * The sources and headers are VFS url strings (upstream {@code VirtualFileUrl}).
  */
 public record CcResolveConfiguration(
     Identifier id,
     String name,
     EquivalenceClass shared,
     List<WorkspaceTargetKey> targets,
-    List<String> sources
+
+    /** Compiled sources of the targets, i.e. all files sources file in srcs. */
+    List<String> sources,
+
+    /** Available headers of the targets, i.e. all header files in hdrs and srcs. */
+    List<String> headers
 ) {
 
     /**

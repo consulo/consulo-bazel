@@ -35,7 +35,7 @@ public final class ExcludeSymlinksFromFileWatcher {
         //    }
         //    List<Path> paths = new ArrayList<>(symlinksToExclude);
         //    for (Path symlink : symlinksToExclude) {
-        //        Path target = BazelSymlinksCalculator.resolveSymlinkTarget(symlink);
+        //        Path target = BazelConvenienceSymlinksScanner.resolveSymlinkTarget(symlink);
         //        if (target != null) {
         //            paths.add(target);
         //        }

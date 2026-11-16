@@ -2,6 +2,7 @@ package org.jetbrains.bazel.clion.workspace;
 
 import consulo.bazel.cpp.localize.BazelCLionCommonLocalize;
 import consulo.build.ui.event.MessageEvent;
+import org.jetbrains.bazel.clion.workspace.environment.BazelEnvironmentProvider.CcToolEnvironment;
 import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jspecify.annotations.Nullable;
 

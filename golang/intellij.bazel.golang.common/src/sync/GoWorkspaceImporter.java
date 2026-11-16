@@ -23,7 +23,6 @@ import org.jetbrains.bazel.golang.workspace.GoWorkspaceModuleUtil.GoPackageEntit
 import org.jetbrains.bazel.label.DependencyLabel;
 import org.jetbrains.bazel.progress.util;
 import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
@@ -49,7 +48,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
-public class GoWorkspaceImporter implements BazelWorkspaceImporter, BazelWorkspaceImporter.Named {
+public class GoWorkspaceImporter implements BazelWorkspaceImporter {
     // consulo: the upstream nested `Factory` is the top-level GoWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
     private final WorkspaceImporterContext myContext;
@@ -81,13 +80,13 @@ public class GoWorkspaceImporter implements BazelWorkspaceImporter, BazelWorkspa
 
     @Override
     public CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId) {
-        // consulo: Kotlin Result -> a failed future
+        // consulo: an exception of a failed phase -> a failed future
         try {
             if (phase instanceof WorkspaceImporterPhase.Initialize) {
                 int importDepth = WorkspaceHelpers.getCommonSyncConfig(snapshot).importDepth();
                 List<Pair<BuildTarget, GoBuildTarget>> goBuildTargetList = WorkspaceHelpers.filterBuildTarget(
                         snapshot.targetGraph().findAllTargetsAtDepth(importDepth, importDepth < 0, true)
-                            .map(it -> snapshot.targets().findTargetByKey(it, TargetLoadOptions.ALL))
+                            .map(it -> snapshot.targets().findTargetByKey(it))
                             .filter(Objects::nonNull),
                         GoBuildTarget.class
                     )

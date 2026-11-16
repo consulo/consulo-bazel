@@ -13,12 +13,14 @@ import consulo.virtualFileSystem.LocalFileSystem;
 import consulo.virtualFileSystem.VirtualFile;
 import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.coroutines.BazelApplicationCoroutineScopeService;
+import org.jetbrains.bazel.utils.PathUtil;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -82,13 +84,7 @@ public final class utils {
             return Set.of();
         }
         Path tempPath = Path.of(tempProperty);
-        Path realTempPath;
-        try {
-            realTempPath = tempPath.toRealPath();
-        }
-        catch (Exception e) {
-            realTempPath = null;
-        }
+        @Nullable Path realTempPath = PathUtil.toRealPathOrNull(tempPath);
         Set<Path> result = new LinkedHashSet<>();
         result.add(tempPath);
         if (realTempPath != null) {
@@ -96,6 +92,66 @@ public final class utils {
         }
         return result;
     });
+
+    /**
+     * The real path of a project root, and a file under it.
+     */
+    // consulo: upstream data class with a private constructor, so a final class instead of a record
+    public static final class ResolvedProjectRoot {
+        private final Path myRootDir;
+        private final Path myOpenedFile;
+
+        private ResolvedProjectRoot(Path rootDir, Path openedFile) {
+            myRootDir = rootDir;
+            myOpenedFile = openedFile;
+        }
+
+        public Path getRootDir() {
+            return myRootDir;
+        }
+
+        public Path getOpenedFile() {
+            return myOpenedFile;
+        }
+
+        /**
+         * Finds the project root of {@code openedFile} with {@link #findProjectFolderFromFile}, changes it to its real path,
+         * and moves {@code openedFile} onto it. Only the root is resolved.
+         * Returns {@code null} when {@code openedFile} is not in a Bazel project.
+         */
+        public static @Nullable ResolvedProjectRoot from(Path openedFile) {
+            Path projectRoot = findProjectFolderFromFile(openedFile);
+            if (projectRoot == null) {
+                return null;
+            }
+            Path realProjectRoot = PathUtil.toRealPathOrSelf(projectRoot);
+            return new ResolvedProjectRoot(
+                /* rootDir = */ realProjectRoot,
+                /* openedFile = */ PathUtil.rebase(openedFile, /* from = */ projectRoot, /* to = */ realProjectRoot)
+            );
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof ResolvedProjectRoot that)) {
+                return false;
+            }
+            return myRootDir.equals(that.myRootDir) && myOpenedFile.equals(that.myOpenedFile);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(myRootDir, myOpenedFile);
+        }
+
+        @Override
+        public String toString() {
+            return "ResolvedProjectRoot(rootDir=" + myRootDir + ", openedFile=" + myOpenedFile + ")";
+        }
+    }
 
     public static @Nullable VirtualFile findProjectFolderFromVFile(@Nullable VirtualFile projectIdentityFile) {
         if (projectIdentityFile == null) {

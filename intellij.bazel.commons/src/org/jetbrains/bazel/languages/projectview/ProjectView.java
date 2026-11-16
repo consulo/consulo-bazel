@@ -11,11 +11,11 @@ import java.util.Map;
  */
 public class ProjectView {
     private final Map<ProjectViewSectionKey<?>, Object> mySections;
-    private final List<Import> myImports;
+    private final List<Import.Resolved> myImports;
 
     public ProjectView(
         Map<ProjectViewSectionKey<?>, Object> sections,
-        List<Import> imports
+        List<Import.Resolved> imports
     ) {
         mySections = sections;
         myImports = imports;
@@ -25,7 +25,7 @@ public class ProjectView {
         return mySections;
     }
 
-    public List<Import> getImports() {
+    public List<Import.Resolved> getImports() {
         return myImports;
     }
 
@@ -72,20 +72,4 @@ public class ProjectView {
     }
 
     public static final ProjectView EMPTY = new ProjectView(Map.of(), List.of());
-
-    /**
-     * The required `import` statements (i.e. plain `import`, not `try_import`) whose target file could
-     * not be found. A non-empty result means the project view is incomplete and the sync should be
-     * stopped: otherwise it proceeds over an effectively-empty project view and fails slowly with
-     * misleading errors. See `ReparseProjectViewFilePreSyncHook` (which reports each one) and
-     * `ProjectSyncTask` (which aborts the sync).
-     */
-    // consulo: upstream Kotlin extension function ProjectView.unresolvedRequiredImports()
-    public static List<Import.Unresolved> unresolvedRequiredImports(ProjectView receiver) {
-        return receiver.getImports().stream()
-            .filter(it -> it instanceof Import.Unresolved)
-            .map(it -> (Import.Unresolved) it)
-            .filter(Import.Unresolved::isRequired)
-            .toList();
-    }
 }

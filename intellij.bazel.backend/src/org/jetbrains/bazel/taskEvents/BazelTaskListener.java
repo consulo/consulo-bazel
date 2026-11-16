@@ -16,7 +16,8 @@ public interface BazelTaskListener {
         int line,
         int character,
         MessageEvent.Kind severity,
-        String message
+        String message,
+        @Nullable String description
     ) {
     }
 

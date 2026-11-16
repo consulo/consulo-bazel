@@ -3,8 +3,10 @@ package org.jetbrains.bazel.python.run
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.project.Project
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.Nls
 import org.jetbrains.annotations.VisibleForTesting
 import org.jetbrains.bazel.commons.RuleType
+import org.jetbrains.bazel.config.BazelPluginBundle
 import org.jetbrains.bazel.python.lang.PythonLanguageClass
 import org.jetbrains.bazel.run.BazelCommandLineStateBase
 import org.jetbrains.bazel.run.BazelRunHandler
@@ -13,13 +15,13 @@ import org.jetbrains.bazel.run.config.BazelRunConfiguration
 import org.jetbrains.bazel.run.import.GooglePluginAwareRunHandlerProvider
 import org.jetbrains.bazel.run.state.AbstractGenericTestState
 import org.jetbrains.bazel.run.state.GenericTestState
-import org.jetbrains.bsp.protocol.BuildTarget
+import org.jetbrains.bsp.protocol.BuildTargetInfo
 import org.jetbrains.bsp.protocol.TestParams
 
 @ApiStatus.Internal
 class PythonBazelTestHandler : PythonBazelHandler<GenericTestState>() {
-  override val name: String
-    get() = "Python Test Handler"
+  override val name: @Nls String
+    get() = BazelPluginBundle.message("python.test.handler.name")
 
   override val isTestHandler: Boolean = true
 
@@ -33,9 +35,12 @@ class PythonBazelTestHandler : PythonBazelHandler<GenericTestState>() {
     override val id: String
       get() = "PythonBazelTestHandlerProvider"
 
+    override val providedRunHandlerName: @Nls String
+      get() = BazelPluginBundle.message("python.test.handler.name")
+
     override fun createRunHandler(configuration: BazelRunConfiguration): BazelRunHandler = PythonBazelTestHandler()
 
-    override fun canRun(project: Project, targets: List<BuildTarget>): Boolean =
+    override fun canRun(project: Project, targets: List<BuildTargetInfo>): Boolean =
       targets.all {
         it.kind.languageClasses.contains(PythonLanguageClass.PYTHON) && it.kind.ruleType == RuleType.TEST
       }

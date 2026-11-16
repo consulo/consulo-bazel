@@ -170,6 +170,22 @@ public sealed interface OutputLocation {
         };
     }
 
+    /**
+     * Returns the path inside the repository, without the output root and the `external/<repo>` prefix.
+     * Returns {@code null} for a host location.
+     */
+    static @Nullable Path toRepoRelativePath(OutputLocation receiver) {
+        return switch (receiver) {
+            case Workspace workspace -> getRelativeNioPath(workspace);
+            case External external -> getRelativeNioPath(external);
+            case Output output -> {
+                Path it = getRelativeNioPath(output);
+                yield it.startsWith("external") && it.getNameCount() > 2 ? it.subpath(2, it.getNameCount()) : it;
+            }
+            case Host host -> null;
+        };
+    }
+
     static OutputLocation mapPath(OutputLocation receiver, Function<Path, Path> transform) {
         Function<Path, String> toOutputRelativePath = path -> {
             // consulo: Kotlin invariantSeparatorsPathString

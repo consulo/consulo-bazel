@@ -46,6 +46,8 @@ import org.jetbrains.bazel.data.BazelProjectConfigurer
 import org.jetbrains.bazel.data.IdeaBazelCases
 import org.jetbrains.bazel.data.simpleBazelProject
 import org.jetbrains.bazel.tests.sync.verifyNoSyncOnReopen
+import org.jetbrains.bazel.tests.ui.clickRunGutterOnLine
+import org.jetbrains.bazel.tests.ui.verifyAvailableRunGutterActions
 import org.jetbrains.bazel.tests.ui.verifyTestStatus
 import org.jetbrains.bazel.tests.ui.waitForDebuggerPausedAt
 import org.junit.jupiter.api.Order
@@ -86,6 +88,9 @@ class SimpleKotlinCombinedTest : IdeStarterCombinedBaseTest() {
   @Test @Order(4)
   fun `no-ide targets handled correctly`() = testNoIde()
 
+  @Test @Order(5)
+  fun `run gutter for a shared test library should show only the target of the test class`() = runGutterSharedTestLibrary()
+
   @Test @Order(50)
   fun `reopening project should not trigger resync`() = reopenWithoutResync()
 
@@ -107,15 +112,18 @@ class SimpleKotlinCombinedTest : IdeStarterCombinedBaseTest() {
           .clickOnIcon(12)
         takeScreenshot("afterTriggerBuild")
         val buildView = x { byType("com.intellij.build.BuildView") }
-        // Check that waitContainsText doesn't care about separating output lines, carrying over a word from the previous line
-        buildView.waitContainsText("actionsINFO: Build", timeout = 2.minutes)
-        // If PTY terminal is disabled, it will print an empty "INFO:" into the console and won't be able to overwrite it
+        waitFor(
+          message = "Build console should show the end of the build with the escape sequences interpreted",
+          timeout = 2.minutes,
+          getter = { buildView.getAllTexts().asString() },
+          checker = BazelBuildViewText::hasInterpretedBuildEnd,
+        )
         takeScreenshot("afterReadingBuildCompletion")
         waitFor(
           message = "Build console shouldn't contain empty \"INFO:\"",
           timeout = 10.seconds,
           getter = { buildView.getAllTexts().asString() },
-          checker = { text: String -> "INFO: INFO: " !in text },
+          checker = { text: String -> !BazelBuildViewText.hasEmptyInfoLine(text) },
         )
       }
     }
@@ -212,7 +220,21 @@ class SimpleKotlinCombinedTest : IdeStarterCombinedBaseTest() {
     withDriver(bgRun) {
       ideFrame {
         step("Check imported targets") {
-          execute { assertSyncedTargets("//:B", "//:C", "//:SimpleKotlinTest", "//:associates_example", "//:requires-no-ide", "//:not-ignored") }
+          execute {
+            assertSyncedTargets(
+              "//:B",
+              "//:C",
+              "//:SimpleKotlinTest",
+              "//:associates_example",
+              "//:requires-no-ide",
+              "//:not-ignored",
+              "//src/org/example/sharedTestLib:tests",
+              "//src/org/example/sharedTestLib:MultiplyTest",
+              "//src/org/example/sharedTestLib:DivideTest",
+              "//src/org/example/sharedTestLib:apps",
+              "//src/org/example/sharedTestLib:FooApp",
+            )
+          }
         }
         step("Check navigation into no-ide sources") {
           execute { openFile("Y.kt") }
@@ -222,6 +244,40 @@ class SimpleKotlinCombinedTest : IdeStarterCombinedBaseTest() {
           execute { goToDeclaration() }
           takeScreenshot("afterSourceNavigation")
           execute { assertCurrentFile("Z.kt") }
+        }
+      }
+    }
+  }
+
+  private fun runGutterSharedTestLibrary() {
+    withDriver(bgRun) {
+      ideFrame {
+        // the files have no imports, so the class declaration is always on line 2
+        for (testName in listOf("MultiplyTest", "DivideTest")) {
+          step("Check the run gutter of $testName") {
+            execute { openFile("src/org/example/sharedTestLib/$testName.kt") }
+            clickRunGutterOnLine(2)
+            val target = "//src/org/example/sharedTestLib:$testName"
+            verifyAvailableRunGutterActions(
+              listOf(
+                "Run '$target'",
+                "Debug '$target'",
+                "Run '$target' with Coverage",
+                "Profile '$target' with 'IntelliJ Profiler'",
+              ),
+            )
+            popup().close()
+          }
+        }
+        step("Check the run gutter of FooApp") {
+          execute { openFile("src/org/example/sharedTestLib/FooApp.kt") }
+          // the top-level `main` function is on line 2, and the file facade class `FooAppKt` holds it
+          clickRunGutterOnLine(2)
+          val target = "//src/org/example/sharedTestLib:FooApp"
+          verifyAvailableRunGutterActions(
+            listOf("Run '$target'", "Debug '$target'", "Profile '$target' with 'IntelliJ Profiler'"),
+          )
+          popup().close()
         }
       }
     }

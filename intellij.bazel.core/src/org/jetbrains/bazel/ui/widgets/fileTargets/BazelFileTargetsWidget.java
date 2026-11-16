@@ -27,7 +27,7 @@ import org.jetbrains.bazel.target.TargetStorage;
 import org.jetbrains.bazel.ui.gutters.ExecutorActionsUtil;
 import org.jetbrains.bazel.ui.widgets.BazelJumpToBuildFileAction;
 import org.jetbrains.bazel.ui.widgets.tool.window.actions.CopyTargetIdAction;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.HashSet;
@@ -106,8 +106,8 @@ public class BazelFileTargetsWidget extends EditorBasedStatusBarPopup {
             .filter(it -> !targetIdSet.contains(it))
             .toList();
 
-        List<BuildTarget> targets = getTargetInfos(targetIds);
-        List<BuildTarget> executableTargets = getTargetInfos(executableTargetIds);
+        List<BuildTargetInfo> targets = getTargetInfos(targetIds);
+        List<BuildTargetInfo> executableTargets = getTargetInfos(executableTargetIds);
 
         DefaultActionGroup it = new DefaultActionGroup();
         it.addAll(targets.stream().map(this::calculatePopupGroup).toList());
@@ -118,13 +118,17 @@ public class BazelFileTargetsWidget extends EditorBasedStatusBarPopup {
         return it;
     }
 
-    private List<BuildTarget> getTargetInfos(List<Label> receiver) {
+    private List<BuildTargetInfo> getTargetInfos(List<Label> receiver) {
         TargetStorage targetUtils = TargetStorage.getTargetStorage(getProject());
-        return receiver.stream().map(targetUtils::getTargetSummary).filter(Objects::nonNull).map(Objects::requireNonNull).toList();
+        return receiver.stream()
+            .map(it -> TargetStorage.getTargetInfo(targetUtils, it))
+            .filter(Objects::nonNull)
+            .map(Objects::requireNonNull)
+            .toList();
     }
 
-    private ActionGroup calculatePopupGroup(BuildTarget receiver) {
-        Label id = BuildTarget.getId(receiver);
+    private ActionGroup calculatePopupGroup(BuildTargetInfo receiver) {
+        Label id = receiver.id();
         DefaultActionGroup it = createActionGroup(BazelRepoMappingUtils.toShortString(id, getProject()));
         it.add(new CopyTargetIdAction.FromTargetInfo(receiver));
         it.addSeparator();

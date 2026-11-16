@@ -14,16 +14,16 @@ import java.util.concurrent.CompletionException;
 
 public class BazelProcessHandler extends BaseProcessHandler {
     private final Project myProject;
-    private final CompletableFuture<?> myRunDeferred;
+    private final CompletableFuture<Integer> myRunDeferred;
     private final @Nullable CompletableFuture<@Nullable Long> myPid;
 
-    public BazelProcessHandler(Project project, CompletableFuture<?> runDeferred, @Nullable CompletableFuture<@Nullable Long> pid) {
+    public BazelProcessHandler(Project project, CompletableFuture<Integer> runDeferred, @Nullable CompletableFuture<@Nullable Long> pid) {
         myProject = project;
         myRunDeferred = runDeferred;
         myPid = pid;
     }
 
-    public BazelProcessHandler(Project project, CompletableFuture<?> runDeferred) {
+    public BazelProcessHandler(Project project, CompletableFuture<Integer> runDeferred) {
         this(project, runDeferred, null);
     }
 
@@ -40,7 +40,7 @@ public class BazelProcessHandler extends BaseProcessHandler {
                 // consulo: dependent stages may see the failure wrapped into a CompletionException
                 @Nullable Throwable e = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
                 if (e == null) {
-                    notifyProcessTerminated(0);
+                    notifyProcessTerminated(result);
                 }
                 else if (e instanceof CancellationException) {
                     notifyTextAvailable(BazelPluginLocalize.consoleTaskRunCancelled().get(), ProcessOutputType.STDERR);

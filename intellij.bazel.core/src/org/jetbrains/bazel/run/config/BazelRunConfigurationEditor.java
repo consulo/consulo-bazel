@@ -9,6 +9,9 @@ import consulo.bazel.execution.ui.SettingsEditorFragmentContainer;
 import org.jetbrains.bazel.run.BazelRunHandler;
 import org.jspecify.annotations.Nullable;
 
+import javax.swing.SwingUtilities;
+import java.awt.Component;
+import java.awt.KeyboardFocusManager;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -60,6 +63,7 @@ public class BazelRunConfigurationEditor extends RunConfigurationFragmentedEdito
             // add(CommonTags.parallelRun())
             // addBeforeRunFragment()
             addTargetLabelsFragment(container);
+            container.add(new RunHandlerFragment());
             addStateEditorFragment(container);
         });
     }
@@ -84,10 +88,35 @@ public class BazelRunConfigurationEditor extends RunConfigurationFragmentedEdito
         receiver.add(new TargetsFragment(getProject()));
     }
 
-    public void focusTargetLabelsFragment() {
+    /**
+     * Updates the run handlers on offer for the targets of {@code configuration}. The other fragments keep their state.
+     */
+    public void resetRunHandlerFragment(BazelRunConfiguration configuration) {
         for (SettingsEditorFragment<BazelRunConfiguration, ?> fragment : getFragments()) {
-            if (fragment instanceof TargetsFragment targetsFragment) {
-                targetsFragment.getEditorComponent().requestFocus();
+            if (fragment instanceof RunHandlerFragment runHandlerFragment) {
+                runHandlerFragment.resetFrom(configuration);
+            }
+        }
+    }
+
+    public @Nullable String findFocusedFragmentId() {
+        Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+        if (focusOwner == null) {
+            return null;
+        }
+        for (SettingsEditorFragment<BazelRunConfiguration, ?> fragment : getFragments()) {
+            if (SwingUtilities.isDescendingFrom(focusOwner, fragment.component())) {
+                return fragment.getId();
+            }
+        }
+        return null;
+    }
+
+    public void focusFragment(String fragmentId) {
+        for (SettingsEditorFragment<BazelRunConfiguration, ?> fragment : getFragments()) {
+            if (fragment.getId().equals(fragmentId)) {
+                fragment.getEditorComponent().requestFocus();
+                return;
             }
         }
     }

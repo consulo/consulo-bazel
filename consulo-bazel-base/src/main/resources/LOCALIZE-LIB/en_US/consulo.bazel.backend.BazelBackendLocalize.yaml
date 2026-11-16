@@ -12,6 +12,8 @@ workspace.importer.phase.initialization.progress:
     text: "Initialize workspace importers"
 bazel.import.noide.targets:
     text: "Included {0} {1} targets as dependencies"
+bazel.import.noide.droppedtargets:
+    text: "Dropped {0} {1} targets (including their dependencies)"
 bazel.import.ignored.bazelbsp:
     text: "{0} mentions {1} which is needed for sync by the Bazel plugin"
 background.progress.syncing.project:

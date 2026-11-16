@@ -15,6 +15,7 @@
  */
 package com.intellij.aspect.lib;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -24,11 +25,15 @@ import java.util.Objects;
 /**
  * Remaps external repository names according to the provided mapping.
  */
-public class TransformExternalRepositories implements Transformer {
+class TransformExternalRepositories implements Transformer {
     private final Map<String, String> myNameMapping;
 
     public TransformExternalRepositories(Map<Rules, String> mapping) {
-        myNameMapping = AspectChoice.repoMappingForRules(mapping);
+        Map<String, String> nameMapping = new LinkedHashMap<>();
+        for (Map.Entry<Rules, String> entry : mapping.entrySet()) {
+            nameMapping.put(entry.getKey().getRulesetName(), entry.getValue());
+        }
+        myNameMapping = nameMapping;
     }
 
     public Map<String, String> getNameMapping() {

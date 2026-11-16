@@ -2,6 +2,7 @@ package org.jetbrains.bazel.jvm.run;
 
 import consulo.application.Application;
 import consulo.application.concurrent.ApplicationConcurrency;
+import consulo.logging.Logger;
 import consulo.process.ExecutionException;
 import consulo.process.ProcessHandler;
 import consulo.process.ProcessHandlerBuilderFactory;
@@ -11,15 +12,14 @@ import consulo.process.event.ProcessListener;
 import consulo.process.util.AnsiEscapeDecoder;
 import consulo.project.Project;
 import consulo.util.dataholder.Key;
-import org.jetbrains.bazel.commons.BazelInfo;
 import org.jetbrains.bazel.run.BazelProcessHandler;
 import org.jetbrains.bazel.run.commandLine.Utils;
 import org.jetbrains.bazel.server.bep.TestXmlParser;
 import org.jetbrains.bazel.sync.workspace.languages.jvm.JavaBazelRules;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.taskEvents.BazelTaskEventsService;
 import org.jetbrains.bazel.util.BspClientTestNotifier;
+import org.jetbrains.bazel.utils.ExecutableInfo;
+import org.jetbrains.bazel.utils.ExecutableInfo.UnexpectedScriptContentException;
 import org.jetbrains.bsp.protocol.TaskId;
 import org.jspecify.annotations.Nullable;
 
@@ -29,12 +29,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 // consulo: upstream Kotlin top-level declarations; the class keeps the upstream file name
 public final class RunWithScriptPath {
@@ -45,7 +44,7 @@ public final class RunWithScriptPath {
      * See {@link ScriptPathBeforeRunTaskProvider}, we have to pass {@code env} to the script process manually
      * because Bazel doesn't include environment variable setup in the generated script.
      */
-    public static CompletableFuture<?> runWithScriptPath(
+    public static CompletableFuture<Integer> runWithScriptPath(
         TaskId taskId,
         Path scriptPath,
         Project project,
@@ -63,17 +62,18 @@ public final class RunWithScriptPath {
 
         return runJvmCommandLine(commandLine, pidDeferred, handler, processHandlerCreated)
             // consulo: upstream runInterruptible(Dispatchers.IO) { }
-            .thenCompose(ignored -> CompletableFuture.runAsync(() -> findXmlOutputAndReport(taskId, scriptPath, project), ioDispatcher()));
+            .thenCompose(exitCode -> CompletableFuture.runAsync(() -> findXmlOutputAndReport(taskId, scriptPath, project), ioDispatcher())
+                .thenApply(ignored -> exitCode));
     }
 
     /**
      * Starts {@code commandLine} and copies its output to {@code handler}.
      * When {@code handler} is destroyed, the process is destroyed too.
      * {@code pidDeferred} gets the pid when the JVM can take an attach, or after 5 seconds.
-     * The function returns when the process ends.
+     * The function returns the exit code of the process when the process ends.
      */
     // consulo: upstream OSProcessHandler is internal in Consulo, the process handler is built by ProcessHandlerBuilderFactory
-    public static CompletableFuture<?> runJvmCommandLine(
+    public static CompletableFuture<Integer> runJvmCommandLine(
         GeneralCommandLine commandLine,
         CompletableFuture<@Nullable Long> pidDeferred,
         BazelProcessHandler handler,
@@ -120,7 +120,7 @@ public final class RunWithScriptPath {
             // Since the PID of the bash process is the same as that of the JVM, we wait for bash script completion before returning the pid to IDEA
             // consulo: upstream withTimeoutOrNull(5.seconds) { while (...) { ...; delay(50.milliseconds) } } and
             // runInterruptible(Dispatchers.IO) { }, both on a pooled thread
-            return CompletableFuture.runAsync(() -> {
+            return CompletableFuture.supplyAsync(() -> {
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                 while (!scriptHandler.isProcessTerminated() && System.nanoTime() < deadline) {
                     // TODO consulo: com.intellij.debugger.impl.attach.JavaDebuggerAttachUtil.isAttachable(pid) is missing in Consulo,
@@ -137,6 +137,11 @@ public final class RunWithScriptPath {
 
                 pidDeferred.complete(pid);
                 scriptHandler.waitFor();
+                Integer exitCode = scriptHandler.getExitCode();
+                if (exitCode == null) {
+                    throw new CancellationException();
+                }
+                return exitCode;
             }, ioDispatcher());
         });
     }
@@ -150,33 +155,29 @@ public final class RunWithScriptPath {
             throw new UncheckedIOException(e);
         }
 
-        WorkspaceSnapshot snapshot = WorkspaceHelpers.getWorkspaceSnapshotOrNull(project);
-        BazelInfo bazelInfo = snapshot == null ? null : snapshot.bazelInfo();
-        if (bazelInfo == null) {
+        ExecutableInfo executableInfo;
+        try {
+            executableInfo = ExecutableInfo.fromBazelRunScript(scriptContent);
+        }
+        catch (UnexpectedScriptContentException e) {
+            LOG.warn(e);
             return;
         }
-        Path execRoot = bazelInfo.execRoot();
-        Matcher matcher = TEST_XML_OUTPUT_FILE_REGEX.matcher(scriptContent);
-        if (!matcher.find()) {
+        Path testXml = executableInfo.getTestXml();
+        if (testXml == null) {
             return;
         }
-        String xmlPath = matcher.group("path");
-        if (xmlPath == null) {
-            return;
-        }
-        Path absoluteXmlPath = execRoot.resolve(xmlPath);
-
         BazelTaskEventsService taskHandler = BazelTaskEventsService.getInstance(project);
         BspClientTestNotifier testNotifier = new BspClientTestNotifier(taskHandler);
 
         new TestXmlParser(testNotifier).parseAndReport(
             taskId, /* ??? */
-            absoluteXmlPath,
+            testXml,
             JavaBazelRules.JAVA_TEST_KIND
         );
     }
 
-    private static final Pattern TEST_XML_OUTPUT_FILE_REGEX = Pattern.compile("XML_OUTPUT_FILE=(?<path>\\S+)");
+    private static final Logger LOG = Logger.getInstance(RunWithScriptPath.class);
 
     // consulo: Dispatchers.IO
     private static Executor ioDispatcher() {

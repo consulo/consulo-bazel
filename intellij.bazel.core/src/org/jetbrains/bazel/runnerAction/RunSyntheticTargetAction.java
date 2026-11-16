@@ -22,7 +22,7 @@ import org.jetbrains.bazel.run.synthetic.GenerateSyntheticTargetRunTaskProvider;
 import org.jetbrains.bazel.run.synthetic.SyntheticRunTargetTemplateGenerator;
 import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer;
 import org.jetbrains.bazel.ui.gutters.BazelRunLocation;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,9 +52,9 @@ class SyntheticRunConfigurationProducer extends RunConfigurationProducer<BazelRu
         if (!(context.getLocation() instanceof BazelRunLocation location)) {
             return false;
         }
-        BuildTarget target = location.getTarget();
+        BuildTargetInfo target = location.getTarget();
         // Binary/test targets already have "normal" run configurations produced from them
-        if (target.getKind().ruleType() != RuleType.LIBRARY) {
+        if (target.kind().ruleType() != RuleType.LIBRARY) {
             return false;
         }
 
@@ -84,7 +84,7 @@ class SyntheticRunConfigurationProducer extends RunConfigurationProducer<BazelRu
         SyntheticRunTargetTemplateGenerator.Params params = templateGenerator.getSyntheticParams(target, targetElement);
         GenerateSyntheticTargetRunTaskProvider.Task task = provider.createTask(configuration);
         GenerateSyntheticTargetRunTaskProvider.TaskState taskState = task.getTaskState();
-        taskState.target = BuildTarget.getId(target).toString();
+        taskState.target = target.id().toString();
         taskState.language = targetElement.getLanguage().getID();
         taskState.params = params.data();
         // consulo: Consulo keeps the before run tasks in RunManager (upstream configuration.beforeRunTasks)
@@ -95,7 +95,7 @@ class SyntheticRunConfigurationProducer extends RunConfigurationProducer<BazelRu
 
         configuration.setName(
             BazelPluginLocalize.runconfigSynthetic(
-                BazelRepoMappingUtils.toShortString(BuildTarget.getId(target), configuration.getProject())
+                BazelRepoMappingUtils.toShortString(target.id(), configuration.getProject())
             ).get()
         );
 
@@ -110,8 +110,8 @@ class SyntheticRunConfigurationProducer extends RunConfigurationProducer<BazelRu
         if (!(context.getLocation() instanceof BazelRunLocation location)) {
             return false;
         }
-        BuildTarget target = location.getTarget();
-        if (target.getKind().ruleType() != RuleType.LIBRARY) {
+        BuildTargetInfo target = location.getTarget();
+        if (target.kind().ruleType() != RuleType.LIBRARY) {
             return false;
         }
         PsiElement targetElement = context.getPsiLocation();

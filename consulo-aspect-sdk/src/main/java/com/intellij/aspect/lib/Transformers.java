@@ -19,9 +19,12 @@ package com.intellij.aspect.lib;
  * consulo: private top-level functions of upstream sdk/lib/transformers.kt. The transformer classes of that file
  * are {@link TransformRelativePaths}, {@link TransformExternalRepositories}, {@link TransformBuiltinRules},
  * {@link TransformFieldLoad}, {@link TransformCcToolchainType}, {@link TransformPythonToolchainType},
- * {@link TransformJavaSemantics} and {@link TransformScalaToolchainType}.
+ * {@link TransformJavaSemantics}, {@link TransformScalaToolchainType} and {@link TransformPlatformsRepository}.
  */
 final class Transformers {
+    static final String SCALA_TOOLCHAIN_CONSTANT = "SCALA_TOOLCHAIN_TYPE";
+    static final String SCALA_TOOLCHAIN_VALUE = "//scala:toolchain_type";
+
     private Transformers() {
     }
 

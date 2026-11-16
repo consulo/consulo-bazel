@@ -8,3 +8,5 @@ workspace.java.importer.update.internal.model:
     text: "Update internal model"
 workspace.java.importer.writing.libraries:
     text: "Writing libraries"
+workspace.scala.importer.name:
+    text: "Scala importer"

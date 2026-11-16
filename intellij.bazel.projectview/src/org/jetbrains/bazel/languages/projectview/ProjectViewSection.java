@@ -13,6 +13,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 public class ProjectViewSection<T extends @Nullable Object> {
@@ -58,20 +59,23 @@ public class ProjectViewSection<T extends @Nullable Object> {
     }
 
     public static class Deprecation {
-        private final LocalizeValue myMessage;
+        private final Function<String, LocalizeValue> myMessage;
         private final Level myLevel;
         private final List<ProjectViewProblem.QuickFix> myQuickFixes;
 
-        public Deprecation(LocalizeValue message) {
+        /**
+         * @param message the message for the section name
+         */
+        public Deprecation(Function<String, LocalizeValue> message) {
             this(message, Level.Warning);
         }
 
-        public Deprecation(LocalizeValue message, Level level) {
+        public Deprecation(Function<String, LocalizeValue> message, Level level) {
             this(message, level, List.of());
         }
 
         public Deprecation(
-            LocalizeValue message,
+            Function<String, LocalizeValue> message,
             Level level,
             List<ProjectViewProblem.QuickFix> quickFixes
         ) {
@@ -80,7 +84,7 @@ public class ProjectViewSection<T extends @Nullable Object> {
             myQuickFixes = quickFixes;
         }
 
-        public LocalizeValue getMessage() {
+        public Function<String, LocalizeValue> getMessage() {
             return myMessage;
         }
 
@@ -105,7 +109,7 @@ public class ProjectViewSection<T extends @Nullable Object> {
             Level level
         ) {
             return new Deprecation(
-                BazelProjectViewLocalize.annotatorDeprecatedSectionWithReplacementWarning(targetKey.getName()),
+                sectionName -> BazelProjectViewLocalize.annotatorDeprecatedSectionWithReplacementWarning(sectionName, targetKey.getName()),
                 level,
                 List.of(new ProjectViewProblem.QuickFix.MergeIntoSection(targetKey))
             );
@@ -137,10 +141,6 @@ public class ProjectViewSection<T extends @Nullable Object> {
         if (section == null) {
             return null;
         }
-        return findByName(
-            section.getKeyword()
-                .getText()
-                .trim()
-        );
+        return findByName(ProjectViewPsiSection.sectionName(section));
     }
 }

@@ -25,8 +25,6 @@ public interface JvmTestRunnerExtension {
 
     boolean isIdBasedTestTree();
 
-    boolean getTestRunnerEmitsServiceMessages();
-
     TestParams transformTestParams(TestParams params);
 
     Pair<Map<String, String>, @Nullable String> transformScriptPathEnvAndTestFilter(Map<String, String> env, @Nullable String testFilter);
@@ -60,11 +58,6 @@ class DefaultJvmTestRunnerExtension implements JvmTestRunnerExtension {
 
     @Override
     public boolean isIdBasedTestTree() {
-        return false;
-    }
-
-    @Override
-    public boolean getTestRunnerEmitsServiceMessages() {
         return false;
     }
 

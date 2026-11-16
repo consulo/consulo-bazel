@@ -18,15 +18,13 @@ import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.label.Label.ResolvedLabel;
 import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
 import org.jetbrains.bazel.sync.workspace.DefaultOutputLocationResolver;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions.BuildTargetLoadHint;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions.TargetSection;
 import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
 import org.jetbrains.bsp.protocol.OutputLocation;
 import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
@@ -90,20 +88,20 @@ public class TargetStorage {
             }
             myOutputLocationResolver = DefaultOutputLocationResolver.createExecrootResolving(snapshot.bazelInfo());
 
-            myTarget2Summary = snapshot.targets().allTargets(TargetLoadOptions.SUMMARY)
-                .filter(it -> myImportKeys.contains(it.getKey()))
-                .collect(Collectors.toMap(BuildTarget::getKey, it -> it, (first, second) -> second, LinkedHashMap::new));
+            myTarget2Info = snapshot.targets().allTargetInfos()
+                .filter(it -> myImportKeys.contains(it.key()))
+                .collect(Collectors.toMap(BuildTargetInfo::key, it -> it, (first, second) -> second, LinkedHashMap::new));
 
-            mySummaries = new ArrayList<>(myTarget2Summary.values());
+            myInfos = new ArrayList<>(myTarget2Info.values());
 
-            Map<Label, BuildTarget> label2Summary = new LinkedHashMap<>();
+            Map<Label, BuildTargetInfo> label2Info = new LinkedHashMap<>();
             myLabel2Key.forEach((label, key) -> {
-                @Nullable BuildTarget summary = myTarget2Summary.get(key);
-                if (summary != null) {
-                    label2Summary.put(label, summary);
+                @Nullable BuildTargetInfo info = myTarget2Info.get(key);
+                if (info != null) {
+                    label2Info.put(label, info);
                 }
             });
-            myLabel2Summary = label2Summary;
+            myLabel2Info = label2Info;
         }
 
         public WorkspaceSnapshot getSnapshot() {
@@ -122,23 +120,23 @@ public class TargetStorage {
             return myOutputLocationResolver;
         }
 
-        private final Map<WorkspaceTargetKey, BuildTarget> myTarget2Summary;
+        private final Map<WorkspaceTargetKey, BuildTargetInfo> myTarget2Info;
 
-        private final List<BuildTarget> mySummaries;
+        private final List<BuildTargetInfo> myInfos;
 
-        public List<BuildTarget> getSummaries() {
-            return mySummaries;
+        public List<BuildTargetInfo> getInfos() {
+            return myInfos;
         }
 
-        private final Map<Label, BuildTarget> myLabel2Summary;
+        private final Map<Label, BuildTargetInfo> myLabel2Info;
 
-        public Map<Label, BuildTarget> getLabel2Summary() {
-            return myLabel2Summary;
+        public Map<Label, BuildTargetInfo> getLabel2Info() {
+            return myLabel2Info;
         }
 
         private final LazyValue<List<String>> myShortLabels = LazyValue.notNull(() ->
-            getSummaries().stream()
-                .map(it -> BazelRepoMappingUtils.toShortString(BuildTarget.getId(it), getSnapshot().repoMapping()))
+            getInfos().stream()
+                .map(it -> BazelRepoMappingUtils.toShortString(it.id(), getSnapshot().repoMapping()))
                 .toList()
         );
 
@@ -147,9 +145,9 @@ public class TargetStorage {
         }
 
         private final LazyValue<List<String>> myExecutableShortLabels = LazyValue.notNull(() ->
-            getSummaries().stream()
-                .filter(it -> it.getKind().isExecutable())
-                .map(it -> BazelRepoMappingUtils.toShortString(BuildTarget.getId(it), getSnapshot().repoMapping()))
+            getInfos().stream()
+                .filter(it -> it.kind().isExecutable())
+                .map(it -> BazelRepoMappingUtils.toShortString(it.id(), getSnapshot().repoMapping()))
                 .toList()
         );
 
@@ -157,12 +155,12 @@ public class TargetStorage {
             return myExecutableShortLabels.get();
         }
 
-        private final LazyValue<List<BuildTarget>> myAllTestableSummaries = LazyValue.notNull(() ->
-            getSummaries().stream().filter(it -> it.getKind().ruleType() == RuleType.TEST && !BuildTarget.isManual(it)).toList()
+        private final LazyValue<List<BuildTargetInfo>> myAllTestableInfos = LazyValue.notNull(() ->
+            getInfos().stream().filter(it -> it.kind().ruleType() == RuleType.TEST && !BuildTargetInfo.isManual(it)).toList()
         );
 
-        public List<BuildTarget> getAllTestableSummaries() {
-            return myAllTestableSummaries.get();
+        public List<BuildTargetInfo> getAllTestableInfos() {
+            return myAllTestableInfos.get();
         }
 
         public List<Label> targetsForPath(Path path) {
@@ -192,12 +190,7 @@ public class TargetStorage {
                     if (key == null) {
                         return EmptyBuildTargetData.INSTANCE;
                     }
-                    TargetLoadOptions options = new TargetLoadOptions(
-                        Set.of(TargetSection.INFO),
-                        new BuildTargetLoadHint.Subset(Set.<Class<? extends BuildTargetData>>of(type))
-                    );
-                    @Nullable BuildTarget target = mySnapshot.targets().findTargetByKey(key, options);
-                    @Nullable T data = target != null ? BuildTarget.data(target, type) : null;
+                    @Nullable T data = mySnapshot.targets().findTargetData(key, type);
                     return data != null ? data : EmptyBuildTargetData.INSTANCE;
                 });
             }
@@ -242,6 +235,10 @@ public class TargetStorage {
         return myViews.get();
     }
 
+    @Nullable Label canonicalLabel(Label label) {
+        return BazelRepoMappingUtils.toCanonicalLabelOrThis(label, myProject);
+    }
+
     public List<String> getAllTargetShortLabels() {
         return view().getShortLabels();
     }
@@ -263,24 +260,11 @@ public class TargetStorage {
     }
 
     public Stream<Label> allTargets() {
-        return allTargetSummaries().stream().map(BuildTarget::getId);
-    }
-
-    public List<BuildTarget> allTargetSummaries() {
-        return view().getSummaries();
-    }
-
-    public List<BuildTarget> allTestableSummaries() {
-        return view().getAllTestableSummaries();
-    }
-
-    public @Nullable BuildTarget getTargetSummary(Label label) {
-        @Nullable ResolvedLabel canonicalLabel = BazelRepoMappingUtils.toCanonicalLabelOrThis(label, myProject);
-        return canonicalLabel != null ? view().getLabel2Summary().get(canonicalLabel) : null;
+        return view().getInfos().stream().map(BuildTargetInfo::id);
     }
 
     public int getTotalTargetCount() {
-        return view().getSummaries().size();
+        return view().getInfos().size();
     }
 
     public List<Label> getTargetsForPath(Path path) {
@@ -300,8 +284,8 @@ public class TargetStorage {
         CachedSnapshotView view = view();
         List<Label> targetsForFile = view.targetsForPath(path);
         List<Label> executableDirectTargets = targetsForFile.stream().filter(label -> {
-            @Nullable BuildTarget summary = view.getLabel2Summary().get(label);
-            return summary != null && summary.getKind().isExecutable();
+            @Nullable BuildTargetInfo info = view.getLabel2Info().get(label);
+            return info != null && info.kind().isExecutable();
         }).toList();
         if (executableDirectTargets.isEmpty()) {
             return targetsForFile.stream().flatMap(it -> view.executableTargetsFor(it).stream()).distinct().toList();
@@ -314,12 +298,12 @@ public class TargetStorage {
     }
 
     public boolean isLibrary(Label target) {
-        @Nullable BuildTarget summary = getTargetSummary(target);
-        return summary != null && summary.getKind().ruleType() == RuleType.LIBRARY;
+        @Nullable BuildTargetInfo info = getTargetInfo(this, target);
+        return info != null && info.kind().ruleType() == RuleType.LIBRARY;
     }
 
     public <T extends BuildTargetData> @Nullable T getTargetDataForLabel(Label label, Class<T> type) {
-        @Nullable ResolvedLabel canonicalLabel = BazelRepoMappingUtils.toCanonicalLabelOrThis(label, myProject);
+        @Nullable Label canonicalLabel = canonicalLabel(label);
         return canonicalLabel != null ? view().data(canonicalLabel, type) : null;
     }
 
@@ -338,6 +322,29 @@ public class TargetStorage {
 
     // consulo: the upstream reified extension `TargetStorage.getTargetDataForLabel<T>(label)` is the member
     // getTargetDataForLabel(label, type)
+
+    public static @Nullable BuildTargetInfo getTargetInfo(TargetStorage receiver, Label label) {
+        @Nullable Label canonicalLabel = receiver.canonicalLabel(label);
+        return canonicalLabel != null ? receiver.myViews.get().getLabel2Info().get(canonicalLabel) : null;
+    }
+
+    public static List<BuildTargetInfo> allTargetInfos(TargetStorage receiver) {
+        return receiver.myViews.get().getInfos();
+    }
+
+    public static List<BuildTargetInfo> allTestableTargetInfos(TargetStorage receiver) {
+        return receiver.myViews.get().getAllTestableInfos();
+    }
+
+    public static @Nullable BuildTarget getBuildTarget(TargetStorage receiver, Label label) {
+        CachedSnapshotView view = receiver.myViews.get();
+        @Nullable Label canonicalLabel = receiver.canonicalLabel(label);
+        @Nullable WorkspaceTargetKey key = canonicalLabel != null ? view.getLabel2Key().get(canonicalLabel) : null;
+        if (key == null) {
+            return null;
+        }
+        return view.getSnapshot().targets().findTargetByKey(key);
+    }
 
     public static TargetStorage getTargetStorage(Project receiver) {
         return receiver.getInstance(TargetStorage.class);

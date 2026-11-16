@@ -10,7 +10,7 @@ import consulo.ui.ex.action.DefaultActionGroup;
 import consulo.ui.ex.action.ToggleAction;
 import consulo.ui.ex.action.Toggleable;
 import org.jetbrains.bazel.commons.RuleType;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 
 import java.util.function.Predicate;
 
@@ -22,12 +22,12 @@ public class FilterActionGroup extends DefaultActionGroup implements
     // consulo: upstream top-level enum of FilterActionGroup.kt
     public enum TargetFilter {
         OFF(it -> true),
-        CAN_RUN(it -> it.getKind().ruleType() == RuleType.BINARY),
-        CAN_TEST(it -> it.getKind().ruleType() == RuleType.TEST);
+        CAN_RUN(it -> it.kind().ruleType() == RuleType.BINARY),
+        CAN_TEST(it -> it.kind().ruleType() == RuleType.TEST);
 
-        public final Predicate<BuildTarget> predicate;
+        public final Predicate<BuildTargetInfo> predicate;
 
-        TargetFilter(Predicate<BuildTarget> predicate) {
+        TargetFilter(Predicate<BuildTargetInfo> predicate) {
             this.predicate = predicate;
         }
     }

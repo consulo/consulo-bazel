@@ -22,7 +22,6 @@ public final class Constants {
     public static final String MODULE_BAZEL_FILE_NAME = "MODULE.bazel";
     public static final String MODULE_BAZEL_LOCK_FILE_NAME = "MODULE.bazel.lock";
     public static final String BAZEL_VERSION_FILE_NAME = ".bazelversion";
-    public static final String BAZELISK_VERSION_FILE_NAME = ".bazeliskversion";
     public static final String BAZELISK_RC_FILE_NAME = ".bazeliskrc";
     public static final String BAZEL_RC_FILE_NAME = ".bazelrc";
     public static final String BAZEL_IGNORE_FILE_NAME = ".bazelignore";

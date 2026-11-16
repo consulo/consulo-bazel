@@ -105,10 +105,12 @@
     <runWithScriptPathExtension implementation="org.jetbrains.bazel.jvm.run.DebugRunWithScriptPathExtension"/>
     <jvmTestRunnerExtension implementation="org.jetbrains.bazel.jvm.run.DefaultJvmTestRunnerExtension" order="last"/>
     <jvmTestFilterExtension implementation="org.jetbrains.bazel.java.ui.gutters.DefaultJvmTestFilterExtension" order="last"/>
+    <entryPointMatcher implementation="org.jetbrains.bazel.java.ui.gutters.JvmEntryPointMatcher"/>
 
     <testLocationHintProvider implementation="org.jetbrains.bazel.testing.BazelJavaTestLocationHintProvider"/>
     <incompleteTestSuiteParser implementation="org.jetbrains.bazel.jvm.run.Junit5TestVisualOutputParser"/>
     <testRerunExtension implementation="org.jetbrains.bazel.jvm.run.DefaultJvmTestRerunExtension" order="last"/>
+    <javacOptionsUpdater implementation="org.jetbrains.bazel.java.compiler.BazelJavacOptionsUpdater"/>
   </extensions>
 
   <extensions defaultExtensionNs="com.intellij">
@@ -147,5 +149,6 @@
                      key="inspections.display.name.javastrictdeps"/>
     <runConfigurationProducer implementation="org.jetbrains.bazel.jvm.run.BazelRerunTestConfigurationProducer"/>
     <librarySourcesMismatchSuppressor implementation="org.jetbrains.bazel.java.analysis.BazelInterfaceJarSourceMismatchSuppressor"/>
+    <java.createClassActionAvailabilityOverride implementation="org.jetbrains.bazel.flow.modify.BazelCreateJavaClassActionAvailabilityOverride"/>
   </extensions>
 </idea-plugin>

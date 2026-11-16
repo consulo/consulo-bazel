@@ -25,7 +25,7 @@ public class BazelTrustedProjectsLocator {
 
     public List<Path> getProjectRoots(Path projectRoot, @Nullable Project project) {
         // 'projectRoot' despite its name, may be a file when bazel plugin opens MODULE.bazel, *.bazelproject, etc.
-        Path projectFolder = utils.findProjectFolderFromFile(projectRoot);
-        return projectFolder == null ? List.of() : List.of(projectFolder);
+        utils.ResolvedProjectRoot resolvedProjectRoot = utils.ResolvedProjectRoot.from(projectRoot);
+        return resolvedProjectRoot == null ? List.of() : List.of(resolvedProjectRoot.getRootDir());
     }
 }

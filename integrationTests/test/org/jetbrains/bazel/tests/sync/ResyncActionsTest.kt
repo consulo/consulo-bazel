@@ -18,6 +18,7 @@ import org.jetbrains.bazel.base.findFile
 import org.jetbrains.bazel.base.openFile
 import org.jetbrains.bazel.base.syncBazelProject
 import org.jetbrains.bazel.base.waitForSyncSucceeded
+import org.jetbrains.bazel.tests.ui.rightClickRowAndWaitForMenu
 import org.jetbrains.bazel.config.BazelBackendBundle
 import org.jetbrains.bazel.config.BazelPluginBundle
 import org.jetbrains.bazel.data.IdeaBazelCases
@@ -30,6 +31,16 @@ import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.minutes
 
 private val RESYNC_ACTIONS_PROJECT = simpleBazelProject(path = "simpleJavaTest")
+
+private const val DIRECTORY_WITHOUT_BUILD_FILE = "resyncDirectory"
+private const val DIRECTORY_PLAIN_FILE = "$DIRECTORY_WITHOUT_BUILD_FILE/README.md"
+private const val DIRECTORY_PACKAGE_BUILD_FILE = "$DIRECTORY_WITHOUT_BUILD_FILE/lib/BUILD"
+
+private val DIRECTORY_PACKAGE_BUILD_FILE_CONTENT = """
+  java_library(
+      name = "lib",
+  )
+""".trimIndent()
 
 private const val ADDED_SOURCE_FILE = "resyncBanner/ResyncBannerTest.java"
 private const val ADDED_BUILD_FILE = "resyncBanner/BUILD"
@@ -102,8 +113,7 @@ class ResyncActionsTest : IdeStarterBaseProjectTest() {
         waitForSyncSucceeded()
 
         step("resync directory") {
-          projectView().projectViewTree.rightClickRow { it.contains("basenameConflict") }
-          popupMenu().waitFound()
+          projectView().projectViewTree.rightClickRowAndWaitForMenu("basenameConflict", { it.contains("basenameConflict") }) { popupMenu() }
           takeScreenshot("resyncDirectoryPopup")
           popupMenu().should("The project view popup offers '$RESYNC_DIRECTORY_ITEM'", 1.minutes) {
             itemsList().any { it == RESYNC_DIRECTORY_ITEM }
@@ -111,9 +121,20 @@ class ResyncActionsTest : IdeStarterBaseProjectTest() {
           keyboard { escape() }
         }
 
+        step("resync directory without BUILD file") {
+          addProjectFile(context, DIRECTORY_PLAIN_FILE, "")
+          addProjectFile(context, DIRECTORY_PACKAGE_BUILD_FILE, DIRECTORY_PACKAGE_BUILD_FILE_CONTENT)
+          projectView().projectViewTree.rightClickRowAndWaitForMenu(DIRECTORY_WITHOUT_BUILD_FILE, { it == DIRECTORY_WITHOUT_BUILD_FILE }) { popupMenu() }
+          takeScreenshot("resyncDirectoryWithoutBuildFilePopup")
+          popupMenu().select(RESYNC_DIRECTORY_ITEM)
+          waitForIndicators(5.minutes)
+          takeScreenshot("afterResyncDirectoryWithoutBuildFile")
+          waitForPartialResync(RESYNC_DIRECTORY_ITEM, targetCount = 1)
+          driver.failIfFatalIdeErrorsPresent(RESYNC_DIRECTORY_ITEM)
+        }
+
         step("resync BUILD file") {
-          projectView().projectViewTree.rightClickRow { it == "BUILD" }
-          popupMenu().waitFound()
+          projectView().projectViewTree.rightClickRowAndWaitForMenu("BUILD", { it == "BUILD" }) { popupMenu() }
           takeScreenshot("resyncBuildFilePopup")
           popupMenu().select(RESYNC_FILE_ITEM)
           waitForIndicators(5.minutes)

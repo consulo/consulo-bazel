@@ -9,7 +9,7 @@ import consulo.go.GoConstants;
 import consulo.go.language.testing.GoTestFinder;
 import consulo.language.psi.PsiElement;
 import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
@@ -22,7 +22,7 @@ import java.util.Map;
 public class BazelGoRunConfigurationProducer extends BazelRunConfigurationProducer {
     @Override
     @RequiredReadAction
-    public @Nullable GutterAction getGutterAction(PsiElement element, BuildTarget target) {
+    public @Nullable GutterAction getGutterAction(PsiElement element, BuildTargetInfo target) {
         if (isMainFunction(element)) {
             return new GutterAction();
         }

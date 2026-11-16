@@ -22,7 +22,7 @@ import java.util.List;
 /**
  * Replaces a loaded field with a top-level variable for builtin deployment.
  */
-public abstract class TransformFieldLoad implements Transformer {
+abstract class TransformFieldLoad implements Transformer {
     private final String myFieldName;
     private final String myReplacement;
 

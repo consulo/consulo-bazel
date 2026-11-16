@@ -7,14 +7,14 @@ import consulo.annotation.component.ExtensionImpl;
 import consulo.application.Application;
 import consulo.component.extension.ExtensionPoint;
 import consulo.project.Project;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Objects;
 
 @ExtensionAPI(ComponentScope.APPLICATION)
 public interface JvmTestFilterExtension {
-    boolean isApplicable(Project project, BuildTarget target);
+    boolean isApplicable(Project project, BuildTargetInfo target);
 
     String getTestFilter(String className, @Nullable PsiMethod method);
 
@@ -22,7 +22,7 @@ public interface JvmTestFilterExtension {
         return Application.get().getExtensionPoint(JvmTestFilterExtension.class);
     }
 
-    static JvmTestFilterExtension getInstance(Project project, BuildTarget target) {
+    static JvmTestFilterExtension getInstance(Project project, BuildTargetInfo target) {
         return Objects.requireNonNull(getEp().findFirstSafe(it -> it.isApplicable(project, target)));
     }
 }
@@ -33,7 +33,7 @@ class DefaultJvmTestFilterExtension implements JvmTestFilterExtension {
     }
 
     @Override
-    public boolean isApplicable(Project project, BuildTarget target) {
+    public boolean isApplicable(Project project, BuildTargetInfo target) {
         return true;
     }
 

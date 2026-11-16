@@ -6,14 +6,19 @@ import consulo.application.Application;
 import consulo.application.dumb.PossiblyDumbAware;
 import consulo.component.util.ModificationTracker;
 import consulo.execution.action.Location;
-import consulo.execution.configuration.RunConfiguration;
 import consulo.execution.executor.Executor;
+import consulo.execution.test.action.AbstractRerunFailedTestsAction;
 import consulo.execution.test.sm.runner.SMTRunnerConsoleProperties;
 import consulo.execution.test.sm.runner.SMTestLocator;
+import consulo.execution.test.sm.ui.SMTRunnerConsoleView;
+import consulo.execution.ui.console.ConsoleView;
 import consulo.language.psi.scope.GlobalSearchScope;
 import consulo.project.DumbService;
 import consulo.project.Project;
 import org.jetbrains.bazel.config.BazelPluginConstants;
+import org.jetbrains.bazel.run.BazelRerunFailedTestsAction;
+import org.jetbrains.bazel.run.BazelTestRerunExtension;
+import org.jetbrains.bazel.run.config.BazelRunConfiguration;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -22,7 +27,7 @@ import java.util.function.Function;
 
 public class BazelTestConsoleProperties extends SMTRunnerConsoleProperties {
     public BazelTestConsoleProperties(
-        RunConfiguration config,
+        BazelRunConfiguration config,
         Executor executor
     ) {
         super(config, BazelPluginConstants.BAZEL_DISPLAY_NAME, executor);
@@ -31,6 +36,15 @@ public class BazelTestConsoleProperties extends SMTRunnerConsoleProperties {
     @Override
     public SMTestLocator getTestLocator() {
         return CombinedTestLocator.INSTANCE;
+    }
+
+    @Override
+    public @Nullable AbstractRerunFailedTestsAction createRerunFailedTestsAction(ConsoleView consoleView) {
+        BazelTestRerunExtension testRerunExtension = BazelTestRerunExtension.getInstance((BazelRunConfiguration) getConfiguration());
+        if (testRerunExtension == null) {
+            return null;
+        }
+        return new BazelRerunFailedTestsAction((SMTRunnerConsoleView) consoleView, testRerunExtension);
     }
 
     // consulo: upstream declares a public top-level interface in the same file

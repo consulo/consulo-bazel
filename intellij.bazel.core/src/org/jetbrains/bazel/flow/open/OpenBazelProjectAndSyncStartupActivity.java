@@ -74,17 +74,16 @@ public class OpenBazelProjectAndSyncStartupActivity implements PostStartupActivi
         // After project opening refactor Bazel plugin assumes that project view is available
         // immediately after project opening, because now the plugin literally "opens a project view".
         // Make sure that the file is loaded and available before project opens.
-        return DefaultProjectViewService.getInstance(project).ensureProjectViewInitialized().thenCompose(unused -> {
-            // Make sure that Bazel project has at least one root registered at startup, so
-            // user can start working even when project isn't synced yet.
-            // TODO consulo: registerProjectRoot (IntelliJ workspace model project root without a module) is missing
+        DefaultProjectViewService.getInstance(project).ensureProjectViewInitialized();
+        // Make sure that Bazel project has at least one root registered at startup, so
+        // user can start working even when project isn't synced yet.
+        // TODO consulo: registerProjectRoot (IntelliJ workspace model project root without a module) is missing
 
-            // An earlier session may have persisted a Git mapping in a Bazel output directory in vcs.xml (BAZEL-948), e.g.,
-            // the execution root or the bazel-<workspace> symlink. Remove it here, before the VCS initialization activates Git for it,
-            // as Git over the whole Bazel output tree can freeze the IDE. This is the only cleanup: BazelVcsRootErrorFilter keeps
-            // new such mappings from being auto-registered. Mappings outside the Bazel output directories stay untouched.
-            // It has to be this activity, since projectPreInit accepts only approved classes (see ProjectManagerImpl.runApprovedExtensions).
-            return BazelVcsRootErrorFilter.removeBazelOutputMappings(project);
-        });
+        // An earlier session may have persisted a Git mapping in a Bazel output directory in vcs.xml (BAZEL-948), e.g.,
+        // the execution root or the bazel-<workspace> symlink. Remove it here, before the VCS initialization activates Git for it,
+        // as Git over the whole Bazel output tree can freeze the IDE. This is the only cleanup: BazelVcsRootErrorFilter keeps
+        // new such mappings from being auto-registered. Mappings outside the Bazel output directories stay untouched.
+        // It has to be this activity, since projectPreInit accepts only approved classes (see ProjectManagerImpl.runApprovedExtensions).
+        return BazelVcsRootErrorFilter.removeBazelOutputMappings(project);
     }
 }

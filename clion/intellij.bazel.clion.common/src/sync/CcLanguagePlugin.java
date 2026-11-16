@@ -2,6 +2,7 @@ package org.jetbrains.bazel.clion.sync;
 
 import com.google.devtools.intellij.ideinfo.IntellijIdeInfo;
 import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.CIdeInfo;
+import com.intellij.aspect.lib.ReadTarget;
 import consulo.annotation.component.ExtensionImpl;
 import org.jetbrains.bazel.clion.sync.CcBuildTarget.CompilationContext;
 import org.jetbrains.bazel.clion.sync.CcBuildTarget.RuleContext;
@@ -11,12 +12,15 @@ import org.jetbrains.bazel.sync.workspace.languages.LanguagePlugin;
 import org.jetbrains.bazel.sync.workspace.snapshot.InterningOutputLocationCollection.OutputLocationCollectionBuilder;
 import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
 import org.jetbrains.bsp.protocol.OutputLocation;
+import org.jetbrains.bsp.protocol.OutputLocation.OutputLocationResolver;
 import org.jetbrains.bsp.protocol.OutputLocationParser;
 import org.jetbrains.bsp.protocol.StringsCollection;
 import org.jspecify.annotations.Nullable;
 
 import java.util.LinkedHashMap;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
@@ -54,7 +58,8 @@ public class CcLanguagePlugin implements LanguagePlugin {
             return mapIdeInfo(target.getCIdeInfo(), server.getOutputParser()).thenApply(it -> List.<BuildTargetData>of(it));
         }
         else if (target.hasCToolchainIdeInfo()) {
-            return mapToolchainIdeInfo(target, server.getOutputParser()).thenApply(it -> List.<BuildTargetData>of(it));
+            return mapToolchainIdeInfo(target.getCToolchainIdeInfo(), server.getOutputParser(), server.getOutputResolver())
+                .thenApply(it -> List.<BuildTargetData>of(it));
         }
         else {
             return CompletableFuture.completedFuture(List.of());
@@ -98,15 +103,18 @@ public class CcLanguagePlugin implements LanguagePlugin {
         OutputLocationParser outputParser
     ) {
         return OutputLocationCollectionBuilder.build(ctx.getHeadersList(), outputParser).thenCompose(headers ->
-            OutputLocationCollectionBuilder.buildExecroot(ctx.getIncludesList(), outputParser).thenCompose(includes ->
-                OutputLocationCollectionBuilder.buildExecroot(ctx.getQuoteIncludesList(), outputParser).thenCompose(quoteIncludes ->
-                    OutputLocationCollectionBuilder.buildExecroot(ctx.getSystemIncludesList(), outputParser).thenApply(systemIncludes ->
-                        new CompilationContext(
-                            headers,
-                            StringsCollection.of(ctx.getDefinesList()),
-                            includes,
-                            quoteIncludes,
-                            systemIncludes
+            OutputLocationCollectionBuilder.build(ctx.getDirectHeadersList(), outputParser).thenCompose(directHeaders ->
+                OutputLocationCollectionBuilder.buildExecroot(ctx.getIncludesList(), outputParser).thenCompose(includes ->
+                    OutputLocationCollectionBuilder.buildExecroot(ctx.getQuoteIncludesList(), outputParser).thenCompose(quoteIncludes ->
+                        OutputLocationCollectionBuilder.buildExecroot(ctx.getSystemIncludesList(), outputParser).thenApply(systemIncludes ->
+                            new CompilationContext(
+                                headers,
+                                directHeaders,
+                                StringsCollection.of(ctx.getDefinesList()),
+                                includes,
+                                quoteIncludes,
+                                systemIncludes
+                            )
                         )
                     )
                 )
@@ -115,19 +123,16 @@ public class CcLanguagePlugin implements LanguagePlugin {
     }
 
     private static CompletableFuture<CcToolchainBuildTarget> mapToolchainIdeInfo(
-        IntellijIdeInfo.TargetIdeInfo target,
-        OutputLocationParser parser
+        IntellijIdeInfo.CToolchainIdeInfo info,
+        OutputLocationParser parser,
+        OutputLocationResolver resolver
     ) {
-        IntellijIdeInfo.CToolchainIdeInfo info = target.getCToolchainIdeInfo();
-
         // we don't need to store them, they just need to be hardlinked
         return parser.parse(info.getAllFilesList()).thenCompose(ignored ->
-            OutputLocationCollectionBuilder.buildExecroot(info.getBuiltInIncludeDirectoryList(), parser)
-                .thenApply(builtInIncludeDirectories -> {
+            OutputLocationCollectionBuilder.buildExecroot(info.getBuiltInIncludeDirectoryList(), parser).thenCompose(builtInIncludeDirectories ->
+                mapXcodeIdeInfo(info, parser, resolver).thenApply(xcodeInfo -> {
                     @Nullable OutputLocation sysroot =
                         info.getSysroot().isEmpty() ? null : parser.parseExecrootPath(info.getSysroot());
-                    CcToolchainBuildTarget.@Nullable XcodeInfo xcodeInfo =
-                        target.hasXcodeIdeInfo() ? mapXcodeIdeInfo(target.getXcodeIdeInfo()) : null;
 
                     return new CcToolchainBuildTarget(
                         info.getTargetName(),
@@ -143,13 +148,34 @@ public class CcLanguagePlugin implements LanguagePlugin {
                         xcodeInfo
                     );
                 })
+            )
         );
     }
 
-    private static CcToolchainBuildTarget.XcodeInfo mapXcodeIdeInfo(IntellijIdeInfo.XcodeIdeInfo info) {
-        return new CcToolchainBuildTarget.XcodeInfo(
-            info.getMacosSdkVersion(),
-            info.getXcodeVersion()
-        );
+    private static CompletableFuture<CcToolchainBuildTarget.@Nullable XcodeInfo> mapXcodeIdeInfo(
+        IntellijIdeInfo.CToolchainIdeInfo info,
+        OutputLocationParser parser,
+        OutputLocationResolver resolver
+    ) {
+        if (!info.hasXcodeInfo()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        return parser.parse(info.getXcodeInfo()).thenApply(location -> {
+            Path path = resolver.resolve(location);
+            if (path == null) {
+                return null;
+            }
+            Map<String, String> environment = ReadTarget.readEnvFromFile(path);
+            if (environment == null) {
+                return null;
+            }
+
+            return new CcToolchainBuildTarget.XcodeInfo(
+                environment.getOrDefault("DEVELOPER_DIR", ""),
+                environment.getOrDefault("SDKROOT", ""),
+                environment.getOrDefault("XCODE_VERSION_OVERRIDE", "")
+            );
+        });
     }
 }

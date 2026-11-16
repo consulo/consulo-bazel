@@ -5,27 +5,73 @@ import consulo.localize.LocalizeValue;
 import org.jetbrains.bazel.languages.projectview.ProjectViewSectionKey;
 import org.jspecify.annotations.Nullable;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Pattern;
 
 // consulo: the inspection message is a LocalizeValue (Consulo AnnotationHolder.newAnnotation takes a LocalizeValue)
 public record ProjectViewProblem(
+    Id id,
     LocalizeValue message,
     Severity severity,
-    Type type,
     List<QuickFix> quickFixes,
-    @Nullable PsiElement element
+    @Nullable PsiElement element,
+    @Nullable Path sourcePath
 ) {
-    // consulo: Kotlin default parameter values (type = Type.Message, quickFixes = emptyList(), element = null)
-    public ProjectViewProblem(LocalizeValue message, Severity severity) {
-        this(message, severity, Type.Message, List.of(), null);
+    // consulo: overloads for the upstream default arguments (quickFixes = emptyList(), element = null, sourcePath = null)
+    public ProjectViewProblem(Id id, LocalizeValue message, Severity severity) {
+        this(id, message, severity, List.of(), null, null);
     }
 
+    public ProjectViewProblem(Id id, LocalizeValue message, Severity severity, @Nullable PsiElement element) {
+        this(id, message, severity, List.of(), element, null);
+    }
+
+    public ProjectViewProblem(Id id, LocalizeValue message, Severity severity, List<QuickFix> quickFixes, @Nullable PsiElement element) {
+        this(id, message, severity, quickFixes, element, null);
+    }
+
+    // consulo: Kotlin data class copy(element = ...)
+    public ProjectViewProblem withElement(@Nullable PsiElement element) {
+        return new ProjectViewProblem(id, message, severity, quickFixes, element, sourcePath);
+    }
+
+    // consulo: Kotlin data class copy(sourcePath = ...)
+    public ProjectViewProblem withSourcePath(@Nullable Path sourcePath) {
+        return new ProjectViewProblem(id, message, severity, quickFixes, element, sourcePath);
+    }
+
+    /**
+     * The entries go from the lowest to the highest severity.
+     */
     public enum Severity {
-        Error, Warning, WeakWarning
+        WeakWarning, Warning, Error
     }
 
-    public enum Type {
-        Message, Deprecation
+    /**
+     * {@code value} names the problem in a suppression comment, so it has only letters, digits and underscores.
+     * Do not change a value, because the comments in project view files use it.
+     */
+    public record Id(String value) {
+        /**
+         * The pattern of {@code value}. The suppression comments build their patterns from it.
+         */
+        static final String PATTERN = "\\w+";
+        private static final Pattern regex = Pattern.compile(PATTERN);
+
+        public Id {
+            if (!regex.matcher(value).matches()) {
+                throw new IllegalArgumentException("A problem ID has only letters, digits and underscores: '" + value + "'");
+            }
+        }
+
+        public static final Id UnsupportedSection = new Id("unsupported_section");
+        public static final Id InvalidValue = new Id("invalid_value");
+        public static final Id MissingPath = new Id("missing_path");
+        public static final Id UnknownFlag = new Id("unknown_flag");
+        public static final Id FlagNotAllowed = new Id("flag_not_allowed");
+        public static final Id UnresolvedImport = new Id("unresolved_import");
+        public static final Id Deprecation = new Id("deprecation");
     }
 
     /**

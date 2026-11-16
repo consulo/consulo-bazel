@@ -30,14 +30,20 @@ import java.nio.file.attribute.BasicFileAttributes;
 /**
  * consulo: top-level functions of upstream sdk/lib/utils.kt.
  */
-public final class Utils {
+final class Utils {
     private Utils() {
     }
 
-    public static void writeFileIfContentDiffers(Path path, String payload) throws IOException {
+    static void writeFileIfContentDiffers(Path path, String payload) throws IOException {
         if (Files.isDirectory(path)) {
             deleteRecursively(path);
         }
+
+        Path parent = path.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
         if (!Files.exists(path) || !Files.readString(path, StandardCharsets.UTF_8).equals(payload)) {
             Files.writeString(
                 path,

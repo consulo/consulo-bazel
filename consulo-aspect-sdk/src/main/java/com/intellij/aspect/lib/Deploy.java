@@ -37,6 +37,11 @@ public final class Deploy {
      */
     private static final String BUNDLED_ASPECT = "/archive_ide.zip";
 
+    /**
+     * Canonical name of the platforms module repository, Bazel does not add a version suffix.
+     */
+    private static final String PLATFORMS_CANONICAL_NAME = "@@platforms";
+
     private Deploy() {
     }
 
@@ -87,6 +92,14 @@ public final class Deploy {
         }
         if (config.repoMapping().containsKey(Rules.SCALA)) {
             transformers.add(new TransformScalaToolchainType(Objects.requireNonNull(config.repoMapping().get(Rules.SCALA))));
+        }
+
+        if (config.repoMapping().containsKey(Rules.PLATFORMS)) {
+            transformers.add(new TransformPlatformsRepository(Objects.requireNonNull(config.repoMapping().get(Rules.PLATFORMS))));
+        }
+        else if (config.useBuiltin().contains(Rules.PLATFORMS)) {
+            // the platforms module is always part of the dependency graph and has a fixed canonical name
+            transformers.add(new TransformPlatformsRepository(PLATFORMS_CANONICAL_NAME));
         }
 
         transformers.add(new TransformBuiltinRules(config.useBuiltin()));

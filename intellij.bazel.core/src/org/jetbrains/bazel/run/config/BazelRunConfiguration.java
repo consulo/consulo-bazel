@@ -2,7 +2,6 @@ package org.jetbrains.bazel.run.config;
 
 import consulo.bazel.core.localize.BazelPluginLocalize;
 import consulo.bazel.execution.ui.SettingsEditorRunConfigurationFragment;
-import consulo.disposer.Disposable;
 import consulo.execution.BeforeRunTask;
 import consulo.execution.RunManager;
 import consulo.execution.RuntimeConfigurationException;
@@ -20,7 +19,6 @@ import consulo.localize.LocalizeValue;
 import consulo.logging.Logger;
 import consulo.process.ExecutionException;
 import consulo.project.Project;
-import consulo.proxy.EventDispatcher;
 import consulo.util.dataholder.Key;
 import consulo.util.xml.serializer.InvalidDataException;
 import consulo.util.xml.serializer.WriteExternalException;
@@ -31,11 +29,10 @@ import org.jetbrains.bazel.run.BazelRunHandler;
 import org.jetbrains.bazel.run.RunHandlerProvider;
 import org.jetbrains.bazel.run.test.BazelTestConsoleProperties;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
-import java.util.EventListener;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -44,11 +41,13 @@ import java.util.stream.Collectors;
 
 // Use BazelRunConfigurationType.createTemplateConfiguration(project) to create a new BazelRunConfiguration.
 // TODO consulo: RunConfigurationWithSuppressedDefaultDebugAction is missing in Consulo
+// consulo: FusAwareRunConfiguration (usage statistics) is not ported
 public class BazelRunConfiguration extends LocatableConfigurationBase implements SMRunnerConsolePropertiesProvider {
     private static final String TARGET_TAG = "bsp-target";
     private static final String BSP_STATE_TAG = "bsp-state";
     private static final String HANDLER_STATE_TAG = "handler-state";
     private static final String HANDLER_PROVIDER_ATTR = "handler-provider-id";
+    private static final String FORCED_HANDLER_PROVIDER_ATTR = "forced-handler-provider-id";
     private static final String CHECK_VISIBILITY_ATTR = "check-visibility";
 
     private static final Logger LOG = Logger.getInstance(BazelRunConfiguration.class);
@@ -61,12 +60,14 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
 
     private boolean myDoVisibilityCheck = true;
 
+    /**
+     * Run handler manually chosen by the user in the run config editor
+     */
+    private @Nullable String myForcedHandlerProviderId;
+
     private @Nullable RunHandlerProvider myHandlerProvider;
 
     private @Nullable BazelRunHandler myHandler;
-
-    private final EventDispatcher<BazelRunHandlerChangedListener> myHandlerChangedEventDispatcher =
-        EventDispatcher.create(BazelRunHandlerChangedListener.class);
 
     public BazelRunConfiguration(Project project, String name, BazelRunConfigurationType configurationType) {
         super(project, configurationType, name);
@@ -97,13 +98,13 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
 
     public void checkConfigurationUnsafe() throws RuntimeConfigurationError {
         TargetStorage utils = TargetStorage.getTargetStorage(getProject());
-        List<BuildTarget> selectedTargets = new ArrayList<>();
+        List<BuildTargetInfo> selectedTargets = new ArrayList<>();
         for (Label it : myTargets) {
-            BuildTarget target = utils.getTargetSummary(it);
+            BuildTargetInfo target = TargetStorage.getTargetInfo(utils, it);
             if (target == null) {
                 return; // skip validations when any target is missing
             }
-            if (!target.getKind().isExecutable()) {
+            if (!target.kind().isExecutable()) {
                 throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsTargetNotExecutable(it));
             }
             selectedTargets.add(target);
@@ -111,11 +112,14 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
         if (selectedTargets.isEmpty()) {
             throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsNoTargets());
         }
+        if (findForcedHandlerProvider() != null) {
+            return;
+        }
         Set<RunHandlerProvider> providers = new LinkedHashSet<>();
-        for (BuildTarget target : selectedTargets) {
+        for (BuildTargetInfo target : selectedTargets) {
             RunHandlerProvider provider = RunHandlerProvider.getRunHandlerProvider(getProject(), List.of(target));
             if (provider == null) {
-                throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsTargetNotSupported(BuildTarget.getId(target)));
+                throw new RuntimeConfigurationError(BazelPluginLocalize.runconfigBazelErrorsTargetNotSupported(target.id()));
             }
             providers.add(provider);
         }
@@ -142,12 +146,44 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
         }
         // `updateTargets` is called by the editor on each change. It must not fail, because it will spam with errors while editing
         // `RunHandlerProvider.getRunHandlerProviderOrNull` is used as a workaround
-        RunHandlerProvider provider =
-            runHandlerProvider != null ? runHandlerProvider : RunHandlerProvider.getRunHandlerProviderOrNull(getProject(), newTargets);
+        RunHandlerProvider provider = runHandlerProvider;
+        if (provider == null) {
+            provider = findForcedHandlerProvider();
+        }
+        if (provider == null) {
+            provider = RunHandlerProvider.getRunHandlerProviderOrNull(getProject(), newTargets);
+        }
         if (provider == null) {
             return;
         }
         updateHandlerIfDifferentProvider(provider);
+    }
+
+    /**
+     * Run handler manually chosen by the user in the run config editor
+     */
+    public @Nullable String getForcedHandlerProviderId() {
+        return myForcedHandlerProviderId;
+    }
+
+    public void updateForcedHandlerProvider(@Nullable String providerId) {
+        if (Objects.equals(providerId, myForcedHandlerProviderId)) {
+            return;
+        }
+        myForcedHandlerProviderId = providerId;
+        RunHandlerProvider provider = findForcedHandlerProvider();
+        if (provider == null) {
+            provider = RunHandlerProvider.getRunHandlerProviderOrNull(getProject(), myTargets);
+        }
+        if (provider == null) {
+            return;
+        }
+        updateHandlerIfDifferentProvider(provider);
+    }
+
+    private @Nullable RunHandlerProvider findForcedHandlerProvider() {
+        String forcedHandlerProviderId = myForcedHandlerProviderId;
+        return forcedHandlerProviderId != null ? RunHandlerProvider.findRunHandlerProvider(forcedHandlerProviderId) : null;
     }
 
     public void updateRunProvider(List<Label> newTargets, RunHandlerProvider runHandlerProvider) {
@@ -157,6 +193,10 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
 
     public void disableVisibilityCheck() {
         myDoVisibilityCheck = false;
+    }
+
+    public @Nullable RunHandlerProvider getHandlerProvider() {
+        return myHandlerProvider;
     }
 
     public @Nullable BazelRunHandler getHandler() {
@@ -173,7 +213,6 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
 
     private void updateHandler(RunHandlerProvider newProvider) {
         Element bspBeforeChange = createBspElement();
-        boolean providerChanged = !Objects.equals(newProvider, myHandlerProvider);
         myHandlerProvider = newProvider;
         BazelRunHandler newRunHandler = newProvider.createRunHandler(this);
         myHandler = newRunHandler;
@@ -188,10 +227,6 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
             catch (Exception e) {
                 LOG.error("Failed to read BSP state", e);
             }
-        }
-
-        if (providerChanged) {
-            myHandlerChangedEventDispatcher.getMulticaster().onRunHandlerChanged(newRunHandler);
         }
     }
 
@@ -246,6 +281,7 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
         }
 
         myTargets = targets.stream().map(Label::parse).toList();
+        myForcedHandlerProviderId = bspElement.getAttributeValue(FORCED_HANDLER_PROVIDER_ATTR);
 
         // It should be possible to load the configuration before the project is synchronized,
         // so we can't access targets' data here. Instead, we have to use the stored provider ID.
@@ -257,29 +293,27 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
         }
 
         RunHandlerProvider provider = RunHandlerProvider.findRunHandlerProvider(providerId);
-        if (provider != null) {
-            updateHandlerIfDifferentProvider(provider);
-            // TODO the above already reads
-
-            Element handlerStateElement = bspElement.getChild(HANDLER_STATE_TAG);
-            if (handlerStateElement == null) {
+        if (provider == null) {
+            LOG.warn("Failed to find run handler provider with ID " + providerId);
+            provider = RunHandlerProvider.getRunHandlerProviderOrNull(getProject(), myTargets);
+            if (provider == null) {
                 return;
             }
-
-            try {
-                BazelRunHandler handler = myHandler;
-                if (handler != null) {
-                    handler.getState().readExternal(handlerStateElement);
-                }
-            }
-            catch (Exception e) {
-                LOG.error("Failed to read BSP state", e);
+        }
+        updateHandlerIfDifferentProvider(provider);
+        // TODO the above already reads
+        Element handlerStateElement = bspElement.getChild(HANDLER_STATE_TAG);
+        if (handlerStateElement == null) {
+            return;
+        }
+        try {
+            BazelRunHandler handler = myHandler;
+            if (handler != null) {
+                handler.getState().readExternal(handlerStateElement);
             }
         }
-        else {
-            LOG.warn("Failed to find run handler provider with ID " + providerId);
-            RunHandlerProvider newProvider = RunHandlerProvider.getRunHandlerProviderOrThrow(getProject(), myTargets);
-            updateHandlerIfDifferentProvider(newProvider);
+        catch (Exception e) {
+            LOG.error("Failed to read BSP state", e);
         }
 
         String checkVisibility = bspElement.getAttributeValue(CHECK_VISIBILITY_ATTR);
@@ -341,6 +375,8 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
         return myTargets.stream().map(Label::toString).collect(Collectors.joining(" "));
     }
 
+    // consulo: getAdditionalUsageData() (FusAwareRunConfiguration) is dropped, usage statistics are not ported
+
     private @Nullable Element createBspElement() {
         RunHandlerProvider provider = myHandlerProvider;
         if (provider == null) {
@@ -357,20 +393,16 @@ public class BazelRunConfiguration extends LocatableConfigurationBase implements
             element.addContent(targetElement);
         }
         element.setAttribute(HANDLER_PROVIDER_ATTR, provider.getId());
+        String forcedHandlerProviderId = myForcedHandlerProviderId;
+        if (forcedHandlerProviderId != null) {
+            element.setAttribute(FORCED_HANDLER_PROVIDER_ATTR, forcedHandlerProviderId);
+        }
         Element handlerState = new Element(HANDLER_STATE_TAG);
         handler.getState().writeExternal(handlerState);
         element.addContent(handlerState);
 
         element.setAttribute(CHECK_VISIBILITY_ATTR, String.valueOf(myDoVisibilityCheck));
         return element;
-    }
-
-    public void addOnRunHandlerChangedListener(BazelRunHandlerChangedListener listener, Disposable parentDisposable) {
-        myHandlerChangedEventDispatcher.addListener(listener, parentDisposable);
-    }
-
-    public interface BazelRunHandlerChangedListener extends EventListener {
-        void onRunHandlerChanged(BazelRunHandler newRunHandler);
     }
 
     public static BazelRunConfiguration get(ExecutionEnvironment environment) {

@@ -50,7 +50,6 @@ class DefaultBazelServerConnection implements BazelServerConnection {
         myProject = project;
         myWorkspaceRoot = org.jetbrains.bazel.config.project.getRootDir(project).toNioPath();
         myEnvironmentCreator = new EnvironmentCreator(myWorkspaceRoot);
-        myEnvironmentCreator.create();
     }
 
     record ServerWithVersionLiteral(@Nullable BazelServerFacadeImpl server, @Nullable BazelVersionLiteral versionLiteral) {
@@ -68,6 +67,8 @@ class DefaultBazelServerConnection implements BazelServerConnection {
     }
 
     private CompletableFuture<BazelServerFacadeImpl> getServer(@Nullable TaskId taskId) {
+        // consulo: upstream fails with project.untrusted.bazel.not.run when the project is not trusted (TrustedProjects);
+        // Consulo has no trusted projects, every project runs Bazel
         // ensure `.bazelbsp` directory exists and functions
         myEnvironmentCreator.create();
 

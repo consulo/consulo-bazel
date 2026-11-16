@@ -33,10 +33,11 @@ def _create_module_provider():
 
 _IntelliJRunInfo = _create_module_provider()
 _IntelliJTestInfo = _create_module_provider()
+_IntelliJExtraRulesInfo = _create_module_provider()
 _IntelliJCcInfo = _create_module_provider()
+_IntelliJCcDebugInfo = _create_module_provider()
 _IntellijForeignCcInfo = _create_module_provider()
 _IntelliJCcToolchainInfo = _create_module_provider()
-_IntelliJXcodeInfo = _create_module_provider()
 _IntelliJJavaInfo = _create_module_provider()
 _IntelliJJavaToolchainInfo = _create_module_provider()
 _IntelliJJavaCommonInfo = _create_module_provider()
@@ -49,14 +50,16 @@ _IntelliJPythonInfo = _create_module_provider()  # used by the JB plugin
 _IntelliJLegacyRulesProtoInfo = _create_module_provider()  # used for legacy rules_proto
 _IntelliJProtobufInfo = _create_module_provider()  # used for the current protobuf rules
 _IntelliJProtoInfo = _create_module_provider()  # used to consolidated protobuf information
+_IntelliJPlatformInfo = _create_module_provider()
 
 # all providers in the order they should be executed, i.e. dependencies need to be listed before dependeants
 _ORDERED = [
     _IntelliJRunInfo,
     _IntelliJTestInfo,
-    _IntelliJXcodeInfo,
+    _IntelliJExtraRulesInfo,
     _IntelliJCcToolchainInfo,
     _IntelliJCcInfo,
+    _IntelliJCcDebugInfo,
     _IntellijForeignCcInfo,
     _IntelliJJavaToolchainInfo,
     _IntelliJJavaInfo,
@@ -70,6 +73,7 @@ _ORDERED = [
     _IntelliJLegacyRulesProtoInfo,
     _IntelliJProtobufInfo,
     _IntelliJProtoInfo,
+    _IntelliJPlatformInfo,
 ]
 
 # Modules implying that jvm_info should run on the respective targets to obtain
@@ -85,10 +89,11 @@ intellij_provider = struct(
     IntelliJInfo = _IntelliJInfo,
     RunInfo = _IntelliJRunInfo,
     TestInfo = _IntelliJTestInfo,
+    ExtraRulesInfo = _IntelliJExtraRulesInfo,
     CcInfo = _IntelliJCcInfo,
+    CcDebugInfo = _IntelliJCcDebugInfo,
     ForeignCcInfo = _IntellijForeignCcInfo,
     CcToolchainInfo = _IntelliJCcToolchainInfo,
-    XcodeInfo = _IntelliJXcodeInfo,
     JavaInfo = _IntelliJJavaInfo,
     JavaToolchainInfo = _IntelliJJavaToolchainInfo,
     JavaCommonInfo = _IntelliJJavaCommonInfo,
@@ -101,6 +106,7 @@ intellij_provider = struct(
     LegacyRulesProtoInfo = _IntelliJLegacyRulesProtoInfo,
     ProtobufInfo = _IntelliJProtobufInfo,
     ProtoInfo = _IntelliJProtoInfo,
+    PlatformInfo = _IntelliJPlatformInfo,
     ORDERED = _ORDERED,
     JVM = _JVM,
 )

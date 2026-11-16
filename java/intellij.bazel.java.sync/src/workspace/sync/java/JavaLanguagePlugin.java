@@ -192,7 +192,10 @@ public class JavaLanguagePlugin implements LanguagePlugin {
                                     StringsCollection.of(target.getJavaCommon().getJavacOptsList()),
                                     binaryOutputs,
                                     new LinkedHashMap<>(environmentVariables),
-                                    getMainClass(jvmTarget),
+                                    jvmTarget.getMainClass().isBlank() ? null : jvmTarget.getMainClass(),
+                                    // TODO consulo: upstream `jvmTarget.testClass.ifBlank { null }`; JvmTargetInfo.test_class needs the
+                                    //  aspect SDK protos of intellij-aspect 326afd3c (consulo-aspect-sdk is older)
+                                    null,
                                     StringsCollection.of(jvmTarget.getJvmFlagsList()),
                                     StringsCollection.of(jvmTarget.getArgsList()),
                                     resourceStripPrefixLocation(target),
@@ -235,10 +238,6 @@ public class JavaLanguagePlugin implements LanguagePlugin {
         }
 
         return StrictDependencyCheckedType.ERROR;
-    }
-
-    private @Nullable String getMainClass(JvmTargetInfo jvmTargetInfo) {
-        return jvmTargetInfo.getMainClass().isBlank() ? null : jvmTargetInfo.getMainClass();
     }
 
     private CompletableFuture<List<JdepsJar>> createJdepsJars(

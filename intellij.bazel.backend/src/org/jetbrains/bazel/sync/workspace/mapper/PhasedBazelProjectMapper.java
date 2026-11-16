@@ -13,9 +13,9 @@ import org.jetbrains.bazel.languages.projectview.ProjectView;
 import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
 import org.jetbrains.bazel.sync.workspace.snapshot.InterningOutputLocationCollection.OutputLocationCollectionBuilder;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTarget;
 import org.jetbrains.bazel.sync.workspace.targetKind.TargetKindService;
 import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.OutputLocation;
 
 import java.nio.file.Files;
@@ -58,17 +58,19 @@ public class PhasedBazelProjectMapper {
 
     private BuildTarget toBspBuildTarget(Build.Target receiver, Map<Label, Build.Target> targets) {
         ResolvedLabel label = Label.assumeResolved(Label.parse(FirstPhaseTargetUtils.getName(receiver)));
-        return new WorkspaceTarget(
-            new WorkspaceTargetKey(label),
+        return BuildTarget.create(
+            new BuildTargetInfo(
+                new WorkspaceTargetKey(label),
+                inferKind(receiver),
+                FirstPhaseTargetUtils.getGeneratorName(receiver),
+                false,
+                FirstPhaseTargetUtils.getTags(receiver),
+                "_main"
+            ),
             FirstPhaseTargetUtils.getInterestingDeps(receiver).stream().map(it -> DependencyLabel.parse(it)).toList(),
-            inferKind(receiver),
             OutputLocationCollectionBuilder.ofLocations(calculateSources(receiver, targets)),
             OutputLocationCollectionBuilder.ofLocations(calculateResources(receiver, targets)),
-            List.of(),
-            FirstPhaseTargetUtils.getGeneratorName(receiver),
-            false,
-            FirstPhaseTargetUtils.getTags(receiver),
-            "_main"
+            List.of()
         );
     }
 

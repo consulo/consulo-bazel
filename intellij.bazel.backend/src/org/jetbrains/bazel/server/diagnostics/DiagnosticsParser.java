@@ -9,7 +9,6 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 interface DiagnosticsParser {
     List<Diagnostic> parse(
@@ -40,7 +39,7 @@ final class DiagnosticsParserImpl implements DiagnosticsParser {
 
     private Output prepareOutput(List<String> lines, Label target) {
         List<String> relevantLines = lines.stream()
-            .filter(line -> IGNORED_LINES.stream().noneMatch(it -> it.matcher(line).matches()))
+            .filter(it -> !it.isEmpty())
             .toList();
         return new Output(relevantLines, target);
     }
@@ -88,7 +87,6 @@ final class DiagnosticsParserImpl implements DiagnosticsParser {
 
     private static final List<Parser> PARSERS =
         List.of(
-            BazelRootMessageParser.INSTANCE,
             CompilerDiagnosticParser.INSTANCE,
             IntelliJRunnerOutputParser.INSTANCE,
             Scala3CompilerDiagnosticParser.INSTANCE,
@@ -97,10 +95,5 @@ final class DiagnosticsParserImpl implements DiagnosticsParser {
     private static final List<Parser> COMMAND_LINE_OUTPUT_PARSER =
         List.of(
             BazelOutputMessageParser.INSTANCE
-        );
-    private static final List<Pattern> IGNORED_LINES =
-        List.of(
-            Pattern.compile("^$"),
-            Pattern.compile("Use --sandbox_debug to see verbose messages from the sandbox")
         );
 }

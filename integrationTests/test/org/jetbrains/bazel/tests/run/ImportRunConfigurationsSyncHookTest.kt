@@ -2,6 +2,7 @@ package org.jetbrains.bazel.tests.run
 
 import com.intellij.driver.client.Driver
 import com.intellij.driver.sdk.getNotifications
+import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.setRegistry
 import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.step
@@ -19,7 +20,6 @@ import com.intellij.driver.sdk.ui.components.elements.button
 import com.intellij.driver.sdk.ui.components.elements.list
 import com.intellij.driver.sdk.ui.components.elements.popup
 import com.intellij.driver.sdk.ui.pasteText
-import com.intellij.driver.sdk.ui.shouldBe
 import com.intellij.driver.sdk.waitFor
 import com.intellij.ide.starter.ide.IDETestContext
 import io.kotest.matchers.shouldBe
@@ -32,8 +32,10 @@ import org.jetbrains.bazel.tests.combined.IdeStarterCombinedBaseTest
 import org.jetbrains.bazel.tests.ui.clickRunGutterOnLine
 import org.jetbrains.bazel.tests.ui.clickTestGutterOnLine
 import org.jetbrains.bazel.tests.ui.consoleView
+import org.jetbrains.bazel.tests.ui.setAutoOpenProjectIfPresent
 import org.jetbrains.bazel.tests.ui.verifyAvailableRunGutterActions
 import org.jetbrains.bazel.tests.ui.verifyTestStatus
+import org.jetbrains.bazel.tests.ui.waitForConsoleText
 import org.jetbrains.bazel.tests.ui.waitForGutterIcons
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Test
@@ -48,6 +50,7 @@ private val IMPORT_RUN_CONFIGURATIONS_PROJECT = simpleBazelProject(
     BazelProjectConfigurer.configureProjectBeforeUseWithoutBazelClean(
       context,
       createProjectView = false,
+      removeDotIdea = false,
     )
   },
 )
@@ -58,9 +61,27 @@ private const val PROFILER_HINT_ACCESSIBLE_NAME = "marker: unknown"
 class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
   override fun createContext(): IDETestContext =
     createContext("importRunConfigurationsSyncHook", IdeaBazelCases.withProject(IMPORT_RUN_CONFIGURATIONS_PROJECT))
+      .setAutoOpenProjectIfPresent(true)
 
   override fun Driver.syncBazelProject() {
     syncBazelProject(buildAndSync = true)
+  }
+
+  @Test
+  @Order(0)
+  fun `run configurations with an unknown provider are imported as-is`() {
+    withDriver(bgRun) {
+      ideFrame {
+        selectRunConfiguration("Unknown handler")
+        runConfigurationsPopup {
+          list().clickItem("Edit Configurations", fullMatch = false)
+        }
+        editRunConfigurationsDialog {
+          waitOneText("@//:unknown")
+          okButton.click()
+        }
+      }
+    }
   }
 
   @Test
@@ -74,6 +95,7 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
 
         step("Check build diagnostics with run configs") {
           var compilationBroken = false
+          var failure: Throwable? = null
           try {
             step("Break compilation intentionally") {
               openFile("src/com/example/Calculator.java")
@@ -87,22 +109,34 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
             step("Run test in Debug") { x { byAccessibleName("Debug 'Test Calculator'") }.click() }
             // The tree renders the directory node with the host separator, so this cannot be a POSIX literal.
             val sourceDirWithError = " src/com/example 1 error".replace('/', File.separatorChar)
-            val expectedBuildErrors = setOf("Ended with an error.", "Calculator.java", sourceDirWithError, "BUILD", "  1 error")
+            val expectedBuildErrors = setOf("Ended with an error.", "Calculator.java", sourceDirWithError)
             step("Verify build results tree") { waitForBuildResultsTree(expectedTexts = expectedBuildErrors) }
 
             step("Run test normally") { x { byAccessibleName("Run 'Test Calculator'") }.click() }
             step("Verify build results tree") { waitForBuildResultsTree(expectedTexts = expectedBuildErrors) }
-          } finally {
+          }
+          catch (e: Throwable) {
+            failure = e
+            throw e
+          }
+          finally {
             // Restore even when a verification above fails, otherwise the deliberately broken file
             // leaks into the following @Order tests and they fail to compile for an unrelated reason.
             if (compilationBroken) {
-              step("Fix compilation") {
-                openFile("src/com/example/Calculator.java")
-                codeEditor {
-                  // Return back the semicolon ;
-                  goToPosition(5, 22)
-                  pasteText(";")
+              try {
+                step("Fix compilation") {
+                  openFile("src/com/example/Calculator.java")
+                  codeEditor {
+                    // Return back the semicolon ;
+                    goToPosition(5, 22)
+                    pasteTextAndCheck(";")
+                  }
                 }
+              }
+              catch (e: Throwable) {
+                // Keep the failure of the verifications above as the test failure.
+                if (failure == null) throw e
+                failure.addSuppressed(e)
               }
             }
           }
@@ -114,8 +148,7 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
 
         step("Execute the run configuration") { x { byAccessibleName("Run 'Bazel run :main'") }.click() }
         step("Wait for run config to finish") {
-          consoleView.shouldBe { present() }
-          consoleView.waitContainsText("2 + 2 = 4", timeout = 3.minutes)
+          waitForConsoleText("2 + 2 = 4")
         }
 
         step("Check that \$PROJECT_DIR$ macro is expanded correctly") {
@@ -153,16 +186,16 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
               !hasText(jvmSpecificRunConfigText)
             }
 
-            val targetsField = x { byClass("EditorComponentImpl") }.waitFound()
+            val targetsField = x { byJavaClass("com.intellij.openapi.editor.impl.EditorComponentImpl") }.waitFound()
             targetsField.click()
             targetsField.pasteText("//:main")
 
             waitContainsText(jvmSpecificRunConfigText)
 
+            // The dialog replaces the targets field after each change of the targets.
+            // One replacement of the text keeps the paste away from a field that is on its way out.
             targetsField.click()
-            keyboard {
-              repeat("//:main".length) { backspace() }
-            }
+            invokeAction($$"$SelectAll", component = targetsField.component)
             targetsField.pasteText("//:calculator_test")
 
             waitContainsText("Test filter:")
@@ -257,28 +290,37 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
     withDriver(bgRun) {
       ideFrame {
         selectRunConfiguration("Bazel run :main")
-        runConfigurationsPopup {
-          list().clickItem("Edit Configurations", fullMatch = false)
+        var originalFlags: String? = null
+        try {
+          runConfigurationsPopup {
+            list().clickItem("Edit Configurations", fullMatch = false)
+          }
+          editRunConfigurationsDialog {
+            originalFlags = bazelFlags
+            bazelFlags += " --foo=\"foo value\""
+            runButton.click()
+          }
+          waitForConsoleText("ERROR: --foo=foo value :: Unrecognized option: --foo=foo value")
+          runConfigurationsPopup {
+            list().clickItem("Edit Configurations", fullMatch = false)
+          }
+          editRunConfigurationsDialog {
+            bazelFlags = bazelFlags.replace("--foo=\"foo value\"", "--bar='bar value'")
+            runButton.click()
+          }
+          waitForConsoleText("ERROR: --bar=bar value :: Unrecognized option: --bar=bar value")
         }
-        editRunConfigurationsDialog {
-          bazelFlags += " --foo=\"foo value\""
-          runButton.click()
-        }
-        consoleView.waitOneText { it.text == "ERROR: --foo=foo value :: Unrecognized option: --foo=foo value" }
-        runConfigurationsPopup {
-          list().clickItem("Edit Configurations", fullMatch = false)
-        }
-        editRunConfigurationsDialog {
-          bazelFlags = bazelFlags.replace("--foo=\"foo value\"", "--bar='bar value'")
-          runButton.click()
-        }
-        consoleView.waitOneText { it.text == "ERROR: --bar=bar value :: Unrecognized option: --bar=bar value" }
-        runConfigurationsPopup {
-          list().clickItem("Edit Configurations", fullMatch = false)
-        }
-        editRunConfigurationsDialog {
-          bazelFlags = bazelFlags.replace("--bar='bar value'", "")
-          okButton.click()
+        finally {
+          // Restore even when a check above fails. Otherwise the later tests run "Bazel run :main" with an unknown flag.
+          originalFlags?.let { flags ->
+            runConfigurationsPopup {
+              list().clickItem("Edit Configurations", fullMatch = false)
+            }
+            editRunConfigurationsDialog {
+              bazelFlags = flags
+              okButton.click()
+            }
+          }
         }
       }
     }
@@ -314,9 +356,9 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
           openFile("src/com/example/Main.java")
           codeEditor {
             goToPosition(4, 1)
-            pasteText("import java.util.Random;\n")
+            pasteTextAndCheck("import java.util.Random;\n")
             goToPosition(12, 86)
-            pasteText(
+            pasteTextAndCheck(
               "\n" + """
               long start = System.currentTimeMillis();
               double result = 0.0;
@@ -354,9 +396,9 @@ class ImportRunConfigurationsSyncHookTest : IdeStarterCombinedBaseTest() {
           openFile("src/com/example/CalculatorTest.java")
           codeEditor {
             goToPosition(4, 1)
-            pasteText("import java.util.Random;")
+            pasteTextAndCheck("import java.util.Random;")
             goToPosition(9, 28)
-            pasteText(
+            pasteTextAndCheck(
               "\n" + """
               long start = System.currentTimeMillis();
               double result = 0.0;

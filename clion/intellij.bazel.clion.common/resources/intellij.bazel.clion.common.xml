@@ -9,7 +9,10 @@
     <module name="intellij.cidr.psi.base"/>
     <module name="intellij.cidr.util.execution"/>
     <module name="intellij.cidr.workspaceModel"/>
+    <module name="intellij.clion.toolchains"/>
+    <module name="intellij.libraries.bazel.aspect.sdk"/>
     <module name="intellij.platform.analysis"/>
+    <module name="intellij.platform.backend"/>
     <module name="intellij.platform.backend.workspace"/>
     <module name="intellij.platform.buildView"/>
     <module name="intellij.platform.core"/>
@@ -26,6 +29,16 @@
       description="Enable the C/C++ support of the Bazel plugin. (requires re-sync)"
       key="bazel.clion.enable"
     />
+    <registryKey
+      defaultValue="false"
+      description="Enable backend support for files without any compilation properties. `radler.deep.project.scan` must be enabled for this to work. (requires re-sync)"
+      key="bazel.clion.deep.project.scan"
+    />
+    <registryKey
+      defaultValue="false"
+      description="Let the backend fall back to the settings of an arbitrary target for files it knows nothing better about. (requires re-sync)"
+      key="bazel.clion.fallback.config"
+    />
   </extensions>
 
   <extensions defaultExtensionNs="org.jetbrains.bazel">
@@ -41,11 +54,13 @@
     <projectModel.ocWorkspaceStorageCustomizer implementation="org.jetbrains.bazel.clion.workspace.CcWorkspaceStorageCustomizer"/>
     <lang.compilerKindProvider implementation="org.jetbrains.bazel.clion.workspace.CcCompilerKindProvider"/>
     <lang.followSymlinkRootsProvider implementation="org.jetbrains.bazel.clion.workspace.CcFollowSymlinkRootsProvider"/>
+    <projectModel.deepProjectScanDisabler implementation="org.jetbrains.bazel.clion.workspace.CcDeepProjectScanDisabler"/>
+    <projectModel.fallbackConfigDisabler implementation="org.jetbrains.bazel.clion.workspace.CcFallbackConfigDisabler"/>
     <projectModel.resolveConfigurationChooser
       id="Bazel.ccDirectoryBasedChooser"
       implementation="org.jetbrains.bazel.clion.workspace.CcDirectoryBasedChooser"
       order="after com.jetbrains.cidr.lang.workspace.RunConfigurationBasedChooser, before com.jetbrains.cidr.lang.workspace.ClosestConfigurationBasedChooser"
     />
+    <projectModel.resolveConfigurationDisplayNameProvider implementation="org.jetbrains.bazel.clion.workspace.CcResolveConfigurationDisplayNameProvider"/>
   </extensions>
-
 </idea-plugin>

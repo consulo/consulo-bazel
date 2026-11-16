@@ -14,6 +14,7 @@ import org.jetbrains.bazel.run.task.BazelTestTaskListener;
 import org.jetbrains.bazel.server.BazelServerFacade;
 import org.jetbrains.bazel.taskEvents.BazelTaskListener;
 import org.jetbrains.bsp.protocol.TestParams;
+import org.jetbrains.bsp.protocol.TestResult;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.file.Path;
@@ -61,7 +62,7 @@ public class BazelTestCommandLineState extends BazelCommandLineStateBase {
     }
 
     @Override
-    protected CompletableFuture<?> startBsp(
+    protected CompletableFuture<Integer> runCommand(
         BazelServerFacade server,
         CompletableFuture<@Nullable Long> pidDeferred,
         BazelProcessHandler handler
@@ -83,6 +84,6 @@ public class BazelTestCommandLineState extends BazelCommandLineStateBase {
                 /* additionalBazelParams = */ Utils.parseAsProgramArguments(myState.getAdditionalBazelParams()),
                 /* streamTestOutput = */ false
             );
-        return server.buildTargetTest(transformTestParams(params));
+        return server.buildTargetTest(transformTestParams(params)).thenApply(TestResult::exitCode);
     }
 }

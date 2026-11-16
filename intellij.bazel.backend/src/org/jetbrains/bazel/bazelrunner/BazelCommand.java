@@ -388,7 +388,8 @@ public abstract class BazelCommand {
             commandLine.addAll(myProgramArguments.stream().map(it -> "--test_arg=" + it).toList());
             commandLine.addAll(targetCommandLine());
 
-            return new BazelCommandExecutionDescriptor(commandLine, getEnablePty());
+            return new BazelCommandExecutionDescriptor(commandLine, getEnablePty(), Map.of(), true, () -> {
+            });
         }
     }
 

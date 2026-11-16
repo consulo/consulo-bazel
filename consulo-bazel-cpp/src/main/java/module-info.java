@@ -102,7 +102,7 @@ module consulo.bazel.cpp {
 
     requires consulo.cpp;
     requires consulo.cpp.api;
-    // native debugging of cc targets (CcDebugRunner): NativeDebugSessionStarter, NativeDebugTarget, NativeDebuggerSetup
+    // native debugging of cc targets (run.debug.CcDebugRunner): NativeDebugSessionStarter, NativeDebugTarget, NativeDebuggerSetup
     requires consulo.nativeDev.debugger.api;
 
     // clion/intellij.bazel.clion.common: sync and C/C++ workspace
@@ -112,10 +112,12 @@ module consulo.bazel.cpp {
     exports org.jetbrains.bazel.clion;
     exports org.jetbrains.bazel.clion.debug;
     exports org.jetbrains.bazel.clion.run;
+    exports org.jetbrains.bazel.clion.run.debug;
     exports org.jetbrains.bazel.clion.sync;
     exports org.jetbrains.bazel.clion.test.catch_;
     exports org.jetbrains.bazel.clion.test.google;
     exports org.jetbrains.bazel.clion.workspace;
     exports org.jetbrains.bazel.clion.workspace.copts;
     exports org.jetbrains.bazel.clion.workspace.entities;
+    exports org.jetbrains.bazel.clion.workspace.environment;
 }

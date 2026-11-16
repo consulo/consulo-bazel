@@ -23,7 +23,8 @@ public record CcToolchainBuildTarget(
 ) implements BuildTargetData {
 
     public record XcodeInfo(
-        String macosSdkVersion,
+        String developerDir,
+        String sdkRoot,
         String xcodeVersion
     ) {
     }

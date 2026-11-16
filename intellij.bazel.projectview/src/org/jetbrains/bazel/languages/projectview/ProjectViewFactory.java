@@ -16,6 +16,8 @@ import consulo.virtualFileSystem.VirtualFile;
 import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.flow.open.ProjectViewFileUtils;
 import org.jetbrains.bazel.languages.projectview.base.ProjectViewLanguage;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewChecker;
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem;
 import org.jetbrains.bazel.languages.projectview.imports.Import;
 import org.jetbrains.bazel.languages.projectview.imports.ImportFactory;
 import org.jetbrains.bazel.languages.projectview.psi.ProjectViewPsiFile;
@@ -33,11 +35,15 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static org.jetbrains.bazel.config.project.getRootDir;
 
@@ -60,31 +66,36 @@ public final class ProjectViewFactory {
     private ProjectViewFactory() {
     }
 
+    /**
+     * Parses the project view against {@code root}. Use this function only when the project root is not set,
+     * for example in `BazelProjectStorePathCustomizer`. The checkers do not run, because they need the project root.
+     */
     public static @Nullable ProjectView fromOrNull(
         Project project,
-        Path path
-    ) {
-        return fromOrNull(project, path, getRootDir(project).toNioPath());
-    }
-
-    public static @Nullable ProjectView fromOrNull(
-        Project project,
-        Path path,
+        Path source,
         Path root
     ) {
-        try {
-            return from(project, path, root);
-        }
-        // In principle, project view parse should not throw.
-        // However, in case it does, it might break some code paths e.g. project opening, so it's better to keep it in a try-catch block.
-        catch (Throwable e) {
-            // consulo: upstream getOrHandleException rethrows control flow and cancellation exceptions
-            if (e instanceof ControlFlowException || e instanceof CancellationException) {
-                throw e;
-            }
-            LOG.error("Failed to load project view file at " + path + ".", e);
-            return null;
-        }
+        return loadOrNull(source, () -> parse(project, readContent(source), root, source, null));
+    }
+
+    /**
+     * Parses the project view from {@code source} against the {@code project} root, and calls {@code onEachProblem} for each problem.
+     * The checkers resolve the imports against the {@code project} root, so the parse uses the same root.
+     */
+    public static @Nullable ProjectView fromOrNull(
+        Project project,
+        Path source,
+        @Nullable Consumer<ProjectViewProblem> onEachProblem
+    ) {
+        return loadOrNull(source, () -> from(project, source, onEachProblem));
+    }
+
+    // consulo: overload for the upstream default argument (onEachProblem = null)
+    public static @Nullable ProjectView fromOrNull(
+        Project project,
+        Path source
+    ) {
+        return fromOrNull(project, source, (Consumer<ProjectViewProblem>) null);
     }
 
     public static ProjectView fromDefault(Project project) {
@@ -101,126 +112,205 @@ public final class ProjectViewFactory {
         );
     }
 
+    /**
+     * Parses project view from {@code source} against the {@code project} root and calls {@code onEachProblem} for each problem.
+     */
+    public static ProjectView from(
+        Project project,
+        Path source,
+        @Nullable Consumer<ProjectViewProblem> onEachProblem
+    ) {
+        return parse(
+            project,
+            readContent(source),
+            getRootDir(project).toNioPath(),
+            source,
+            onEachProblem
+        );
+    }
+
+    // consulo: overload for the upstream default argument (onEachProblem = null)
     public static ProjectView from(
         Project project,
         Path source
     ) {
-        return from(project, source, getRootDir(project).toNioPath());
+        return from(project, source, (Consumer<ProjectViewProblem>) null);
     }
 
+    /**
+     * Parses {@code content} against the {@code project} root, and calls {@code onEachProblem} for each problem.
+     * {@code source} is the file of the content, if it has one.
+     */
     public static ProjectView from(
         Project project,
-        Path source,
-        Path root
+        CharSequence content,
+        @Nullable Path source,
+        @Nullable Consumer<ProjectViewProblem> onEachProblem
     ) {
-        return from(project, readContent(source), root, source);
+        return parse(project, content, getRootDir(project).toNioPath(), source, onEachProblem);
     }
 
+    // consulo: overloads for the upstream default arguments (source = null, onEachProblem = null)
     public static ProjectView from(
         Project project,
         CharSequence content
     ) {
-        return from(project, content, getRootDir(project).toNioPath());
+        return from(project, content, null, null);
     }
 
     public static ProjectView from(
         Project project,
         CharSequence content,
-        Path root
-    ) {
-        return from(project, content, root, null);
-    }
-
-    public static ProjectView from(
-        Project project,
-        CharSequence content,
-        Path root,
         @Nullable Path source
     ) {
-        Path fileName = source != null ? source.getFileName() : null;
-        String name = fileName != null ? fileName.toString() : Constants.DEFAULT_PROJECT_VIEW_FILE_NAME;
-        // consulo: Consulo asserts read access for light PSI too (except ReadOnlyLightVirtualFile), the parse runs in a read action
-        return ReadAction.compute(() ->
-            fromPsiFile(createLightPsiFile(project, name, content), source, root, source != null ? Set.of(source) : Set.of())
-        );
+        return from(project, content, source, null);
     }
 
-    private static ProjectView fromPsiFile(
-        ProjectViewPsiFile psi,
-        @Nullable Path source,
-        Path root,
-        Set<Path> visited
-    ) {
-        List<Import> imports = new ArrayList<>();
-        Map<ProjectViewSectionKey<?>, Object> sections = new LinkedHashMap<>();
-        for (PsiElement it : psi.getChildren()) {
-            if (it instanceof ProjectViewPsiSection psiSection) {
-                Pair<ProjectViewSection<?>, Object> sectionWithValue = toSectionWithValue(psiSection);
-                if (sectionWithValue == null) {
-                    continue;
-                }
-                ProjectViewSection<?> section = sectionWithValue.getFirst();
-                Object value = sectionWithValue.getSecond();
-                mergeSection(sections, section.getKey(), value);
-            }
-            else if (it instanceof ProjectViewPsiImportBase psiImport) {
-                Import anImport = ImportFactory.from(root, psiImport, source);
-                imports.add(anImport);
-                // skip if recursion detected
-                if (anImport instanceof Import.Resolved resolved && !visited.contains(resolved.path())) {
-                    parseImport(
-                        psi.getProject(),
-                        resolved,
-                        sections,
-                        root,
-                        visited
-                    );
-                }
-            }
-        }
-        return new ProjectView(sections, imports);
-    }
-
-    private static void mergeSection(
-        Map<ProjectViewSectionKey<?>, Object> target,
-        ProjectViewSectionKey<?> sectionKey,
-        Object value
-    ) {
-        Object existing = target.get(sectionKey);
-        if (existing instanceof Collection<?> existingCollection && value instanceof Collection<?> valueCollection) {
-            List<Object> merged = new ArrayList<>(existingCollection);
-            merged.addAll(valueCollection);
-            target.put(sectionKey, merged);
-        }
-        else {
-            target.put(sectionKey, value);
-        }
-    }
-
-    private static void parseImport(
-        Project project,
-        Import.Resolved anImport,
-        Map<ProjectViewSectionKey<?>, Object> into,
-        Path root,
-        Set<Path> visited
-    ) {
-        ProjectViewPsiFile psiFile;
+    // In principle, project view parse should not throw.
+    // However, in case it does, it might break some code paths e.g. project opening, so it's better to keep it in a try-catch block.
+    private static @Nullable ProjectView loadOrNull(Path path, Supplier<ProjectView> load) {
         try {
-            psiFile = createLightPsiFile(project, anImport.path().getFileName().toString(), readContent(anImport.path()));
+            return load.get();
         }
         catch (Throwable e) {
             // consulo: upstream getOrHandleException rethrows control flow and cancellation exceptions
             if (e instanceof ControlFlowException || e instanceof CancellationException) {
                 throw e;
             }
-            LOG.warn("Failed to parse imported project view file " + anImport.path() + ". Skipping the import.", e);
-            return;
+            LOG.error("Failed to load project view file at " + path + ".", e);
+            return null;
         }
-        Set<Path> newVisited = new LinkedHashSet<>(visited);
-        newVisited.add(anImport.path());
-        ProjectView otherProjectView = fromPsiFile(psiFile, anImport.path(), root, newVisited);
-        for (Map.Entry<ProjectViewSectionKey<?>, Object> entry : otherProjectView.getSections().entrySet()) {
-            mergeSection(into, entry.getKey(), entry.getValue());
+    }
+
+    private static ProjectView parse(
+        Project project,
+        CharSequence content,
+        Path root,
+        @Nullable Path source,
+        @Nullable Consumer<ProjectViewProblem> onEachProblem
+    ) {
+        Path fileName = source != null ? source.getFileName() : null;
+        String name = fileName != null ? fileName.toString() : Constants.DEFAULT_PROJECT_VIEW_FILE_NAME;
+        // consulo: Consulo asserts read access for light PSI too (except ReadOnlyLightVirtualFile), the parse runs in a read action
+        return ReadAction.compute(() ->
+            new Parser(
+                project,
+                root,
+                onEachProblem,
+                source
+            ).parse(createLightPsiFile(project, name, content), source)
+        );
+    }
+
+    // consulo: upstream private top-level class Parser of ProjectViewFactory.kt
+    private static final class Parser {
+        private final Project myProject;
+        private final Path myRoot;
+        private final @Nullable Consumer<ProjectViewProblem> myOnEachProblem;
+
+        private final Map<Path, @Nullable ProjectView> myParsed = new HashMap<>();
+        private final Set<Path> myInProgress = new HashSet<>();
+
+        Parser(
+            Project project,
+            Path root,
+            @Nullable Consumer<ProjectViewProblem> onEachProblem,
+            @Nullable Path mainFile
+        ) {
+            myProject = project;
+            myRoot = root;
+            myOnEachProblem = onEachProblem;
+            if (mainFile != null) {
+                myInProgress.add(PathUtil.toRealPathOrSelf(mainFile));
+            }
+        }
+
+        ProjectView parse(ProjectViewPsiFile psi, @Nullable Path source) {
+            Set<Import.Resolved> imports = new LinkedHashSet<>();
+            Map<ProjectViewSectionKey<?>, Object> sections = new LinkedHashMap<>();
+            if (myOnEachProblem != null) {
+                ProjectViewChecker.withSourcePath(ProjectViewChecker.checkChildren(ProjectViewChecker.Main, psi), source)
+                    .forEach(myOnEachProblem);
+            }
+            for (PsiElement it : psi.getChildren()) {
+                if (it instanceof ProjectViewPsiSection psiSection) {
+                    Pair<ProjectViewSection<?>, Object> sectionWithValue = toSectionWithValue(psiSection);
+                    if (sectionWithValue != null) {
+                        mergeSection(sections, sectionWithValue.getFirst().getKey(), sectionWithValue.getSecond());
+                    }
+                }
+                else if (it instanceof ProjectViewPsiImportBase psiImport) {
+                    Import anImport = ImportFactory.from(myRoot, psiImport);
+                    if (anImport instanceof Import.Resolved resolved) {
+                        imports.add(resolved);
+                        ProjectView imported = importFile(resolved.path());
+                        if (imported != null) {
+                            for (Map.Entry<ProjectViewSectionKey<?>, Object> entry : imported.getSections().entrySet()) {
+                                mergeSection(sections, entry.getKey(), entry.getValue());
+                            }
+                        }
+                    }
+                    // Import.Unresolved, Import.OutsideOfProjectRoot -> Unit
+                }
+            }
+            return new ProjectView(sections, List.copyOf(imports));
+        }
+
+        // consulo: upstream `import(path)`, `import` is a Java keyword
+        private @Nullable ProjectView importFile(Path path) {
+            Path key = PathUtil.toRealPathOrSelf(path);
+            if (myInProgress.contains(key)) {
+                return null;
+            }
+            if (myParsed.containsKey(key)) {
+                return myParsed.get(key);
+            }
+            myInProgress.add(key);
+            try {
+                ProjectViewPsiFile psiFile = readLightPsiFile(myProject, path);
+                ProjectView result = psiFile != null ? parse(psiFile, path) : null;
+                myParsed.put(key, result);
+                return result;
+            }
+            finally {
+                myInProgress.remove(key);
+            }
+        }
+    }
+
+    // consulo: upstream private top-level functions of ProjectViewFactory.kt
+
+    private static void mergeSection(
+        Map<ProjectViewSectionKey<?>, Object> receiver,
+        ProjectViewSectionKey<?> key,
+        Object value
+    ) {
+        receiver.merge(key, value, (existing, newValue) -> {
+            if (existing instanceof Collection<?> existingCollection && newValue instanceof Collection<?> newCollection) {
+                List<Object> merged = new ArrayList<>(existingCollection);
+                merged.addAll(newCollection);
+                return merged;
+            }
+            else {
+                return newValue;
+            }
+        });
+    }
+
+    private static @Nullable ProjectViewPsiFile readLightPsiFile(
+        Project project,
+        Path path
+    ) {
+        try {
+            return createLightPsiFile(project, path.getFileName().toString(), readContent(path));
+        }
+        catch (Throwable e) {
+            // consulo: upstream getOrHandleException rethrows control flow and cancellation exceptions
+            if (e instanceof ControlFlowException || e instanceof CancellationException) {
+                throw e;
+            }
+            LOG.warn("Failed to parse imported project view file " + path + ". Skipping the import.", e);
+            return null;
         }
     }
 

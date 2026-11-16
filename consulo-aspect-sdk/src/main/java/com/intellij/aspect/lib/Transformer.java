@@ -18,6 +18,6 @@ package com.intellij.aspect.lib;
 import java.util.List;
 
 // consulo: declared in upstream sdk/lib/loads.kt
-public interface Transformer {
+interface Transformer {
     void apply(List<LoadStatement> loads, List<String> lines);
 }

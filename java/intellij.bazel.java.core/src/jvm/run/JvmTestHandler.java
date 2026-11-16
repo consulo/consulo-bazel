@@ -1,6 +1,7 @@
 package org.jetbrains.bazel.jvm.run;
 
 import com.intellij.java.execution.impl.JavaRunConfigurationExtensionManager;
+import consulo.bazel.core.localize.BazelPluginLocalize;
 import consulo.execution.BeforeRunTask;
 import consulo.execution.ExecutionResult;
 import consulo.execution.configuration.RunConfigurationBase;
@@ -56,7 +57,7 @@ public class JvmTestHandler implements BazelRunHandler {
 
     @Override
     public String getName() {
-        return "Jvm Test Handler";
+        return BazelPluginLocalize.jvmTestHandlerName().get();
     }
 
     @Override
@@ -111,11 +112,6 @@ class JvmTestCommandLineState extends BazelTestCommandLineState {
     }
 
     @Override
-    protected boolean getTestRunnerEmitsServiceMessages() {
-        return myTestRunner.get().getTestRunnerEmitsServiceMessages();
-    }
-
-    @Override
     protected TestParams transformTestParams(TestParams params) {
         return myTestRunner.get().transformTestParams(params);
     }
@@ -151,11 +147,6 @@ class ScriptPathTestCommandLineState extends JvmDebuggableCommandLineState {
     }
 
     @Override
-    protected boolean getTestRunnerEmitsServiceMessages() {
-        return myTestRunner.get().getTestRunnerEmitsServiceMessages();
-    }
-
-    @Override
     protected BazelTaskListener createAndAddTaskListener(BazelProcessHandler handler) {
         return myTestRunner.get().createTaskListener(handler, null);
     }
@@ -166,7 +157,7 @@ class ScriptPathTestCommandLineState extends JvmDebuggableCommandLineState {
     }
 
     @Override
-    protected CompletableFuture<?> startBsp(
+    protected CompletableFuture<Integer> runCommand(
         BazelServerFacade server,
         CompletableFuture<@Nullable Long> pidDeferred,
         BazelProcessHandler handler

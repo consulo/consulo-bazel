@@ -5,7 +5,7 @@ import consulo.language.psi.PsiElement;
 import consulo.language.psi.PsiFile;
 import consulo.language.psi.PsiManager;
 import consulo.project.Project;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -13,14 +13,14 @@ import org.jspecify.annotations.Nullable;
  */
 public class PsiBazelTarget extends FakePsiElement {
     private final Project myProject;
-    private final BuildTarget myTarget;
+    private final BuildTargetInfo myTarget;
 
-    public PsiBazelTarget(Project project, BuildTarget target) {
+    public PsiBazelTarget(Project project, BuildTargetInfo target) {
         myProject = project;
         myTarget = target;
     }
 
-    public BuildTarget getTarget() {
+    public BuildTargetInfo getTarget() {
         return myTarget;
     }
 

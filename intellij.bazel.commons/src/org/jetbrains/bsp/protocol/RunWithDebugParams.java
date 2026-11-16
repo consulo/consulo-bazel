@@ -1,6 +1,5 @@
 package org.jetbrains.bsp.protocol;
 
-import org.jetbrains.bazel.commons.BazelStatus;
 import org.jetbrains.bazel.label.Label;
 
 import java.util.List;
@@ -16,6 +15,6 @@ public final class RunWithDebugParams {
     ) {
     }
 
-    public record AnalysisDebugResult(BazelStatus statusCode) {
+    public record AnalysisDebugResult(int exitCode) {
     }
 }

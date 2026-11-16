@@ -238,7 +238,8 @@ public final class TaskConsole {
             LocalizeValue message,
             EventResult result
         ) {
-            if (result instanceof FailureResult failureResult) {
+            EventResult resultWithoutShownErrors = withoutShownError(taskId, result);
+            if (resultWithoutShownErrors instanceof FailureResult failureResult) {
                 for (Failure it : failureResult.getFailures()) {
                     LOG.warn(it.getMessage().get(), it.getError());
                     Throwable error = it.getError();
@@ -251,7 +252,8 @@ public final class TaskConsole {
             myTasksInProgress.remove(taskId);
             myTaskFailures.remove(taskId);
             mySubtaskParentMap.entrySet().removeIf(it -> Objects.equals(findActiveRootTaskId(it.getValue()), taskId));
-            BuildEvent event = buildEventFactory().createFinishBuildEvent(taskId, null, System.currentTimeMillis(), message, result);
+            BuildEvent event =
+                buildEventFactory().createFinishBuildEvent(taskId, null, System.currentTimeMillis(), message, resultWithoutShownErrors);
             myTaskView.onEvent(taskId, event);
         }
 
@@ -315,11 +317,51 @@ public final class TaskConsole {
             LocalizeValue savedMessage = removedMessage != null ? removedMessage : LocalizeValue.empty();
             LocalizeValue messageToDisplay = message != null ? message : savedMessage;
 
+            EventResult resultWithoutShownErrors = withoutShownError(rootTask, result);
             finishChildrenSubtasks(subtaskId, result);
-            BuildEvent event = buildEventFactory().createFinishEvent(subtaskId, null, System.currentTimeMillis(), messageToDisplay, result);
+            BuildEvent event = buildEventFactory().createFinishEvent(
+                subtaskId,
+                null,
+                System.currentTimeMillis(),
+                messageToDisplay,
+                resultWithoutShownErrors
+            );
             myTaskView.onEvent(rootTask, event);
 
             mySubtaskParentMap.remove(subtaskId);
+        }
+
+        /**
+         * Shows a plain failure when the root task already shows the exception of {@code result}.
+         */
+        private EventResult withoutShownError(TaskId rootTaskId, EventResult result) {
+            if (!(result instanceof FailureResult failureResult)) {
+                return result;
+            }
+            List<? extends Failure> failures = failureResult.getFailures();
+            if (failures.size() != 1) {
+                return result;
+            }
+            Throwable error = failures.get(0).getError();
+            if (error == null) {
+                return result;
+            }
+            return registerFailure(rootTaskId, error) ? result : buildEventFactory().newFailure().createResult();
+        }
+
+        /**
+         * Returns false when the root task already shows {@code error} or one of its causes.
+         * The check includes the causes, because kotlinx.coroutines can rethrow a copy of an exception with the original as the cause.
+         */
+        private boolean registerFailure(TaskId rootTaskId, Throwable error) {
+            Set<Throwable> failures = myTaskFailures.computeIfAbsent(rootTaskId, it -> new LinkedHashSet<>());
+            // consulo: upstream `error.causeChain()` (com.intellij.util), the error followed by its causes
+            for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+                if (failures.contains(cause)) {
+                    return false;
+                }
+            }
+            return failures.add(error);
         }
 
         private void finishChildrenSubtasks(TaskId parentId, EventResult result) {
@@ -342,7 +384,8 @@ public final class TaskConsole {
             int column,
             LocalizeValue message,
             @Nullable String description,
-            MessageEvent.Kind severity
+            MessageEvent.Kind severity,
+            @Nullable Throwable error
         ) {
             if (message.get().isBlank()) {
                 return;
@@ -353,6 +396,9 @@ public final class TaskConsole {
             }
             TaskId activeTaskId = findActiveTaskId(taskId);
             if (activeTaskId == null) {
+                return;
+            }
+            if (error != null && !registerFailure(rootTaskId, error)) {
                 return;
             }
             FilePosition filePosition = path != null ? new FilePosition(path.toFile(), line, column) : null;
@@ -406,15 +452,6 @@ public final class TaskConsole {
                 return;
             }
             doAddMessage(activeTaskId, message);
-        }
-
-        @Override
-        public synchronized boolean registerException(TaskId taskId, Throwable ex) {
-            TaskId rootTaskId = findActiveRootTaskId(taskId);
-            if (rootTaskId == null) {
-                return true;
-            }
-            return myTaskFailures.computeIfAbsent(rootTaskId, it -> new LinkedHashSet<>()).add(ex);
         }
 
         private void doAddMessage(TaskId taskId, String message) {

@@ -22,6 +22,7 @@ jvm_library(
         ["resources/**/*"],
     ),
     visibility = ["//visibility:public"],
+    runtime_deps = ["@community//platform/platform-util-io:ide-util-io"],
     deps = [
         # do not sort,
         "@lib//:kotlin-stdlib",
@@ -31,35 +32,9 @@ jvm_library(
         "@community//platform/execution",
         "@community//platform/ide-core",
         "@community//platform/core-ui",
-        "@community//platform/platform-util-io:ide-util-io",
         "@community//platform/util",
         "@community//libraries/rd/core",
         "//platform/backend/split",
-    ],
-)
-
-jvm_library(
-    name = "bazel-remoteDevelopment_test_lib",
-    testonly = True,
-    srcs = glob(
-        [],
-        allow_empty = True,
-    ),
-    module_name = "intellij.bazel.remoteDevelopment",
-    visibility = ["//visibility:public"],
-    runtime_deps = [
-        # do not sort,
-        ":bazel-remoteDevelopment",
-        "//plugins/bazel/intellij.bazel.core:core_test_lib",
-        "//plugins/bazel/intellij.bazel.commons:commons_test_lib",
-        "@community//platform/core-api:core_test_lib",
-        "@community//platform/execution:execution_test_lib",
-        "@community//platform/ide-core:ide-core_test_lib",
-        "@community//platform/core-ui:core-ui_test_lib",
-        "@community//platform/platform-util-io:ide-util-io_test_lib",
-        "@community//platform/util:util_test_lib",
-        "@community//libraries/rd/core:core_test_lib",
-        "//platform/backend/split:split_test_lib",
     ],
 )
 ### auto-generated section `build intellij.bazel.remoteDevelopment` end

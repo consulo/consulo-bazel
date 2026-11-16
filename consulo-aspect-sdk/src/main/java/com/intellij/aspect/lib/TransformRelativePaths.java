@@ -25,7 +25,7 @@ import java.util.List;
 /**
  * Rewrites repo-absolute load paths by prepending the deploy directory prefix.
  */
-public class TransformRelativePaths implements Transformer {
+class TransformRelativePaths implements Transformer {
     private final Path myPrefix;
 
     public TransformRelativePaths(Path prefix) {

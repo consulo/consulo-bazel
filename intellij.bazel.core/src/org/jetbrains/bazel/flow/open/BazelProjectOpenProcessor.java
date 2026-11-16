@@ -46,15 +46,17 @@ public class BazelProjectOpenProcessor implements ModuleImportProvider<ModuleImp
         Consumer<Module> newModuleConsumer
     ) {
         return CodeExecution.run(continuation -> {
-            Path fileBeingOpen = Path.of(context.getFileToImport());
-            LOG.info("Opening asynchronously file as a Bazel project: " + fileBeingOpen);
+            Path openedFile = Path.of(context.getFileToImport());
+            LOG.info("Opening asynchronously file as a Bazel project: " + openedFile);
 
             // The user (or another part of the plugin) may try to open the project by pointing to:
             // BUILD files, MODULE.bazel, project view file, etc. so we need to do normalization here
-            Path projectRootDir = utils.findProjectFolderFromFile(fileBeingOpen);
-            if (projectRootDir == null) {
+            utils.ResolvedProjectRoot resolvedProjectRoot = utils.ResolvedProjectRoot.from(openedFile);
+            if (resolvedProjectRoot == null) {
                 return;
             }
+            Path projectRootDir = resolvedProjectRoot.getRootDir();
+            Path fileBeingOpen = resolvedProjectRoot.getOpenedFile();
             LOG.trace("Found project root directory: " + projectRootDir);
 
             Path projectViewFile = pickProjectViewFileForProject(fileBeingOpen, projectRootDir);

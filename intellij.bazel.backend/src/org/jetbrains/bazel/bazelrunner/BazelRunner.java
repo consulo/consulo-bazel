@@ -371,7 +371,7 @@ public class BazelRunner {
         @Nullable BazelTaskLogger taskLogger =
             taskId != null && taskEventsHandler != null ? BazelTaskEventsHandler.asLogger(taskEventsHandler, taskId) : null;
         if (taskLogger != null) {
-            String log = envToString(environment) + " " + String.join(" ", processArgs);
+            String log = envToString(environment) + " " + argsToString(processArgs);
             taskLogger.info(log);
         }
         @Nullable BazelTaskLogger outputLogger = null;
@@ -389,14 +389,22 @@ public class BazelRunner {
             finishCallback
         );
         BazelLog.write(writer -> {
-            writer.append(String.join(" ", executionDescriptor.command())).append('\n');
+            writer.append(argsToString(executionDescriptor.command())).append('\n');
             writer.append(envToString(environment)).append('\n');
         });
         return bazelProcess;
     }
 
+    private String argsToString(List<String> args) {
+        return String.join(" ", BazelLogMasking.maskArguments(args));
+    }
+
     private String envToString(Map<String, String> environment) {
-        return environment.entrySet().stream().map(it -> it.getKey() + "=" + it.getValue()).collect(Collectors.joining(" "));
+        return environment
+            .entrySet()
+            .stream()
+            .map(it -> it.getKey() + "=" + BazelLogMasking.maskEnvValue(it.getKey(), it.getValue()))
+            .collect(Collectors.joining(" "));
     }
 }
 

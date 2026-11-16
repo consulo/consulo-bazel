@@ -10,10 +10,8 @@ public interface GooglePluginAwareRunHandlerProvider extends RunHandlerProvider 
      */
     String getGoogleHandlerId();
 
-    boolean isTestHandler();
-
     static @Nullable RunHandlerProvider getRunHandlerProvider(String googleHandlerId, String bazelCommand) {
-        boolean isTestCommand = bazelCommand.equals("test") || bazelCommand.equals("coverage");
+        boolean isTestCommand = isTestCommand(bazelCommand);
         for (RunHandlerProvider it : RunHandlerProvider.getEp()) {
             if (it instanceof GooglePluginAwareRunHandlerProvider provider
                 && provider.getGoogleHandlerId().equals(googleHandlerId)
@@ -22,5 +20,10 @@ public interface GooglePluginAwareRunHandlerProvider extends RunHandlerProvider 
             }
         }
         return null;
+    }
+
+    static boolean isTestCommand(String bazelCommand) {
+        boolean isTestCommand = bazelCommand.equals("test") || bazelCommand.equals("coverage");
+        return isTestCommand;
     }
 }

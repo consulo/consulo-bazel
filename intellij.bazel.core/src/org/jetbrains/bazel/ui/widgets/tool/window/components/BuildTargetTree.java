@@ -14,7 +14,7 @@ import org.jetbrains.bazel.ui.widgets.tool.window.actions.CopyTargetIdAction;
 import org.jetbrains.bazel.ui.widgets.tool.window.utils.BspShortcuts;
 import org.jetbrains.bazel.ui.widgets.tool.window.utils.LoadedTargetsMouseListener;
 import org.jetbrains.bazel.ui.widgets.tool.window.utils.SimpleAction;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -26,6 +26,7 @@ import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -36,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 public class BuildTargetTree extends Tree {
     private final Project myProject;
@@ -54,7 +56,7 @@ public class BuildTargetTree extends Tree {
             private final CopyTargetIdAction myCopyTargetIdAction =
                 new CopyTargetIdAction.FromContainer(BuildTargetTree.this) {
                     @Override
-                    protected @Nullable BuildTarget getTargetInfo() {
+                    protected @Nullable BuildTargetInfo getTargetInfo() {
                         return getSelectedBuildTarget();
                     }
                 };
@@ -88,11 +90,11 @@ public class BuildTargetTree extends Tree {
             }
 
             @Override
-            public @Nullable BuildTarget getSelectedBuildTarget() {
+            public @Nullable BuildTargetInfo getSelectedBuildTarget() {
                 DefaultMutableTreeNode selected = getLastSelectedPathComponent() instanceof DefaultMutableTreeNode node ? node : null;
                 Object userObject = selected != null ? selected.getUserObject() : null;
                 if (userObject instanceof TargetNodeData targetNodeData) {
-                    return TargetStorage.getTargetStorage(myProject).getTargetSummary(targetNodeData.id());
+                    return TargetStorage.getTargetInfo(TargetStorage.getTargetStorage(myProject), targetNodeData.id());
                 }
                 else {
                     return null;
@@ -139,7 +141,7 @@ public class BuildTargetTree extends Tree {
         addMouseListener(myLoadedTargetsMouseListener);
     }
 
-    public void updateTree(Collection<Label> visibleTargets, boolean displayAsTree) {
+    public void updateTree(Collection<Label> visibleTargets, boolean displayAsTree, @Nullable Pattern searchQuery) {
         BuildTargetClassifierExtension classifier;
         if (displayAsTree) {
             classifier = new TreeTargetClassifier(myProject);
@@ -158,6 +160,9 @@ public class BuildTargetTree extends Tree {
         }
 
         expandPath(new TreePath(myRootNode.getPath()));
+        if (searchQuery != null) {
+            expandMatchingNodes(myRootNode, searchQuery);
+        }
     }
 
     private void generateTree(Collection<Label> targets, BuildTargetClassifierExtension classifier) {
@@ -291,6 +296,46 @@ public class BuildTargetTree extends Tree {
                 childrenList.addAll(Collections.list(onlyChild.children()));
             }
         }
+    }
+
+    private void expandMatchingNodes(DefaultMutableTreeNode root, Pattern searchRegex) {
+        ArrayDeque<DefaultMutableTreeNode> dirsToProcess = new ArrayDeque<>();
+        for (TreeNode topLevelNode : Collections.list(root.children())) {
+            if (topLevelNode instanceof DefaultMutableTreeNode node && node.getChildCount() > 0) {
+                dirsToProcess.add(node);
+            }
+        }
+
+        while (!dirsToProcess.isEmpty()) {
+            DefaultMutableTreeNode node = dirsToProcess.removeFirst();
+            if (!containsMatch(node, searchRegex)) {
+                // if the node name does not match, expand it and go deeper
+                expandPath(new TreePath(node.getPath()));
+                for (TreeNode child : Collections.list(node.children())) {
+                    if (child instanceof DefaultMutableTreeNode childNode && childNode.getChildCount() > 0) {
+                        dirsToProcess.add(childNode);
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean containsMatch(DefaultMutableTreeNode receiver, Pattern regex) {
+        Object userObject = receiver.getUserObject();
+        if (userObject == null) {
+            return false;
+        }
+        String nodeName;
+        if (userObject instanceof DirectoryNodeData directoryNodeData) {
+            nodeName = directoryNodeData.name();
+        }
+        else if (userObject instanceof TargetNodeData targetNodeData) {
+            nodeName = targetNodeData.displayName();
+        }
+        else {
+            return false;
+        }
+        return regex.matcher(nodeName).find();
     }
 
     @Override

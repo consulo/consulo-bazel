@@ -42,6 +42,20 @@ public final class PathUtil {
         return receiver.isSymbolicLink() || isWindowsJunction(receiver);
     }
 
+    /**
+     * Checks whether the path is a symbolic link or a Windows junction, see {@link #isSymbolicLinkOrJunction(BasicFileAttributes)}.
+     * <p>
+     * This property reads the file attributes. The result is `false` when the attributes cannot be read.
+     */
+    public static boolean isSymbolicLinkOrJunction(Path receiver) {
+        try {
+            return isSymbolicLinkOrJunction(Files.readAttributes(receiver, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS));
+        }
+        catch (IOException e) {
+            return false;
+        }
+    }
+
     public static boolean isWindowsJunction(BasicFileAttributes receiver) {
         return Platform.current().os().isWindows() && receiver.isDirectory() && receiver.isOther();
     }
@@ -69,6 +83,79 @@ public final class PathUtil {
         catch (IOException e) {
             return null;
         }
+    }
+
+    public static @Nullable Path toRealPathOrNull(Path receiver) {
+        try {
+            return receiver.toRealPath();
+        }
+        catch (IOException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The real path of this path, or this path when the real path cannot be read, for example when the file does not exist.
+     */
+    public static Path toRealPathOrSelf(Path receiver) {
+        Path realPath = toRealPathOrNull(receiver);
+        return realPath != null ? realPath : receiver;
+    }
+
+    /**
+     * This path with its {@code from} prefix changed to {@code to}, or {@code null} when this path is not under {@code from}.
+     * For example, {@code /a/b/c} with {@code from} {@code /a} and {@code to} {@code /x} gives {@code /x/b/c}.
+     */
+    public static @Nullable Path rebaseOrNull(Path receiver, Path from, Path to) {
+        if (!receiver.startsWith(from)) {
+            return null;
+        }
+        else if (from.equals(to)) {
+            return receiver;
+        }
+        else if (receiver.getNameCount() == from.getNameCount()) {
+            return to;
+        }
+        else {
+            return to.resolve(receiver.subpath(from.getNameCount(), receiver.getNameCount()));
+        }
+    }
+
+    /**
+     * This path with its {@code from} prefix changed to {@code to}. This path must be under {@code from}, see {@link #rebaseOrNull}.
+     */
+    public static Path rebase(Path receiver, Path from, Path to) {
+        Path result = rebaseOrNull(receiver, from, to);
+        if (result == null) {
+            throw new IllegalArgumentException(receiver + " is not under " + from);
+        }
+        return result;
+    }
+
+    /**
+     * Checks whether the real path of this path is inside the real path of {@code root}.
+     * The normalized path must be inside the normalized {@code root} first, or the function returns {@code false} and does not touch
+     * the file system.
+     * This path does not have to exist, so the function resolves the real path of the nearest existing parent.
+     * A dangling symlink counts as existing, so its real path fails and the function returns {@code false}.
+     */
+    public static boolean isRealPathInside(Path receiver, Path root) {
+        if (!receiver.normalize().startsWith(root.normalize())) {
+            return false;
+        }
+        Path existingParent = allAncestorsSequence(receiver).filter(it -> Files.exists(it, LinkOption.NOFOLLOW_LINKS)).findFirst().orElse(null);
+        if (existingParent == null) {
+            return false;
+        }
+        Path realParent = toRealPathOrNull(existingParent);
+        if (realParent == null) {
+            return false;
+        }
+        Path realRoot = toRealPathOrNull(root);
+        if (realRoot == null) {
+            return false;
+        }
+        return rebase(receiver, existingParent, realParent).startsWith(realRoot);
     }
 
     /**

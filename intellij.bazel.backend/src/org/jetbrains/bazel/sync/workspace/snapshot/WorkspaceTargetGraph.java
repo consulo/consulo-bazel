@@ -22,13 +22,16 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.function.Predicate;
-import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
  * Immutable {@link BuildTarget} graph, takes into account configurations {@link WorkspaceConfiguration}
@@ -125,11 +128,12 @@ public interface WorkspaceTargetGraph {
     }
 
     /**
-     * Find all transitive successors to {@code targetKey} excluding traversal over root targets
+     * Find transitive successors of {@code targetKey}. Skip root targets only on direct edges from {@code targetKey}.
+     * Include root targets reached on later edges.
      *
      * @param targetKey                     Target key
      * @param useRelaxedDependencyExpansion Ignore propagated aspect when traversing through dependencies
-     * @return Sequence of all transitive successors of {@code targetKey} exclusing root targets
+     * @return Transitive successors of {@code targetKey}
      */
     Stream<WorkspaceTargetKey> findAllTransitiveSuccessorsWithoutRootTargets(
         WorkspaceTargetKey targetKey,
@@ -221,10 +225,6 @@ public interface WorkspaceTargetGraph {
         private final int[][] myId2RelaxedCompileSuccessors;
         private final int[][] myId2RelaxedAllSuccessors;
 
-        // recreated lazily: Kryo field serialization skips transient fields and instantiates
-        // the class without running field initializers
-        private transient @Nullable AtomicReferenceArray<int @Nullable []> myId2TransitiveTargetCache;
-
         WorkspaceTargetGraphImpl(
             IntSet rootTargetIds,
             Object2IntMap<WorkspaceTargetKey> targetKey2TargetId,
@@ -243,16 +243,6 @@ public interface WorkspaceTargetGraph {
             myId2AllSuccessors = id2AllSuccessors;
             myId2RelaxedCompileSuccessors = id2RelaxedCompileSuccessors;
             myId2RelaxedAllSuccessors = id2RelaxedAllSuccessors;
-            myId2TransitiveTargetCache = new AtomicReferenceArray<>(id2WorkspaceTarget.length);
-        }
-
-        private AtomicReferenceArray<int @Nullable []> transitiveTargetCache() {
-            AtomicReferenceArray<int @Nullable []> cache = myId2TransitiveTargetCache;
-            if (cache == null) {
-                cache = new AtomicReferenceArray<>(myId2WorkspaceTarget.length);
-                myId2TransitiveTargetCache = cache;
-            }
-            return cache;
         }
 
         // no backing field: a stored Sequence would end up in the serialized form
@@ -384,8 +374,8 @@ public interface WorkspaceTargetGraph {
             if (targetId == INVALID_TARGET_ID) {
                 return Stream.empty();
             }
-            return Arrays.stream(computeTransitiveSuccessorIds(targetId, useRelaxedDependencyExpansion))
-                .mapToObj(transitiveSuccId -> myId2WorkspaceTarget[transitiveSuccId]);
+            int[][] compileSuccessors = useRelaxedDependencyExpansion ? myId2RelaxedCompileSuccessors : myId2CompileSuccessors;
+            return visitTransitiveSuccessors(compileSuccessors[targetId], compileSuccessors);
         }
 
         @Override
@@ -398,56 +388,46 @@ public interface WorkspaceTargetGraph {
                 return Stream.empty();
             }
             int[][] allSuccessors = useRelaxedDependencyExpansion ? myId2RelaxedAllSuccessors : myId2AllSuccessors;
-            return Arrays.stream(allSuccessors[targetId])
-                .filter(depId -> !myRootTargetIds.contains(depId))
-                .flatMap(depId ->
-                    IntStream.concat(Arrays.stream(computeTransitiveSuccessorIds(depId, useRelaxedDependencyExpansion)), IntStream.of(depId))
-                )
-                .mapToObj(transitiveSuccId -> myId2WorkspaceTarget[transitiveSuccId]);
+            int[][] compileSuccessors = useRelaxedDependencyExpansion ? myId2RelaxedCompileSuccessors : myId2CompileSuccessors;
+            int[] directSuccessorIds = Arrays.stream(allSuccessors[targetId]).filter(it -> !myRootTargetIds.contains(it)).toArray();
+            return visitTransitiveSuccessors(directSuccessorIds, compileSuccessors);
         }
 
-        private int[] computeTransitiveSuccessorIds(int targetId, boolean useRelaxedDependencyExpansion) {
-            if (useRelaxedDependencyExpansion) {
-                // TODO: cache relaxed transitive closures if profiling shows it matters
-                return computeTransitiveSuccessorSlow(targetId, myId2RelaxedCompileSuccessors);
-            }
-            else {
-                return findAllTransitiveSuccessorIds(transitiveTargetCache(), targetId);
-            }
-        }
-
-        private int[] findAllTransitiveSuccessorIds(AtomicReferenceArray<int @Nullable []> cache, int targetId) {
-            int[] cached = cache.get(targetId);
-            if (cached != null) {
-                return cached;
-            }
-            IntOpenHashSet visited = new IntOpenHashSet();
-            for (int succId : myId2CompileSuccessors[targetId]) {
-                if (!visited.add(succId)) {
-                    continue;
-                }
-                for (int succDepId : findAllTransitiveSuccessorIds(cache, succId)) {
-                    visited.add(succDepId);
-                }
-            }
-            int[] baked = visited.toIntArray();
-            cache.compareAndSet(targetId, null, baked);
-            return baked;
-        }
-
-        private int[] computeTransitiveSuccessorSlow(int targetId, int[][] adjacency) {
-            IntOpenHashSet visited = new IntOpenHashSet();
-            ArrayDeque<Integer> stack = new ArrayDeque<>();
-            stack.addLast(targetId);
-            while (!stack.isEmpty()) {
-                int currentId = stack.removeLast();
-                for (int succId : adjacency[currentId]) {
-                    if (visited.add(succId)) {
-                        stack.addLast(succId);
+        // consulo: Kotlin sequence { } -> lazily evaluated stream, the body runs when the terminal operation starts
+        private Stream<WorkspaceTargetKey> visitTransitiveSuccessors(
+            int[] directSuccessorIds,
+            int[][] compileSuccessors
+        ) {
+            return StreamSupport.stream(() -> {
+                IntOpenHashSet visited = new IntOpenHashSet();
+                ArrayDeque<Integer> toVisit = new ArrayDeque<>();
+                for (int successorId : directSuccessorIds) {
+                    if (visited.add(successorId)) {
+                        toVisit.addLast(successorId);
                     }
                 }
-            }
-            return visited.toIntArray();
+                Iterator<WorkspaceTargetKey> iterator = new Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return !toVisit.isEmpty();
+                    }
+
+                    @Override
+                    public WorkspaceTargetKey next() {
+                        if (toVisit.isEmpty()) {
+                            throw new NoSuchElementException();
+                        }
+                        int currentId = toVisit.removeFirst();
+                        for (int successorId : compileSuccessors[currentId]) {
+                            if (visited.add(successorId)) {
+                                toVisit.addLast(successorId);
+                            }
+                        }
+                        return myId2WorkspaceTarget[currentId];
+                    }
+                };
+                return Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
+            }, Spliterator.ORDERED | Spliterator.NONNULL, false);
         }
 
     }

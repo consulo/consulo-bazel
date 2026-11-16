@@ -24,7 +24,7 @@ import java.util.Set;
  * Removes load statements from external repositories not in the allowed list. Used for removing
  * loads when the user's project uses the builtin rules.
  */
-public class TransformBuiltinRules implements Transformer {
+class TransformBuiltinRules implements Transformer {
     private final List<String> myRepoNamesToRemove;
 
     public TransformBuiltinRules(Set<Rules> useBuiltin) {

@@ -17,11 +17,13 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.ALLOW_MANUAL_TARGETS_SYNC_KEY;
+import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.ASPPECTS_ATTRS_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.BAZEL_BINARY_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.BUILD_FLAGS_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.DEBUG_FLAGS_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.DERIVE_TARGETS_FROM_DIRECTORIES_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.DOT_IDEA_DIRECTORY_LOCATION_KEY;
+import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.DROP_NO_IDE_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.ENABLED_RULES_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.GAZELLE_TARGET_KEY;
 import static org.jetbrains.bazel.languages.projectview.ProjectViewExtensions.IMPORT_DEPTH_KEY;
@@ -61,6 +63,8 @@ class DefaultProjectViewSectionProvider implements ProjectViewSectionProvider {
             DIRECTORIES_SECTION,
             DOT_IDEA_DIRECTORY_LOCATION_SECTION,
             ENABLED_RULES_SECTION,
+            APSECTS_ATTRS_SECTION,
+            DROP_NO_IDE_SECTION,
             GAZELLE_TARGET_SECTION,
             IMPORT_DEPTH_SECTION,
             IMPORT_RUN_CONFIGURATIONS_SECTION,
@@ -129,7 +133,7 @@ class DefaultProjectViewSectionProvider implements ProjectViewSectionProvider {
 
     private static final ProjectViewSection<@Nullable Path> DOT_IDEA_DIRECTORY_LOCATION_SECTION = new ProjectViewSection<>(
         DOT_IDEA_DIRECTORY_LOCATION_KEY,
-        ProjectViewSectionType.path(),
+        ProjectViewSectionType.path(false, true),
         BazelProjectViewLocalize.bazelLanguageProjectviewDocsDot_idea_directory_location()
     );
 
@@ -137,6 +141,18 @@ class DefaultProjectViewSectionProvider implements ProjectViewSectionProvider {
         ENABLED_RULES_KEY,
         ProjectViewSectionType.list(ProjectViewSectionType.string()),
         BazelProjectViewLocalize.bazelLanguageProjectviewDocsEnabled_rules()
+    );
+
+    private static final ProjectViewSection<@Nullable List<String>> APSECTS_ATTRS_SECTION = new ProjectViewSection<>(
+        ASPPECTS_ATTRS_KEY,
+        ProjectViewSectionType.list(ProjectViewSectionType.string()),
+        BazelProjectViewLocalize.bazelLanguageProjectviewDocsAspects_attrs()
+    );
+
+    private static final ProjectViewSection<Boolean> DROP_NO_IDE_SECTION = new ProjectViewSection<>(
+        DROP_NO_IDE_KEY,
+        ProjectViewSectionType.BOOLEAN,
+        BazelProjectViewLocalize.bazelLanguageProjectviewDocsDrop_no_ide()
     );
 
     private static final ProjectViewSection<@Nullable Label> GAZELLE_TARGET_SECTION = new ProjectViewSection<>(
@@ -202,7 +218,7 @@ class DefaultProjectViewSectionProvider implements ProjectViewSectionProvider {
     // deprecated sections
 
     private static final ProjectViewSection.Deprecation INDEXING_DEPRECATION = new ProjectViewSection.Deprecation(
-        BazelProjectViewLocalize.annotatorDeprecatedSectionWithReplacementWarning(INDEX_KEY.getName()),
+        sectionName -> BazelProjectViewLocalize.annotatorDeprecatedSectionWithReplacementWarning(sectionName, INDEX_KEY.getName()),
         ProjectViewSection.Deprecation.Level.Warning,
         List.of(ProjectViewProblem.QuickFix.ReplaceWithIndex.INSTANCE)
     );
@@ -232,6 +248,6 @@ class DefaultProjectViewSectionProvider implements ProjectViewSectionProvider {
         TEST_SOURCES_KEY,
         ProjectViewSectionType.list(ProjectViewSectionType.string()),
         BazelProjectViewLocalize.bazelLanguageProjectviewDocsTest_sources(),
-        new ProjectViewSection.Deprecation(BazelProjectViewLocalize.annotatorDeprecatedSectionTest_sources())
+        new ProjectViewSection.Deprecation(sectionName -> BazelProjectViewLocalize.annotatorDeprecatedSectionTest_sources())
     );
 }

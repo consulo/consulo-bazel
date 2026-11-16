@@ -1,30 +1,13 @@
 package org.jetbrains.bazel.languages.projectview.quickfix
 
-import com.intellij.openapi.application.EDT
-import com.intellij.platform.testFramework.junit5.codeInsight.fixture.codeInsightFixture
-import com.intellij.testFramework.common.timeoutRunBlocking
-import com.intellij.testFramework.junit5.fixture.moduleFixture
-import com.intellij.testFramework.junit5.fixture.projectFixture
-import com.intellij.testFramework.junit5.fixture.tempPathFixture
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.jetbrains.bazel.languages.projectview.BazelProjectViewBundle
 import org.jetbrains.bazel.test.framework.BazelTestApplication
-import org.junit.jupiter.api.BeforeEach
+import org.jetbrains.bazel.test.framework.bazelCodeInsightFixture
 import org.junit.jupiter.api.Test
-import kotlin.time.Duration.Companion.seconds
 
 @BazelTestApplication
 class ReplaceWithIndexQuickFixTest {
-  private val projectFixture = projectFixture(openAfterCreation = true)
-  private val tempDirFixture = tempPathFixture()
-  private val moduleFixture = projectFixture.moduleFixture(tempDirFixture, addPathToSourceRoot = true)
-  private val codeInsightFixture by codeInsightFixture(projectFixture, tempDirFixture)
-
-  @BeforeEach
-  fun setUp() {
-    moduleFixture.get()
-  }
+  private val codeInsightFixture by bazelCodeInsightFixture()
 
   @Test
   fun `should replace index_all_files_in_directories with a match-all pattern`() {
@@ -172,17 +155,9 @@ class ReplaceWithIndexQuickFixTest {
     )
   }
 
-  private fun checkQuickFix(before: String, after: String) {
-    timeoutRunBlocking(30.seconds) {
-      withContext(Dispatchers.EDT) {
-        codeInsightFixture.configureByText(".bazelproject", before.trimIndent() + "\n")
-        val intention =
-          codeInsightFixture.findSingleIntention(
-            BazelProjectViewBundle.message("quickfix.deprecated.section.replace.presentation", "index"),
-          )
-        codeInsightFixture.launchAction(intention)
-        codeInsightFixture.checkResult(after.trimIndent() + "\n")
-      }
-    }
-  }
+  private fun checkQuickFix(before: String, after: String) = codeInsightFixture.checkQuickFix(
+    name = BazelProjectViewBundle.message("quickfix.deprecated.section.replace.presentation", "index"),
+    before = before,
+    after = after,
+  )
 }

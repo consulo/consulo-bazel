@@ -1,0 +1,20 @@
+debug.info.dialog.debug.always:
+    text: "Always Continue Debugging in This Project"
+debug.info.dialog.debug.anyway:
+    text: "Debug Anyway"
+debug.info.dialog.details:
+    text: "Details"
+debug.info.dialog.header:
+    text: "The IDE might not be able to debug <b>{0}</b>."
+debug.info.dialog.instruction:
+    text: "The debugger needs debug info to stop at breakpoints and show variables. Add <code>--compilation_mode=dbg</code> or a debug config from your .bazelrc to the build flags in <a href=\"open\">{0}</a>, then sync the project."
+debug.info.dialog.targets:
+    text: "Bazel built {0, choice, 1#1 target|1<{0} targets} without debug info."
+debug.info.dialog.targets.all.not.dbg:
+    text: "Bazel built {0, choice, 1#1 target|1<{0} targets} without debug info and without <code>--compilation_mode=dbg</code>."
+debug.info.dialog.targets.some.not.dbg:
+    text: "Bazel built {0, choice, 1#1 target|1<{0} targets} without debug info. It built {1} of them without <code>--compilation_mode=dbg</code>."
+debug.info.dialog.title:
+    text: "No Debug Info"
+debug.info.dialog.use.dbg:
+    text: "Set Compilation Mode to dbg"

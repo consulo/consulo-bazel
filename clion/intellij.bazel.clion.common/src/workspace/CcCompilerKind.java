@@ -24,6 +24,16 @@ public final class CcCompilerKind {
     public static final CcCompilerKind APPLE_CLANG = new CcCompilerKind("APPLE_CLANG");
 
     /**
+     * consulo: stands for CIDR's {@code MSVCCompilerKind}, which upstream uses without a wrapper.
+     */
+    public static final CcCompilerKind MSVC = new CcCompilerKind("MSVC");
+
+    /**
+     * consulo: stands for CIDR's {@code ClangClCompilerKind}, which upstream uses without a wrapper.
+     */
+    public static final CcCompilerKind CLANG_CL = new CcCompilerKind("CLANG_CL");
+
+    /**
      * consulo: stands for CIDR's {@code UnknownCompilerKind}, the kind of a compiler that was not identified.
      */
     public static final CcCompilerKind UNKNOWN = new CcCompilerKind(null);

@@ -1,9 +1,11 @@
 package org.jetbrains.bazel.languages.starlark.psi;
 
+import consulo.application.util.CachedValueProvider;
 import consulo.application.util.function.Processor;
 import consulo.language.file.FileViewProvider;
 import consulo.language.impl.psi.PsiFileBase;
 import consulo.language.psi.scope.GlobalSearchScope;
+import consulo.language.psi.util.LanguageCachedValueUtil;
 import consulo.virtualFileSystem.fileType.FileType;
 import org.jetbrains.bazel.languages.starlark.StarlarkLanguage.StarlarkFileType;
 import org.jetbrains.bazel.languages.starlark.StarlarkLanguage;
@@ -14,9 +16,11 @@ import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionS
 import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkLoadStatement;
 import org.jspecify.annotations.Nullable;
 
-import java.util.Arrays;
-import java.util.List;
 import java.util.Objects;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class StarlarkFile extends PsiFileBase implements StarlarkElement {
     public StarlarkFile(FileViewProvider viewProvider) {
@@ -50,10 +54,19 @@ public class StarlarkFile extends PsiFileBase implements StarlarkElement {
     }
 
     public @Nullable StarlarkCallExpression findTargetRule(String targetName) {
-        return getTargetRules().stream()
-            .filter(it -> Objects.equals(it.getNameAttributeValue(), targetName))
-            .findFirst()
-            .orElse(null);
+        StarlarkFile file = this;
+        Map<String, StarlarkCallExpression> rulesByName = LanguageCachedValueUtil.getCachedValue(file, () -> {
+            Map<String, StarlarkCallExpression> result = new HashMap<>();
+            for (StarlarkCallExpression rule : file.getTargetRules()) {
+                String name = rule.getNameAttributeValue();
+                if (name == null) {
+                    continue;
+                }
+                result.putIfAbsent(name, rule);
+            }
+            return CachedValueProvider.Result.create(result, file);
+        });
+        return rulesByName.get(targetName);
     }
 
     public boolean searchInLoads(Processor<StarlarkElement> processor) {

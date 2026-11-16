@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
  * consulo: top-level functions of upstream sdk/lib/loads.kt. The types of that file are
  * {@link Transformer}, {@link LoadStatement} and {@link Repository}.
  */
-public final class Loads {
+final class Loads {
     private static final Pattern LOAD_STATEMENT_RX = Pattern.compile("^load\\(\"([^\"]+)\",([^)]+)\\)$");
 
     private static final Pattern REPO_NAME_RX = Pattern.compile("^(@[^/]+)//(.+)$");
@@ -40,7 +40,7 @@ public final class Loads {
     private Loads() {
     }
 
-    public static List<LoadStatement> parseLoads(InputStream input) throws IOException {
+    static List<LoadStatement> parseLoads(InputStream input) throws IOException {
         List<LoadStatement> result = new ArrayList<>();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
             String line;
@@ -54,7 +54,7 @@ public final class Loads {
         return result;
     }
 
-    public static String transformFile(InputStream input, List<Transformer> transformers) throws IOException {
+    static String transformFile(InputStream input, List<Transformer> transformers) throws IOException {
         List<LoadStatement> loads = new ArrayList<>();
         List<String> lines = new ArrayList<>();
 

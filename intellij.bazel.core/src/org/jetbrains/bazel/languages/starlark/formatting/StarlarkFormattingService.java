@@ -63,12 +63,14 @@ public class StarlarkFormattingService implements ExternalFormatProcessor {
         if (!FileTypeRegistry.getInstance().isFileOfType(virtualFile, StarlarkFileType.INSTANCE)) {
             return false;
         }
+        // consulo: upstream TrustedProjects.isProjectTrusted check is dropped, Consulo has no trusted projects
         return BazelProjectSettings.getBazelProjectSettings(file.getProject()).getBuildifierPathString(file.getProject()) != null;
     }
 
     private @Nullable FormattingTask createFormattingTask(AsyncFormattingRequest request) {
         FormattingContext formattingContext = request.getContext();
         Project project = formattingContext.getProject();
+        // consulo: upstream TrustedProjects.isProjectTrusted check is dropped, Consulo has no trusted projects
         String buildifierPath =
             BazelProjectSettings.getBazelProjectSettings(project).getBuildifierPathString(request.getContext().getProject());
         if (buildifierPath == null) {

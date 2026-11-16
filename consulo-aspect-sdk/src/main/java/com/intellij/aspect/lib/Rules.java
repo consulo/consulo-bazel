@@ -26,7 +26,8 @@ public enum Rules {
     SCALA("@rules_scala"),
     GO("@rules_go"),
     PROTO("@protobuf"),
-    LEGACY_RULES_PROTO("@rules_proto");
+    LEGACY_RULES_PROTO("@rules_proto"),
+    PLATFORMS("@platforms");
 
     private final String myRulesetName;
 
@@ -34,7 +35,7 @@ public enum Rules {
         myRulesetName = rulesetName;
     }
 
-    public String getRulesetName() {
+    String getRulesetName() {
         return myRulesetName;
     }
 }

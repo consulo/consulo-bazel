@@ -13,8 +13,8 @@ public interface BazelApplicationContextService {
         return false;
     }
 
-    default boolean getForceBazeliskDownload() {
-        return false;
+    default BazeliskDownload getForcedBazeliskDownload() {
+        return BazeliskDownload.Off.INSTANCE;
     }
 
     default boolean getEnablePty() {

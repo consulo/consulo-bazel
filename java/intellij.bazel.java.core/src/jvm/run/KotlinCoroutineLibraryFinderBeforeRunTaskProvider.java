@@ -30,7 +30,7 @@ import org.jetbrains.bazel.settings.bazel.BazelJVMProjectSettings;
 import org.jetbrains.bazel.sync.java.JavaLanguageClass;
 import org.jetbrains.bazel.target.ModuleTargetService;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -126,11 +126,11 @@ public class KotlinCoroutineLibraryFinderBeforeRunTaskProvider
             throw new IllegalArgumentException("List has more than one element.");
         }
         Label target = targets.get(0);
-        BuildTarget targetInfo = TargetStorage.getTargetStorage(project).getTargetSummary(target);
+        BuildTargetInfo targetInfo = TargetStorage.getTargetInfo(TargetStorage.getTargetStorage(project), target);
         if (targetInfo == null) {
             return CompletableFuture.completedFuture(true);
         }
-        if (!JavaLanguageClass.includesKotlin(targetInfo.getKind()) || !targetInfo.getKind().isExecutable()) {
+        if (!JavaLanguageClass.includesKotlin(targetInfo.kind()) || !targetInfo.kind().isExecutable()) {
             return CompletableFuture.completedFuture(true);
         }
         // consulo: withBackgroundProgress -> Task.Backgroundable.queue
@@ -139,7 +139,7 @@ public class KotlinCoroutineLibraryFinderBeforeRunTaskProvider
         LocalizeValue title = BazelPluginLocalize.backgroundTaskDescriptionPreparingForDebuggingKotlin(target);
         consulo.application.progress.Task.Backgroundable.queue(project, title, indicator -> {
             try {
-                List<VirtualFile> classPath = findClassPathByTargetLabel(project, BuildTarget.getId(targetInfo));
+                List<VirtualFile> classPath = findClassPathByTargetLabel(project, targetInfo.id());
                 VirtualFile coroutinesJarPath = findLatestCoroutinesJarRootRelativePath(classPath);
                 if (coroutinesJarPath != null) {
                     calculateKotlinCoroutineParams(environment, coroutinesJarPath.getPath());

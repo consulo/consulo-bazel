@@ -30,6 +30,7 @@ public final class BazelFeatureFlags {
     private static final String HIGHLIGHT_IGNORED_SOURCE_FILES = "bazel.highlight.ignored.source.files";
 
     public static final String ENABLE_LOG = "bazel.enable.log";
+    private static final String MASK_SECRETS_IN_LOG = "bazel.log.mask.secrets";
     private static final String KILL_TREE_ON_CANCEL = "bazel.kill.tree.on.cancel";
     private static final String KILL_SERVER_ON_CANCEL = "bazel.kill.server.on.cancel";
 
@@ -115,6 +116,10 @@ public final class BazelFeatureFlags {
 
     public static boolean isLogEnabled() {
         return BazelRegistryKeys.is(ENABLE_LOG);
+    }
+
+    public static boolean getMaskSecretsInLog() {
+        return BazelRegistryKeys.is(MASK_SECRETS_IN_LOG);
     }
 
     private static boolean isEnabled(String key) {

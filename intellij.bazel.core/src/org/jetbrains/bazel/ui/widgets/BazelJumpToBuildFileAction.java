@@ -26,7 +26,7 @@ import org.jetbrains.bazel.languages.starlark.psi.functions.StarlarkArgumentList
 import org.jetbrains.bazel.languages.starlark.psi.statements.StarlarkExpressionStatement;
 import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import javax.swing.JComponent;
@@ -79,16 +79,16 @@ public abstract class BazelJumpToBuildFileAction extends SuspendableAction {
     }
 
     public static class NonXmlRegistered extends BazelJumpToBuildFileAction {
-        private final Supplier<@Nullable BuildTarget> myGetTarget;
+        private final Supplier<@Nullable BuildTargetInfo> myGetTarget;
 
-        public NonXmlRegistered(Supplier<@Nullable BuildTarget> getTarget) {
+        public NonXmlRegistered(Supplier<@Nullable BuildTargetInfo> getTarget) {
             myGetTarget = getTarget;
         }
 
         @Override
         protected CompletableFuture<@Nullable Label> getTargetLabel(Project project, AnActionEvent e) {
-            BuildTarget target = myGetTarget.get();
-            return CompletableFuture.completedFuture(target != null ? BuildTarget.getId(target) : null);
+            BuildTargetInfo target = myGetTarget.get();
+            return CompletableFuture.completedFuture(target != null ? target.id() : null);
         }
 
         public void registerShortcut(JComponent component) {

@@ -1,6 +1,7 @@
 package org.jetbrains.bazel.server.bep;
 
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.Aborted.AbortReason;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.NamedSetOfFiles;
 import com.google.devtools.build.v1.BuildEvent;
 import com.google.devtools.build.v1.PublishBuildEventGrpc;
@@ -26,6 +27,8 @@ import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
 import org.jetbrains.bazel.server.BazelTestFileNames;
 import org.jetbrains.bazel.server.bep.BepEventHandler.BepEventHandlerContext;
 import org.jetbrains.bazel.server.bep.BepEventHandler.BepEventHandlerProvider;
+import org.jetbrains.bazel.server.bep.BepOutputBuilder.TextProtoDepSet;
+import org.jetbrains.bazel.server.diagnostics.Diagnostic;
 import org.jetbrains.bazel.server.diagnostics.DiagnosticsService;
 import org.jetbrains.bazel.server.sync.configuration;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelper;
@@ -38,10 +41,13 @@ import org.jetbrains.bazel.target.TargetStorage;
 import org.jetbrains.bazel.testing.BazelTestDetails;
 import org.jetbrains.bazel.util.BspClientTestNotifier;
 import org.jetbrains.bsp.protocol.BazelInvocationMetrics.AnalysisCacheInvalidation;
+import org.jetbrains.bsp.protocol.BazelInvocationMetrics.BazelInvocationContext;
 import org.jetbrains.bsp.protocol.BazelTaskEventsHandler;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.CachedTestLog;
 import org.jetbrains.bsp.protocol.CoverageReport;
+import org.jetbrains.bsp.protocol.DiagnosticSeverity;
+import org.jetbrains.bsp.protocol.Position;
 import org.jetbrains.bsp.protocol.PublishDiagnosticsParams;
 import org.jetbrains.bsp.protocol.TaskFinishParams;
 import org.jetbrains.bsp.protocol.TaskFinishParams.CompileReport;
@@ -51,11 +57,14 @@ import org.jetbrains.bsp.protocol.TaskStartParams.CompileTask;
 import org.jetbrains.bsp.protocol.TestStatus;
 import org.jspecify.annotations.Nullable;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystemNotFoundException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
     private final Project myProject;
@@ -63,6 +72,7 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
     private final DiagnosticsService myDiagnosticsService;
     private final TaskId myParentId;
     private final BazelPathsResolver myBazelPathsResolver;
+    private final BazelInvocationContext myContext;
     // consulo: RawProgressReporter is mapped to ProgressIndicator
     private final @Nullable ProgressIndicator myRawProgressReporter;
 
@@ -78,6 +88,7 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
         DiagnosticsService diagnosticsService,
         TaskId parentId,
         BazelPathsResolver bazelPathsResolver,
+        BazelInvocationContext context,
         @Nullable ProgressIndicator rawProgressReporter
     ) {
         myProject = project;
@@ -85,8 +96,9 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
         myDiagnosticsService = diagnosticsService;
         myParentId = parentId;
         myBazelPathsResolver = bazelPathsResolver;
+        myContext = context;
         myRawProgressReporter = rawProgressReporter;
-        myBepOutputBuilder = new BepOutputBuilder(bazelPathsResolver);
+        myBepOutputBuilder = new BepOutputBuilder();
 
         BepEventHandlerContext bepEventHandlerContext =
             new BepEventHandlerContext(project, parentId, taskEventsHandler, diagnosticsService, bazelPathsResolver);
@@ -105,9 +117,10 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
         BazelTaskEventsHandler taskEventsHandler,
         DiagnosticsService diagnosticsService,
         TaskId parentId,
-        BazelPathsResolver bazelPathsResolver
+        BazelPathsResolver bazelPathsResolver,
+        BazelInvocationContext context
     ) {
-        this(project, taskEventsHandler, diagnosticsService, parentId, bazelPathsResolver, null);
+        this(project, taskEventsHandler, diagnosticsService, parentId, bazelPathsResolver, context, null);
     }
 
     @Override
@@ -231,8 +244,8 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
 
             Path testXml = findTestActionOutput(testResult, BazelTestFileNames.XML);
             Label label = Label.parse(event.getId().getTestResult().getLabel());
-            BuildTarget targetSummary = TargetStorage.getTargetStorage(myProject).getTargetSummary(label);
-            TargetKind targetKind = targetSummary != null ? targetSummary.getKind() : null;
+            @Nullable BuildTargetInfo targetInfo = TargetStorage.getTargetInfo(TargetStorage.getTargetStorage(myProject), label);
+            TargetKind targetKind = targetInfo != null ? targetInfo.kind() : null;
             // Test cases identified and sent to the client by TestXmlParser.
             int reportedSuites = testXml != null ? new TestXmlParser(bspClientTestNotifier).parseAndReport(taskId, testXml, targetKind) : 0;
             if (reportedSuites == 0) {
@@ -270,9 +283,28 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
             NamedSetOfFiles internedNamedSetOfFiles = intern(event.getNamedSetOfFiles());
             myBepOutputBuilder.storeNamedSet(
                 event.getId().getNamedSet().getId(),
-                internedNamedSetOfFiles
+                toTextProtoDepSet(internedNamedSetOfFiles)
             );
         }
+    }
+
+    private TextProtoDepSet toTextProtoDepSet(NamedSetOfFiles receiver) {
+        return new TextProtoDepSet(
+            receiver
+                .getFilesList()
+                .stream()
+                .filter(it -> it.getName().endsWith(Constants.ASPECT_INFO_OUTPUT_EXTENSION))
+                .map(this::toLocalPath)
+                .toList(),
+            receiver.getFileSetsList().stream().map(it -> it.getId()).toList()
+        );
+    }
+
+    private Path toLocalPath(BuildEventStreamProtos.File receiver) {
+        Path mergedPathPrefix = Path.of(String.join(File.separator, receiver.getPathPrefixList()));
+        Path bazelOutputRelativePath = mergedPathPrefix.resolve(receiver.getName());
+
+        return myBazelPathsResolver.resolveOutput(bazelOutputRelativePath);
     }
 
     /**
@@ -317,20 +349,6 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
             BuildEventStreamProtos.Progress progress = event.getProgress();
             if (!progress.getStderr().isEmpty()) {
                 List<String> stderrLines = lines(progress.getStderr()).stream().map(AnsiEscapeCodes::strip).toList();
-
-                List<PublishDiagnosticsParams> events =
-                    myDiagnosticsService.extractDiagnostics(
-                        stderrLines,
-                        new SyntheticLabel(AllRuleTargets.INSTANCE),
-                        myParentId,
-                        true,
-                        true
-                    );
-                events.forEach(it ->
-                    myTaskEventsHandler.onBuildPublishDiagnostics(
-                        it
-                    )
-                );
 
                 BuildProgressParser.BuildProgress buildProgress = myBuildProgressParser.parse(stderrLines);
                 if (buildProgress != null && myRawProgressReporter != null) {
@@ -404,13 +422,6 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
 
     private void consumeFinishedEvent(BuildEventStreamProtos.BuildEvent event) {
         TaskId taskId = myStartedEvent;
-        @Nullable Label target = Label.parse(event.getId().getTestResult().getLabel());
-
-        if (target == null) {
-            LOGGER.warn("No target label was found. Task id: " + taskId);
-            return;
-        }
-
         if (taskId == null) {
             LOGGER.warn("No start event id was found. Origin id: " + myParentId);
             return;
@@ -424,9 +435,21 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
         BazelStatus statusCode = BazelStatus.fromExitCode(event.getFinished().getExitCode().getCode());
         boolean isSuccess = statusCode == BazelStatus.SUCCESS;
         int errors = isSuccess ? 0 : 1;
-        CompileReport report = new CompileReport(target, errors, 0);
+        Label buildReference = new SyntheticLabel(AllRuleTargets.INSTANCE);
+        BuildEventStreamProtos.BuildFinished finished = event.getFinished();
+        String message = ("Build result: " + finished.getExitCode().getName() + " (" + finished.getExitCode().getCode() + ")"
+            + (finished.getFailureDetail().getMessage().isEmpty() ? "" : "\n" + finished.getFailureDetail().getMessage()));
+        // Also report an overall build failure as diagnostic message
+        if (!isSuccess) {
+            Diagnostic diagnostic = new Diagnostic(Position.NONE, message, null, buildReference,
+                myContext == BazelInvocationContext.SYNC ? DiagnosticSeverity.WARNING : DiagnosticSeverity.ERROR);
+            PublishDiagnosticsParams params = new PublishDiagnosticsParams(myParentId, null, buildReference, List.of(diagnostic), true);
+            myTaskEventsHandler.onBuildPublishDiagnostics(params);
+        }
+        CompileReport report = new CompileReport(buildReference, errors, 0);
         TaskFinishParams finishParams =
-            new TaskFinishParams(taskId, event.getFinished().getFinishTimeMillis(), null, statusCode, report);
+            new TaskFinishParams(taskId, event.getFinished().getFinishTimeMillis(),
+                message, statusCode, report);
         myTaskEventsHandler.onBuildTaskFinish(finishParams);
     }
 
@@ -438,53 +461,79 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
 
     private void processActionCompletedEvent(BuildEventStreamProtos.BuildEvent event) {
         if (event.hasAction()) {
-            consumeActionCompletedEvent(event.getAction());
+            consumeActionCompletedEvent(event);
         }
     }
 
-    private void consumeActionCompletedEvent(BuildEventStreamProtos.ActionExecuted event) {
-        Label label = Label.parse(event.getLabel());
-        switch (event.getStderr().getFileCase()) {
+    private void consumeActionCompletedEvent(BuildEventStreamProtos.BuildEvent event) {
+        Label label = Label.parse(event.getId().getActionCompleted().getLabel());
+        BuildEventStreamProtos.ActionExecuted payload = event.getAction();
+        String stderrText = switch (payload.getStderr().getFileCase()) {
             case URI -> {
                 try {
-                    Path path = myBazelPathsResolver.resolve(event.getStderr());
-                    String stdErrText = Files.readString(path);
-                    processDiagnosticText(stdErrText, label, myParentId);
+                    Path path = myBazelPathsResolver.resolve(payload.getStderr());
+                    yield Files.readString(path);
                 }
                 catch (FileSystemNotFoundException e) {
                     LOGGER.warn("Failed to process diagnostic text", e);
+                    yield "";
                 }
                 catch (IOException e) {
                     LOGGER.warn("Failed to process diagnostic text", e);
+                    yield "";
                 }
             }
 
             case CONTENTS -> {
-                processDiagnosticText(event.getStderr().getContents().toStringUtf8(), label, myParentId);
+                yield payload.getStderr().getContents().toStringUtf8();
             }
-
             default -> {
+                yield "";
             }
+        };
+        boolean eventReported = processActionDiagnosticText(stderrText, label, myParentId, payload.getSuccess());
+        if ((!eventReported) && (!payload.getSuccess())) {
+            // A build step failed, but we could not report any details about the error. At least report the failure of the build action
+            // to the user.
+            String message = (label + ": action failure for " + event.getId().getActionCompleted().getPrimaryOutput()
+                + (stderrText.isEmpty() ? "" : "\n" + stderrText));
+            Diagnostic diagnostic = new Diagnostic(Position.NONE, message, null, label,
+                myContext == BazelInvocationContext.SYNC ? DiagnosticSeverity.WARNING : DiagnosticSeverity.ERROR);
+            PublishDiagnosticsParams params = new PublishDiagnosticsParams(myParentId, null, label, List.of(diagnostic), true);
+            myTaskEventsHandler.onBuildPublishDiagnostics(params);
         }
     }
 
-    private void processDiagnosticText(
+    private boolean processActionDiagnosticText(
         String stdErrText,
         Label targetLabel,
-        TaskId taskId
+        TaskId taskId,
+        boolean success
     ) {
         if (!stdErrText.isEmpty()) {
             List<PublishDiagnosticsParams> events =
                 myDiagnosticsService.extractDiagnostics(
                     lines(stdErrText),
                     targetLabel,
-                    taskId
+                    taskId,
+                    false,
+                    true // We will take care of the default diagnostics ourselves
                 );
             events.forEach(it ->
                 myTaskEventsHandler.onBuildPublishDiagnostics(
-                    it
+                    (!success) && (myContext != BazelInvocationContext.SYNC) ? it : new PublishDiagnosticsParams(
+                        it.taskId(),
+                        it.textDocument(),
+                        it.buildTarget(),
+                        it.diagnostics().stream().map(Diagnostic::demoteErrors).toList(),
+                        it.reset()
+                    )
                 )
             );
+            return events.stream().anyMatch(it -> !it.diagnostics().isEmpty());
+        }
+        else {
+            return false;
         }
     }
 
@@ -536,15 +585,41 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
         );
     }
 
-    private void processAbortedEvent(BuildEventStreamProtos.BuildEvent event) {
-        if (event.hasAborted()) {
-            consumeAbortedEvent(event.getAborted());
-        }
+    // Obtain the label for any event that can have an aborted playload, is associated to a label,
+    // and for which the aborted message can be meaningful to the user.
+    private @Nullable Label getLabelForAbortedEvent(BuildEventStreamProtos.BuildEvent event) {
+        List<String> candidates = new ArrayList<>(List.of(
+            event.getId().getTargetConfigured().getLabel(),
+            event.getId().getUnconfiguredLabel().getLabel(),
+            event.getId().getConfiguredLabel().getLabel(),
+            event.getId().getTestResult().getLabel()
+        ));
+        candidates.addAll(event.getId().getPattern().getPatternList());
+        return candidates.stream()
+            .filter(it -> !it.isEmpty())
+            .findFirst()
+            .map(it -> Label.parse(it))
+            .orElse(null);
     }
 
-    private void consumeAbortedEvent(BuildEventStreamProtos.Aborted aborted) {
-        if (aborted.getReason() != BuildEventStreamProtos.Aborted.AbortReason.NO_BUILD) {
-            LOGGER.warn("Command aborted with reason " + aborted.getReason() + ": " + aborted.getDescription());
+    private void processAbortedEvent(BuildEventStreamProtos.BuildEvent event) {
+        if (event.hasAborted()) {
+            AbortReason reason = event.getAborted().getReason();
+            if (ABORT_REASONS_TO_IGNORE.contains(reason)) {
+                return;
+            }
+            // Only report actionable events, i.e., those with a non-empty description of the error.
+            if (!event.getAborted().getDescription().isEmpty()) {
+                @Nullable Label label = getLabelForAbortedEvent(event);
+                if (label == null) {
+                    return;
+                }
+                String message = reason + ": " + label + "\n" + event.getAborted().getDescription();
+                Diagnostic diagnostic = new Diagnostic(Position.NONE, message, null, label,
+                    ABORT_REASON_WARN_ONLY.contains(reason) ? DiagnosticSeverity.WARNING : DiagnosticSeverity.ERROR);
+                PublishDiagnosticsParams params = new PublishDiagnosticsParams(myParentId, null, label, List.of(diagnostic), true);
+                myTaskEventsHandler.onBuildPublishDiagnostics(params);
+            }
         }
     }
 
@@ -576,4 +651,11 @@ public class BepServer extends PublishBuildEventGrpc.PublishBuildEventImplBase {
     }
 
     private static final Logger LOGGER = Logger.getInstance(BepServer.class);
+
+    private static final Set<AbortReason> ABORT_REASONS_TO_IGNORE = Set.of(
+        AbortReason.NO_ANALYZE, AbortReason.NO_BUILD, AbortReason.SKIPPED
+    );
+    private static final Set<AbortReason> ABORT_REASON_WARN_ONLY = Set.of(
+        AbortReason.REMOTE_ENVIRONMENT_FAILURE, AbortReason.INCOMPLETE
+    );
 }

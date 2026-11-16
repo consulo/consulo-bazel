@@ -3,21 +3,24 @@ package org.jetbrains.bazel.clion
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.junit5.fixture.projectFixture
 import com.jetbrains.cidr.lang.workspace.compiler.AppleClangCompilerKind
+import com.jetbrains.cidr.lang.workspace.compiler.ClangClCompilerKind
 import com.jetbrains.cidr.lang.workspace.compiler.ClangCompilerKind
 import com.jetbrains.cidr.lang.workspace.compiler.CompilerSpecificSwitchBuilder
 import com.jetbrains.cidr.lang.workspace.compiler.GCCCompilerKind
 import com.jetbrains.cidr.lang.workspace.compiler.MSVCCompilerKind
 import com.jetbrains.cidr.lang.workspace.compiler.OCCompilerKind
+import com.jetbrains.cidr.lang.workspace.compiler.UnknownCompilerKind
 import org.assertj.core.api.Assertions.assertThat
 import org.jetbrains.bazel.clion.workspace.CcCompilerKind
 import org.jetbrains.bazel.clion.workspace.copts.applyCopts
+import org.jetbrains.bazel.fixtures.CC_TEST_BAZEL_INFO
 import org.jetbrains.bazel.fixtures.CcTestApplication
+import org.jetbrains.bazel.fixtures.ccProject
 import org.jetbrains.bazel.fixtures.withTestImportContext
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-private val EXECROOT: Path = Path.of("/execroot")
+private val EXECROOT: Path = CC_TEST_BAZEL_INFO.execRoot
 
 /** Every compiler that takes the GNU spelling, with the two wrapper kinds of the plugin. */
 private val GNU = listOf(
@@ -28,6 +31,9 @@ private val GNU = listOf(
   CcCompilerKind.CLANG,
 )
 
+/** Every compiler that takes the MSVC spelling. */
+private val MSVC = listOf(MSVCCompilerKind, ClangClCompilerKind)
+
 @CcTestApplication
 class CcCoptsTest {
 
@@ -35,7 +41,7 @@ class CcCoptsTest {
 
   @Test
   fun testDropsBlankOptions() = doTest(
-    GNU,
+    GNU + MSVC,
     listOf("", "-Wall", "", "", "-Wextra", "-Werror", ""),
     expected = listOf("-Wall", "-Wextra", "-Werror"),
   )
@@ -195,15 +201,55 @@ class CcCoptsTest {
   )
 
   @Test
+  fun testClangClExpandsIncludes() = doTest(
+    listOf(ClangClCompilerKind),
+    listOf(
+      "/I/absolute/path_msvc",
+      "/Iinclude/default_msvc",
+      "/clang:-I/absolute/path",
+      "/clang:-Iinclude/default",
+      "/clang:-isysteminclude/system",
+      "/clang:-iquoteinclude/quote",
+      "/clang:-iquote", "/clang:include/quote2",  // clang-cl allows to specify it in two arguments
+    ),
+    expected = listOf(
+      "-I" + rooted("/absolute/path_msvc"),
+      "-I" + rooted("include/default_msvc"),
+      "-I" + rooted("/absolute/path"),
+      "-I" + rooted("include/default"),
+      "/clang:-isystem" + rooted("include/system"),
+      "/clang:-iquote" + rooted("include/quote"),
+      "/clang:-iquote" + rooted("include/quote2"),
+    ),
+  )
+
+  @Test
+  fun testMsvcExpandsIncludes() = doTest(
+    listOf(MSVCCompilerKind),
+    listOf(
+      "/I/absolute/path",
+      "/Iinclude/default",
+      "/external:I/absolute/path",
+      "/external:Iinclude/default",
+    ),
+    expected = listOf(
+      "/I" + rooted("/absolute/path"),
+      "/I" + rooted("include/default"),
+      "/I" + rooted("/absolute/path"),
+      "/I" + rooted("include/default"),
+    ),
+  )
+
+  @Test
   fun testKeepsOptionsOfAnUnknownCompiler() {
     val options = listOf("-Iinclude/default", "--sysroot=path/to/sysroot")
 
-    doTest(listOf(MSVCCompilerKind), options, expected = options)
+    doTest(listOf(UnknownCompilerKind), options, expected = options)
   }
 
   private fun doTest(compilers: List<OCCompilerKind>, copts: List<String>, expected: List<String>) = timeoutRunBlocking {
     for (compiler in compilers) {
-      val (ctx, switches) = withTestImportContext(WorkspaceSnapshot.EMPTY, project, EXECROOT) {
+      val (ctx, switches) = withTestImportContext(ccProject {}, project) {
         CompilerSpecificSwitchBuilder.getBuilder(compiler).apply { applyCopts(compiler, copts) }.buildRaw()
       }
 

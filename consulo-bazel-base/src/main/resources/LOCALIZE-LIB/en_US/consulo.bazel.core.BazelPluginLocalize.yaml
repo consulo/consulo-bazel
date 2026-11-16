@@ -50,6 +50,18 @@ application.settings.plugin.enable.phased.sync.help.text:
     text: "Phased sync runs in multiple steps, making code available sooner with limited dependency resolution."
 application.settings.plugin.experimental.settings:
     text: "Experimental Settings"
+application.settings.proxy.configure.link:
+    text: "Configure IDE proxy…"
+application.settings.proxy.forward.checkbox.text:
+    text: "Forward IDE proxy settings to Bazel"
+application.settings.proxy.forward.help.text:
+    text: "Bazel gets the IDE HTTP proxy through the HTTP_PROXY, HTTPS_PROXY, and NO_PROXY environment variables."
+application.settings.proxy.status.supported:
+    text: "Bazel uses the IDE HTTP proxy."
+application.settings.proxy.status.unsupported:
+    text: "Bazel gets no proxy with the current IDE proxy settings. Bazel can use only a manual HTTP proxy."
+application.settings.proxy.title:
+    text: "Proxy"
 application.settings.update.channel.dropdown.help.description:
     text: "You can switch to EAP/Release channel from Nightly to downgrade Bazel plugin to stable versions."
 application.settings.update.channel.dropdown.title:
@@ -226,10 +238,12 @@ findusages.starlark.code.usages:
     text: "Usage in code"
 findusages.starlark.load.usages:
     text: "Usage in load statement"
+generic.run.handler.name:
+    text: "Generic BSP Run Handler"
+generic.test.handler.name:
+    text: "Generic BSP Test Handler"
 go.debug.prepare.failed.reason.read.script:
     text: "Unable to read the script"
-go.debug.prepare.failed.reason.runfile.manifest.only:
-    text: "Runfiles are manifest-only. Please enable symlink support by adding the following lines to your .bazelrc file: startup --windows_enable_symlinks build --enable_runfiles Refer to the online documentation for Using Bazel on Windows: https://bazel.build/configure/windows"
 go.debug.prepare.failed.reason.unexpected.error:
     text: "Unexpected error occurred"
 go.debug.prepare.failed.reason.unexpected.script.content:
@@ -290,6 +304,10 @@ inspection.display.name.starlark.unsupported.syntax.check:
     text: "Unsupported Syntax Check"
 inspection.display.name.starlark.variable.usage.check:
     text: "Variable Usage Check"
+jvm.run.handler.name:
+    text: "JVM Run Handler"
+jvm.test.handler.name:
+    text: "JVM Test Handler"
 notification.unresolved.imports:
     text: "Unresolved imports detected"
 notificationGroup.Bazel.title:
@@ -352,10 +370,12 @@ project.settings.plugin.run.buildifier.on.save.checkbox.text:
     text: "Run buildifier on file save"
 project.settings.plugin.title:
     text: "Plugin Settings"
+project.settings.project.view.comment:
+    text: "To open another project view as a project, right-click it in the Project tool window and select <b>{0}</b>."
 project.settings.project.view.label:
     text: "Project View Path:"
-project.view.import.unresolved:
-    text: "Imported project view ''{0}'' does not exist. Please provide the file or use ''try_import'' for optional imports."
+project.untrusted.bazel.not.run:
+    text: "Bazel does not run in the untrusted project {0}"
 project.view.tree.project.view.file.hint:
     text: "selected"
 project.view.validate.subtask:
@@ -370,6 +390,10 @@ python.debug.error.other:
     text: "Unable to start Python debugging for target {0}"
 python.debug.error.wrong.state:
     text: "PythonBspDebugRunner was used with an unsupported state type"
+python.run.handler.name:
+    text: "Python Run Handler"
+python.test.handler.name:
+    text: "Python Test Handler"
 quickfix.bazel.version:
     text: "Update version"
 quickfix.bazelrc.delete.noop.flag.declaration:
@@ -418,6 +442,14 @@ runconfig.coverage.instrumentation.filter.hint:
     text: "<html>If empty, Bazel falls back to its own filter, which can give an empty report.<br>Set your own filter here or in <code>.bazelrc</code> to get more precise coverage reports.</html>"
 runconfig.coverage.name:
     text: "Code coverage with Bazel"
+runconfig.handler.action.hint:
+    text: "Select the run handler."
+runconfig.handler.auto:
+    text: "Choose automatically"
+runconfig.handler.hint:
+    text: "Override the handler that runs this configuration (might cause unexpected failures)"
+runconfig.handler.name:
+    text: "Run handler"
 runconfig.header:
     text: "Run/Test"
 runconfig.name.and.location:

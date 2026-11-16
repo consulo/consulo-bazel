@@ -1,5 +1,6 @@
 package org.jetbrains.bazel.workspace.importer;
 
+import consulo.application.Application;
 import consulo.bazel.java.localize.BazelJavaBackendLocalize;
 import consulo.bazel.workspace.BazelModelBuilder;
 import consulo.bazel.workspace.BazelProjectModelService;
@@ -17,8 +18,8 @@ import org.jetbrains.bazel.sync.workspace.importer.BazelWorkspaceImporter;
 import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext;
 import org.jetbrains.bazel.sync.workspace.importer.GlobalNamingContext.GlobalNamingContextBuilder;
 import org.jetbrains.bazel.sync.workspace.languages.java.JavaWorkspaceSyncConfig;
+import org.jetbrains.bazel.sync.workspace.languages.jvm.JavacOptionsUpdater;
 import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
@@ -44,7 +45,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
-public class JavaBazelWorkspaceImporter implements BazelWorkspaceImporter, BazelWorkspaceImporter.Named {
+public class JavaBazelWorkspaceImporter implements BazelWorkspaceImporter {
     // consulo: the upstream nested `Factory` is the top-level JavaBazelWorkspaceImporterFactory (an @ExtensionImpl cannot be nested)
 
     private final WorkspaceImporterContext myContext;
@@ -74,7 +75,7 @@ public class JavaBazelWorkspaceImporter implements BazelWorkspaceImporter, Bazel
 
     @Override
     public CompletableFuture<WorkspaceImporterResult> doImport(WorkspaceImporterPhase phase, WorkspaceSnapshot snapshot, TaskId taskId) {
-        // consulo: Kotlin runCatching -> a failed future
+        // consulo: an exception thrown by a phase fails the returned future
         try {
             if (phase instanceof WorkspaceImporterPhase.Initialize initialize) {
                 return CompletableFuture.completedFuture(onInitialize(snapshot, initialize.naming()));
@@ -117,7 +118,7 @@ public class JavaBazelWorkspaceImporter implements BazelWorkspaceImporter, Bazel
                 importDepth < 0,
                 true
             )
-            .map(it -> snapshot.targets().findTargetByKey(it, TargetLoadOptions.ALL))
+            .map(it -> snapshot.targets().findTargetByKey(it))
             .filter(Objects::nonNull)
             .toList();
         myTargets = myModuleTargets;
@@ -192,9 +193,12 @@ public class JavaBazelWorkspaceImporter implements BazelWorkspaceImporter, Bazel
         }
 
         return result.thenApply(ignored -> {
-            // consulo: upstream sets JavacConfiguration.ADDITIONAL_OPTIONS_OVERRIDE here; Consulo keeps the javac options
-            // per module in the Java module extension, they are applied to the root models in updateInternalModelSubtask
-            Objects.requireNonNull(myJavacOptions, "javacOptions is null but expected to be computed");
+            Map<String, String> javacOptions = Objects.requireNonNull(myJavacOptions, "javacOptions is null but expected to be computed");
+            // consulo: Consulo keeps the javac options per module in the Java module extension, they are also applied to the root
+            // models in updateInternalModelSubtask
+            for (JavacOptionsUpdater it : Application.get().getExtensionList(JavacOptionsUpdater.class)) {
+                it.updateJavacOptions(myContext.project(), javacOptions);
+            }
             return WorkspaceImporterResult.Success;
         });
     }

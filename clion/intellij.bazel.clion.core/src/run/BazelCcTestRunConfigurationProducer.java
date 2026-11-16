@@ -2,7 +2,7 @@ package org.jetbrains.bazel.clion.run;
 
 import consulo.language.psi.PsiElement;
 import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 // TODO consulo: not registered (upstream runConfigurationProducer), BazelCcTestFrameworkSupport.findTestAndFramework and
@@ -11,7 +11,7 @@ public class BazelCcTestRunConfigurationProducer extends BazelRunConfigurationPr
     @Override
     public @Nullable GutterAction getGutterAction(
         PsiElement element,
-        BuildTarget target
+        BuildTargetInfo target
     ) {
         // TODO consulo: CidrTestScopeElement does not exist in consulo-cpp
         // val (testElement, framework) = BazelCcTestFrameworkSupport.findTestAndFramework(element) ?: return null

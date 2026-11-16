@@ -17,6 +17,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.common.waitUntil
+import com.intellij.util.system.OS
 import com.jetbrains.cidr.execution.testing.CidrTestLanguageSupport
 import com.jetbrains.cidr.execution.testing.CidrTestScopeElement
 import com.jetbrains.cidr.execution.testing.google.CidrGoogleTestElements
@@ -44,17 +45,19 @@ import org.jetbrains.bazel.ui.gutters.StarlarkRunLineMarkerContributor
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
-import org.junit.jupiter.api.condition.DisabledOnOs
-import org.junit.jupiter.api.condition.OS
 import kotlin.time.Duration.Companion.minutes
 
 @CcTestApplication
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@DisabledOnOs(OS.WINDOWS)
 class GutterTest {
 
   private val project by clionBazelProjectFixture("clion/execution", bazelVersion = BazelVersions.BAZEL_9) {
-    addBuildFlags("--cxxopt=-std=c++17")
+    if (OS.CURRENT == OS.Windows) {
+      addBuildFlags("--cxxopt=/std:c++17")
+    }
+    else {
+      addBuildFlags("--cxxopt=-std=c++17")
+    }
   }
 
   @BeforeAll
@@ -157,17 +160,16 @@ class GutterTest {
     result.assertSuccess()
 
     val leaf = result.leaves.singleOrNull()
-    assertThat(leaf).withFailMessage("expected only '$test' in the test tree, but got ${result.testNames}").isNotNull()
-    assertThat(leaf!!.name).isEqualTo(test)
+    assertThat(leaf?.name).withFailMessage { "expected only '$test' in the test tree\n${result.diagnostics}" }.isEqualTo(test)
 
-    val location = readAction { leaf.getLocation(project, GlobalSearchScope.allScope(project)) }
+    val location = readAction { leaf!!.getLocation(project, GlobalSearchScope.allScope(project)) }
     val locatedElement = location?.psiElement
     checkNotNull(locatedElement)
     assertThat(readAction { locatedElement.textRange }).isEqualTo(readAction { element.element.textRange })
     assertThat(readAction { locatedElement.containingFile.virtualFile }).isEqualTo(readAction { element.element.containingFile.virtualFile })
 
     val rerunExtension = BazelTestRerunExtension.getInstance(configuration).assertNotNull()
-    assertThat(rerunExtension.isRerunOf(configuration, result.leaves)).isTrue()
+    assertThat(readAction { rerunExtension.isRerunOf(configuration, result.leaves) }).isTrue()
   }
 
   private suspend fun testElement(

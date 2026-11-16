@@ -17,8 +17,7 @@ package org.jetbrains.bazel.server.sync.sharding;
 
 import org.jetbrains.bazel.commons.BazelPathsResolver;
 import org.jetbrains.bazel.commons.constants.Constants;
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
-import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner;
 import org.jetbrains.bazel.label.Label;
 
 import java.io.File;
@@ -48,11 +47,7 @@ public final class PackageLister {
         BazelPathsResolver pathResolver,
         List<Label> wildcardPatterns
     ) {
-        Set<Path> calculatedBazelSymlinks =
-            BazelSymlinksCalculator.calculateBazelSymlinksToExclude(
-                pathResolver.workspaceRoot(),
-                BazelFeatureFlags.getSymlinkScanMaxDepth()
-            );
+        Set<Path> calculatedBazelSymlinks = new BazelConvenienceSymlinksScanner(pathResolver.workspaceRoot()).scan();
         Map<Label, List<Label>> result = new LinkedHashMap<>();
         for (Label pattern : wildcardPatterns) {
             if (!pattern.isRecursive()) {

@@ -7,10 +7,10 @@ import org.jetbrains.bazel.clion.sync.CcBuildTarget;
 import org.jetbrains.bazel.clion.sync.CcToolchainBuildTarget;
 import org.jetbrains.bazel.clion.workspace.utils;
 import org.jetbrains.bazel.commons.RepoMapping;
-import org.jetbrains.bazel.sync.workspace.persistence.TargetLoadOptions;
 import org.jetbrains.bazel.target.BuildTargetUtils;
 import org.jetbrains.bsp.protocol.BuildTarget;
 import org.jetbrains.bsp.protocol.BuildTarget.BuildTargetData;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.LinkedHashMap;
@@ -37,21 +37,17 @@ public class DebugTargetInfoAction extends BazelDebugAction {
     @Override
     protected CompletableFuture<?> exec(Project project) {
         return snapshotOrFail(project).thenCompose(snapshot -> {
-            List<BuildTarget> summaries = snapshot.targets().allTargets(TargetLoadOptions.SUMMARY).toList();
-            if (summaries.isEmpty()) {
+            List<BuildTargetInfo> infos = snapshot.targets().allTargetInfos().toList();
+            if (infos.isEmpty()) {
                 fail("no target found in the workspace snapshot");
             }
 
-            return chooseInPopup.chooseInPopup(project, BazelCLionCoreLocalize.debugPopupTargetsTitle(), summaries, it ->
-                it.getKind().kind() + " rule " + utils.presentable(it.getKey())
+            return chooseInPopup.chooseInPopup(project, BazelCLionCoreLocalize.debugPopupTargetsTitle(), infos, it ->
+                it.kind().kind() + " rule " + utils.presentable(it.key())
             ).thenApply(chosen -> {
-                BuildTarget target = snapshot.targets().findTargetByKey(chosen.getKey(), TargetLoadOptions.ALL);
+                BuildTarget target = snapshot.targets().findTargetByKey(chosen.key());
                 if (target == null) {
-                    return fail("target " + chosen.getKey() + " is absent from the workspace snapshot");
-                }
-
-                if (!BuildTarget.isFull(target)) {
-                    fail("target " + chosen.getKey() + " did not load every section");
+                    return fail("target " + chosen.key() + " is absent from the workspace snapshot");
                 }
 
                 return toJsonMap(target, snapshot.repoMapping());

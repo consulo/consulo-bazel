@@ -124,7 +124,7 @@ public class ExecuteService {
                 BazelCommandExecutionDescriptor executionDescriptor = command.buildExecutionDescriptor();
                 DiagnosticsService diagnosticsService = new DiagnosticsService(myWorkspaceRoot);
                 BepServer bepServer =
-                    new BepServer(myProject, myTaskEventsHandler, diagnosticsService, taskId, myBazelPathsResolver, rawProgressReporter);
+                    new BepServer(myProject, myTaskEventsHandler, diagnosticsService, taskId, myBazelPathsResolver, context, rawProgressReporter);
                 BepReader bepReader = new BepReader(bepServer, eventFile);
                 bepReaderRef.set(bepReader);
                 // consulo: upstream async(Dispatchers.IO) { bepReader.start() }
@@ -226,16 +226,16 @@ public class ExecuteService {
     }
 
     public CompletableFuture<AnalysisDebugResult> analysisDebug(AnalysisDebugParams params) {
-        CompletableFuture<BazelStatus> statusCode;
+        CompletableFuture<Integer> exitCode;
         if (!params.targets().isEmpty()) {
             List<String> debugFlags =
                 List.of(BazelFlag.noBuild(), BazelFlag.starlarkDebug(), BazelFlag.starlarkDebugPort(params.port()));
-            statusCode = build(params.targets(), params.taskId(), debugFlags).thenApply(BazelProcessResult::getBazelStatus);
+            exitCode = build(params.targets(), params.taskId(), debugFlags).thenApply(BazelProcessResult::getExitCode);
         }
         else {
-            statusCode = CompletableFuture.completedFuture(BazelStatus.FATAL_ERROR);
+            exitCode = CompletableFuture.completedFuture(2); // Bazel exit code for bad command-line arguments
         }
-        return statusCode.thenApply(AnalysisDebugResult::new);
+        return exitCode.thenApply(AnalysisDebugResult::new);
     }
 
     public CompletableFuture<RunResult> run(RunParams params) {
@@ -269,8 +269,9 @@ public class ExecuteService {
         return runWithBepServer(command, params.taskId(), BazelInvocationContext.RUN, params.pidDeferred()).thenApply(result ->
             new RunResult(
                 params.taskId(),
-                result.processResult().getBazelStatus(),
-                params.captureStdout() ? new String(result.processResult().getStdout(), StandardCharsets.UTF_8) : null
+                result.processResult().getExitCode(),
+                params.captureStdout() ? new String(result.processResult().getStdout(), StandardCharsets.UTF_8) : null,
+                result.bepOutput().filesByInfoOutputGroup()
             )
         );
     }
@@ -302,10 +303,9 @@ public class ExecuteService {
             ((BazelCommand.HasAdditionalBazelOptions) command).getAdditionalBazelOptions().addAll(additionalOptions);
         }
 
-        if (params.streamTestOutput()) {
-            // Ensure streamed test output for live UI in IDE
-            ensureTestOutputStreamed(command);
-        }
+        String outputFlag = params.streamTestOutput() ? BazelFlag.testOutputStreamed() : BazelFlag.testOutputAll();
+        command.getOptions().add(0, outputFlag);
+
         ((BazelCommand.HasEnvironment) command).getEnvironment().putAll(params.environmentVariables());
         ((BazelCommand.HasProgramArguments) command).getProgramArguments().addAll(params.arguments());
         command.getOptions().add(BazelFlag.buildEventBinaryPathConversion(false));
@@ -319,7 +319,7 @@ public class ExecuteService {
 
         // TODO: handle multiple targets
         return runWithBepServer(command, params.taskId(), BazelInvocationContext.TEST)
-            .thenApply(result -> new TestResult(result.processResult().getBazelStatus()));
+            .thenApply(result -> new TestResult(result.processResult().getExitCode()));
     }
 
     private CompletableFuture<BazelProcessResult> build(
@@ -338,11 +338,6 @@ public class ExecuteService {
             );
 
         return runWithBepServer(command, taskId, BazelInvocationContext.BUILD).thenApply(BepBuildResult::processResult);
-    }
-
-    private void ensureTestOutputStreamed(BazelCommand command) {
-        // Add to the beginning to make overriding possible
-        command.getOptions().add(0, BazelFlag.testOutputStreamed());
     }
 
     // consulo: overload for the upstream default value of extraFlags

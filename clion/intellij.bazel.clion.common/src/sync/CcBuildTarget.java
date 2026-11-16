@@ -28,6 +28,7 @@ public record CcBuildTarget(@Nullable RuleContext ruleContext, CompilationContex
      */
     public record CompilationContext(
         OutputLocationCollection headers,
+        OutputLocationCollection directHeaders,
         StringsCollection defines,
         OutputLocationCollection includes,
         OutputLocationCollection quoteIncludes,

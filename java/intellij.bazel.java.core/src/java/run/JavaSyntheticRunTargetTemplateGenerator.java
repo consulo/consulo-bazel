@@ -9,14 +9,14 @@ import consulo.language.psi.PsiElement;
 import consulo.language.psi.util.PsiTreeUtil;
 import org.jetbrains.bazel.run.synthetic.MainClassSyntheticRunTargetTemplateGenerator;
 import org.jetbrains.bazel.sync.java.JavaLanguageClass;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 @ExtensionImpl
 public class JavaSyntheticRunTargetTemplateGenerator extends MainClassSyntheticRunTargetTemplateGenerator {
     @Override
-    public boolean isSupported(BuildTarget target) {
-        return JavaLanguageClass.isJvmTarget(target.getKind());
+    public boolean isSupported(BuildTargetInfo target) {
+        return JavaLanguageClass.isJvmTarget(target.kind());
     }
 
     @Override
@@ -30,7 +30,7 @@ public class JavaSyntheticRunTargetTemplateGenerator extends MainClassSyntheticR
     }
 
     @Override
-    protected String getBuildContent(BuildTarget target, String syntheticTarget, String mainClass) {
+    protected String getBuildContent(BuildTargetInfo target, String syntheticTarget, String mainClass) {
         // consulo: upstream @Language("starlark") annotated local
         String build = """
             load("@rules_java//java:defs.bzl", "java_binary")
@@ -39,7 +39,7 @@ public class JavaSyntheticRunTargetTemplateGenerator extends MainClassSyntheticR
               name = "%s",
               main_class = "%s",
               runtime_deps = ["%s"],
-            )""".formatted(syntheticTarget, mainClass, BuildTarget.getId(target));
+            )""".formatted(syntheticTarget, mainClass, target.id());
         return build;
     }
 

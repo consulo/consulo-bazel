@@ -47,6 +47,18 @@ public final class ProjectViewExtensions {
         return receiver.getSection(ALLOW_MANUAL_TARGETS_SYNC_KEY);
     }
 
+    public static final ProjectViewSectionKey<@Nullable List<String>> ASPPECTS_ATTRS_KEY = new ProjectViewSectionKey<>("aspects_attrs", null);
+
+    public static @Nullable List<String> getAspectsAttrs(ProjectView receiver) {
+        return receiver.getSection(ASPPECTS_ATTRS_KEY);
+    }
+
+    public static final ProjectViewSectionKey<Boolean> DROP_NO_IDE_KEY = new ProjectViewSectionKey<>("drop_no_ide", false);
+
+    public static boolean getDropNoIde(ProjectView receiver) {
+        return receiver.getSection(DROP_NO_IDE_KEY);
+    }
+
     public static final ProjectViewSectionKey<Boolean> DERIVE_TARGETS_FROM_DIRECTORIES_KEY =
         new ProjectViewSectionKey<>("derive_targets_from_directories", false);
 

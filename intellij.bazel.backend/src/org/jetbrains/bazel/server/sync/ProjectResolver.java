@@ -2,7 +2,7 @@ package org.jetbrains.bazel.server.sync;
 
 import consulo.bazel.backend.localize.BazelBackendLocalize;
 import consulo.bazel.aspect.BazelAspectModule;
-import com.intellij.aspect.lib.AspectChoice;
+import com.intellij.aspect.lib.Definition;
 import com.intellij.aspect.lib.OutputGroups;
 import consulo.application.progress.ProgressManager;
 import consulo.build.ui.event.MessageEvent;
@@ -211,7 +211,9 @@ public class ProjectResolver {
                         myBazelBspAspectsManager.deployIntelliJAspect(
                             ruleSets,
                             myBazelInfo.release(),
-                            repoMapping
+                            repoMapping,
+                            ProjectViewExtensions.getAspectsAttrs(myProjectView),
+                            ProjectViewExtensions.getDropNoIde(myProjectView)
                         );
                         // consulo: tell which aspect module the workspace's bazel_dep provides
                         BazelAspectModule.Resolved externalAspect = myBazelBspAspectsManager.getExternalAspect();
@@ -267,7 +269,7 @@ public class ProjectResolver {
         TaskId taskId
     ) {
         // consulo: upstream coroutineScope
-        List<String> aspects = List.of(AspectChoice.ASPECT_NAME);
+        List<String> aspects = List.of(Definition.INTELLIJ_ASPECT.getLocation().toString());
         BazelTaskLogger taskLogger = BazelTaskEventsHandler.asLogger(myTaskEventsHandler, taskId);
         List<String> outputGroups = new ArrayList<>();
         outputGroups.add(OutputGroups.INFO.getGroupName());
@@ -311,8 +313,7 @@ public class ProjectResolver {
                 AtomicReference<List<TargetCollection>> remainingShardedTargetsSpecs =
                     new AtomicReference<>(new ArrayList<>(shardedResult.targets()));
                 AtomicInteger shardNumber = new AtomicInteger(1);
-                AtomicReference<BazelBspAspectsManagerResult> shardedBuildResult =
-                    new AtomicReference<>(BazelBspAspectsManagerResult.emptyResult());
+                BazelBspAspectsManagerResult.Accumulator shardedBuildResult = new BazelBspAspectsManagerResult.Accumulator();
                 AtomicInteger suggestedTargetShardSize = new AtomicInteger(ProjectViewExtensions.getTargetShardSize(projectView));
                 return whileAsync(() -> !remainingShardedTargetsSpecs.get().isEmpty(), () -> {
                     // consulo: upstream ensureActive()
@@ -371,7 +372,7 @@ public class ProjectResolver {
                                 // As bazel starts the naming of the namedSetOfFiles freshly (starting from "0") on each run, we have to distinguish
                                 // them somehow; we do this by encoding the shard number in their names.
                                 BazelBspAspectsManagerResult runResult = result.renameNamedSets(shardNumber.get());
-                                shardedBuildResult.set(shardedBuildResult.get().merge(runResult));
+                                shardedBuildResult.add(runResult);
 
                                 taskLogger.message("---");
                                 shardNumber.incrementAndGet();
@@ -386,7 +387,7 @@ public class ProjectResolver {
                         );
                         taskLogger.message("---");
                     }
-                    return shardedBuildResult.get();
+                    return shardedBuildResult.build();
                 });
             });
         }

@@ -7,10 +7,10 @@ import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.languages.projectview.ProjectView;
 import org.jetbrains.bazel.languages.projectview.ProjectViewExtensions;
 import org.jetbrains.bazel.languages.projectview.ProjectViewFactory;
+import org.jetbrains.bazel.utils.PathUtil;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.file.Path;
-import java.util.Objects;
 
 import static org.jetbrains.bazel.languages.projectview.project.ProjectViewFileLocalizer.isDefaultProjectViewFile;
 import static org.jetbrains.bazel.languages.projectview.project.ProjectViewFileLocalizer.pickProjectViewFileForProject;
@@ -33,10 +33,15 @@ public class BazelProjectStorePathCustomizer {
             utils.hasExtensionOf(fileBeingOpen, Constants.SUPPORTED_EXTENSIONS);
     }
 
-    private BazelProjectStoreDescriptor getBazelStoreDirectoryPath(Path fileBeingOpen) {
-        LOG.info("Computing BazelProjectStoreDescriptor for file: " + fileBeingOpen);
+    private @Nullable BazelProjectStoreDescriptor getBazelStoreDirectoryPath(Path openedFile) {
+        LOG.info("Computing BazelProjectStoreDescriptor for file: " + openedFile);
 
-        Path projectRootPath = findProjectRootPath(fileBeingOpen);
+        utils.ResolvedProjectRoot resolvedProjectRoot = utils.ResolvedProjectRoot.from(openedFile);
+        if (resolvedProjectRoot == null) {
+            return null;
+        }
+        Path projectRootPath = resolvedProjectRoot.getRootDir();
+        Path fileBeingOpen = resolvedProjectRoot.getOpenedFile();
         Path projectIdentityFilePath = selectProjectIdentityFilePath(projectRootPath, fileBeingOpen);
         Path projectViewFile = pickProjectViewFileForProject(projectIdentityFilePath, projectRootPath);
         Path dotIdeaPath = selectDotIdeaPath(projectRootPath, projectViewFile);
@@ -67,19 +72,25 @@ public class BazelProjectStorePathCustomizer {
         return fileBeingOpen;
     }
 
-    private Path findProjectRootPath(Path fileBeingOpen) {
-        Path projectFolder = utils.findProjectFolderFromFile(fileBeingOpen);
-        return projectFolder != null ? projectFolder : Objects.requireNonNull(fileBeingOpen.getParent());
-    }
-
+    /**
+     * Returns the {@code .idea} directory from the project view, or {@code <root>/.idea}.
+     * The real path of the directory from the project view must be inside the real project root.
+     * The function does not check {@code <root>/.idea}, like the platform does not check it for other projects.
+     */
     private Path selectDotIdeaPath(Path projectRootPath, Path projectViewPath) {
+        Path defaultDotIdeaPath = projectRootPath.resolve(Project.DIRECTORY_STORE_FOLDER);
         Project defaultProject = ProjectManager.getInstance().getDefaultProject();
         ProjectView projectView = ProjectViewFactory.fromOrNull(defaultProject, projectViewPath, projectRootPath);
         Path dotIdeaDirectoryLocation = projectView == null ? null : ProjectViewExtensions.getDotIdeaDirectoryLocation(projectView);
-        return dotIdeaDirectoryLocation != null ? projectRootPath.resolve(dotIdeaDirectoryLocation) : defaultDotIdeaDirectory(projectRootPath);
-    }
-
-    private static Path defaultDotIdeaDirectory(Path receiver) {
-        return receiver.resolve(Project.DIRECTORY_STORE_FOLDER);
+        if (dotIdeaDirectoryLocation == null) {
+            return defaultDotIdeaPath;
+        }
+        Path dotIdeaPath = projectRootPath.resolve(dotIdeaDirectoryLocation).normalize();
+        if (!PathUtil.isRealPathInside(dotIdeaPath, projectRootPath)) {
+            LOG.warn("The .idea directory " + dotIdeaPath + " is outside of the project root " + projectRootPath +
+                ", using " + defaultDotIdeaPath);
+            return defaultDotIdeaPath;
+        }
+        return dotIdeaPath;
     }
 }

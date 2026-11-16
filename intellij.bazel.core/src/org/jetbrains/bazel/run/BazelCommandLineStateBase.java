@@ -5,14 +5,12 @@ import consulo.execution.ExecutionResult;
 import consulo.execution.configuration.CommandLineState;
 import consulo.execution.executor.Executor;
 import consulo.execution.runner.ExecutionEnvironment;
+import consulo.execution.test.action.AbstractRerunFailedTestsAction;
 import consulo.execution.test.sm.SMTestRunnerConnectionUtil;
-import consulo.execution.test.sm.ServiceMessageBuilder;
 import consulo.execution.test.sm.runner.SMTRunnerConsoleProperties;
 import consulo.execution.test.sm.ui.SMTRunnerConsoleView;
 import consulo.execution.ui.RunContentManager;
-import consulo.process.ProcessOutputType;
 import consulo.project.Project;
-import consulo.ui.ex.action.AnAction;
 import consulo.util.lang.ref.SimpleReference;
 import org.jetbrains.bazel.action.SaveAllFiles;
 import org.jetbrains.bazel.coroutines.BazelCoroutineService;
@@ -47,16 +45,12 @@ public abstract class BazelCommandLineStateBase extends CommandLineState {
         return false;
     }
 
-    protected boolean getTestRunnerEmitsServiceMessages() {
-        return false;
-    }
-
     protected abstract BazelTaskListener createAndAddTaskListener(BazelProcessHandler handler);
 
     /**
-     * Run the actual BSP command or throw an exception if the server does not support running the configuration
+     * Run the command and return its exit code, or throw an exception if the server does not support running the configuration
      */
-    protected abstract CompletableFuture<?> startBsp(
+    protected abstract CompletableFuture<Integer> runCommand(
         BazelServerFacade server,
         CompletableFuture<@Nullable Long> pidDeferred,
         BazelProcessHandler handler
@@ -79,7 +73,7 @@ public abstract class BazelCommandLineStateBase extends CommandLineState {
         // Otherwise, we might miss some events
 
         CompletableFuture<@Nullable Long> pid = new CompletableFuture<>();
-        BazelCoroutineService.Deferred<?> runDeferred =
+        BazelCoroutineService.Deferred<Integer> runDeferred =
             bazelCoroutineService.startAsync(true, () ->
                 BazelServerConnection.getConnection(project).runWithServer((BazelServerFacade server) ->
                     SaveAllFiles.saveAllFiles()
@@ -88,7 +82,7 @@ public abstract class BazelCommandLineStateBase extends CommandLineState {
                             project.getInstance(RunContentManager.class)
                                 .toFrontRunContent(getEnvironment().getExecutor(), Objects.requireNonNull(handler.get()))
                         ))
-                        .thenCompose(ignored -> startBsp(server, pid, Objects.requireNonNull(handler.get())))
+                        .thenCompose(ignored -> runCommand(server, pid, Objects.requireNonNull(handler.get())))
                 )
             );
 
@@ -125,18 +119,10 @@ public abstract class BazelCommandLineStateBase extends CommandLineState {
                 properties
             );
         console.attachToProcess(handler);
-
-        if (!getTestRunnerEmitsServiceMessages()) {
-            // consulo: ServiceMessageBuilder.testsStarted() is missing, it builds the "enteredTheMatrix" message
-            handler.notifyTextAvailable(new ServiceMessageBuilder("enteredTheMatrix").toString() + "\n", ProcessOutputType.STDOUT);
-        }
-
-        AnAction[] actions = createActions(console, handler, executor);
-
-        DefaultExecutionResult executionResult = new DefaultExecutionResult(console, handler, actions);
-        BazelTestRerunExtension testRerunExtension = BazelTestRerunExtension.getInstance(configuration);
-        if (testRerunExtension != null) {
-            executionResult.setRestartActions(new BazelRerunFailedTestsAction(console, testRerunExtension));
+        DefaultExecutionResult executionResult = new DefaultExecutionResult(console, handler);
+        AbstractRerunFailedTestsAction rerunFailedTestsAction = properties.createRerunFailedTestsAction(console);
+        if (rerunFailedTestsAction != null) {
+            executionResult.setRestartActions(rerunFailedTestsAction);
         }
         return executionResult;
     }

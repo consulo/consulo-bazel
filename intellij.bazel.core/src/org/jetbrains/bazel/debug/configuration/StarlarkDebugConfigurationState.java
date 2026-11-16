@@ -4,7 +4,6 @@ import consulo.execution.configuration.CommandLineState;
 import consulo.execution.runner.ExecutionEnvironment;
 import consulo.project.Project;
 import org.jetbrains.bazel.run.BazelProcessHandler;
-import org.jetbrains.bsp.protocol.RunWithDebugParams.AnalysisDebugResult;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -13,7 +12,7 @@ public class StarlarkDebugConfigurationState extends CommandLineState {
     private final String myTarget;
 
     // allows passing execution results (both successful and exceptional) to BspProcessHandler from outside
-    private final CompletableFuture<AnalysisDebugResult> myFutureProxy = new CompletableFuture<>();
+    private final CompletableFuture<Integer> myFutureProxy = new CompletableFuture<>();
 
     public StarlarkDebugConfigurationState(
         Project project,
@@ -33,7 +32,7 @@ public class StarlarkDebugConfigurationState extends CommandLineState {
         return myTarget;
     }
 
-    public CompletableFuture<AnalysisDebugResult> getFutureProxy() {
+    public CompletableFuture<Integer> getFutureProxy() {
         return myFutureProxy;
     }
 

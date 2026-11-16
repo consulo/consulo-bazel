@@ -19,6 +19,7 @@ import consulo.util.lang.lazy.LazyValue;
 import org.jetbrains.bazel.commons.RepoMapping;
 import org.jetbrains.bazel.commons.RuleType;
 import org.jetbrains.bazel.commons.TargetKind;
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner;
 import org.jetbrains.bazel.label.DependencyLabel;
 import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.scala.sdk.ScalaSdkExtension;
@@ -111,6 +112,7 @@ public class JvmTargetEntitiesBuilder {
 
         private final DependencyBuilder myDependencyBuilder;
         private final JavaSourceRootMerger mySourceRootMerger;
+        private final BazelConvenienceSymlinksScanner myConvenienceSymlinksScanner;
 
         ImportContext(
             JvmImportPlan plan,
@@ -178,6 +180,7 @@ public class JvmTargetEntitiesBuilder {
 
             myDependencyBuilder = new DependencyBuilder(getTargets(), myJvmResolved, myRepoMapping, getLibraryShadowedProducers());
             mySourceRootMerger = new JavaSourceRootMerger(myFileToTargets);
+            myConvenienceSymlinksScanner = new BazelConvenienceSymlinksScanner(myProjectBasePath);
         }
 
         JvmImportPlan getPlan() {
@@ -274,6 +277,10 @@ public class JvmTargetEntitiesBuilder {
 
         JavaSourceRootMerger getSourceRootMerger() {
             return mySourceRootMerger;
+        }
+
+        BazelConvenienceSymlinksScanner getConvenienceSymlinksScanner() {
+            return myConvenienceSymlinksScanner;
         }
 
         // targets contain stripped keys, so we need to ensure that `key` is stripped too
@@ -376,10 +383,21 @@ public class JvmTargetEntitiesBuilder {
 
             // phase 3: compute excluded sources inside Jars
             if (myCtx.getExcludeCompiledSourceCodeInsideJars()) {
+                List<Path> productionSources = new ArrayList<>();
+                for (TargetAndPlan it : plans) {
+                    if (!(it.plan() instanceof TargetPlan.Full full)) {
+                        continue;
+                    }
+                    for (SourceRootBuilder.ResolvedSourceRoot root : full.sourceRootsBeforeMerge()) {
+                        // Don't exclude test classes (BAZEL-3633)
+                        if (root.rootType().equals(SourceRootBuilder.JAVA_SOURCE_ROOT_TYPE) && !root.generated()) {
+                            productionSources.add(root.sourcePath());
+                        }
+                    }
+                }
                 CompiledSourceCodeInsideJarExcludeBuilder.write(
-                    myCtx.getTargets(),
+                    productionSources,
                     myCtx.getLibraries(),
-                    myCtx.getResolveLocation(),
                     storage,
                     myCtx.getCurrentCompiledSourceExcludeEntity()
                 );
@@ -469,8 +487,7 @@ public class JvmTargetEntitiesBuilder {
             List<ResourceRootBuilder.ResolvedResourceRoot> resourceRoots = ResourceRootBuilder.resolve(
                 target,
                 baseDirectory,
-                myCtx.getProjectName(),
-                myCtx.getProjectBasePath(),
+                myCtx.getConvenienceSymlinksScanner(),
                 myCtx.getResolveLocation()
             );
             return new TargetPlan.Full(
@@ -484,7 +501,8 @@ public class JvmTargetEntitiesBuilder {
                 kotlinTarget,
                 associates,
                 mainSourceRoots,
-                resourceRoots
+                resourceRoots,
+                resolvedSourceRoots
             );
         }
     }
@@ -598,6 +616,8 @@ public class JvmTargetEntitiesBuilder {
                 )
             )
         );
+        // TODO consulo: upstream sets `exModuleOptions = ExternalSystemModuleOptionsEntity(externalSystem = BazelPluginConstants.ID)`;
+        //  Consulo marks external system modules with an ExternalSystemModuleExtension, Bazel has none
         return module;
     }
 
@@ -775,7 +795,8 @@ public class JvmTargetEntitiesBuilder {
             @Nullable KotlinBuildTarget kotlinTarget,
             List<String> associates,
             List<SourceRootBuilder.ResolvedSourceRoot> mainSourceRoots,
-            List<ResourceRootBuilder.ResolvedResourceRoot> resourceRoots
+            List<ResourceRootBuilder.ResolvedResourceRoot> resourceRoots,
+            List<SourceRootBuilder.ResolvedSourceRoot> sourceRootsBeforeMerge
         ) implements TargetPlan {
         }
     }

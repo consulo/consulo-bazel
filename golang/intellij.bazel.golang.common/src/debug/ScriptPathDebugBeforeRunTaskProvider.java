@@ -26,9 +26,8 @@ import org.jetbrains.bazel.server.tasks.ScriptPathBuildTargetTask;
 import org.jetbrains.bazel.target.TargetStorage;
 import org.jetbrains.bazel.ui.notifications.BazelBalloonNotifier;
 import org.jetbrains.bazel.utils.ExecutableInfo;
-import org.jetbrains.bazel.utils.ExecutableInfo.RunfileManifestOnlyException;
 import org.jetbrains.bazel.utils.ExecutableInfo.UnexpectedScriptContentException;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.file.Files;
@@ -117,13 +116,13 @@ public class ScriptPathDebugBeforeRunTaskProvider implements BeforeRunFragment<S
         }
         Project project = environment.getProject();
         TargetStorage targetUtils = TargetStorage.getTargetStorage(project);
-        List<BuildTarget> targetInfos = runConfiguration.getTargets().stream()
-            .map(targetUtils::getTargetSummary)
+        List<BuildTargetInfo> targetInfos = runConfiguration.getTargets().stream()
+            .map(it -> TargetStorage.getTargetInfo(targetUtils, it))
             .filter(Objects::nonNull)
             .toList();
         if (targetInfos.stream().anyMatch(it ->
-            !GoBazelRules.includesGo(it.getKind()) ||
-                (it.getKind().ruleType() != RuleType.TEST && it.getKind().ruleType() != RuleType.BINARY))) {
+            !GoBazelRules.includesGo(it.kind()) ||
+                (it.kind().ruleType() != RuleType.TEST && it.kind().ruleType() != RuleType.BINARY))) {
             return CompletableFuture.completedFuture(false);
         }
         // consulo: Kotlin List.single()
@@ -161,6 +160,7 @@ public class ScriptPathDebugBeforeRunTaskProvider implements BeforeRunFragment<S
             ExecutableInfo executableInfo;
             try {
                 executableInfo = ExecutableInfo.fromBazelRunScript(scriptContent);
+                executableInfo.createRequiredDirectories();
             }
             catch (Throwable e) {
                 handleScriptParsingErrors(e, target);
@@ -184,9 +184,6 @@ public class ScriptPathDebugBeforeRunTaskProvider implements BeforeRunFragment<S
         LocalizeValue content;
         if (error instanceof UnexpectedScriptContentException) {
             content = BazelPluginLocalize.goDebugPrepareFailedReasonUnexpectedScriptContent();
-        }
-        else if (error instanceof RunfileManifestOnlyException) {
-            content = BazelPluginLocalize.goDebugPrepareFailedReasonRunfileManifestOnly();
         }
         else {
             content = BazelPluginLocalize.goDebugPrepareFailedReasonUnexpectedError();

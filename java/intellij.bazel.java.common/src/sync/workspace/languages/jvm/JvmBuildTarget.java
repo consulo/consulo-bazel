@@ -21,6 +21,7 @@ public record JvmBuildTarget(
 
     Map<String, String> environmentVariables,
     @Nullable String mainClass,
+    @Nullable String testClass,
     StringsCollection jvmArgs,
     StringsCollection programArgs,
     @Nullable OutputLocation resolvedResourceStripPrefix,
@@ -38,6 +39,7 @@ public record JvmBuildTarget(
             StringsCollection.EMPTY,
             OutputLocationCollection.EMPTY,
             Map.of(),
+            null,
             null,
             StringsCollection.EMPTY,
             StringsCollection.EMPTY,

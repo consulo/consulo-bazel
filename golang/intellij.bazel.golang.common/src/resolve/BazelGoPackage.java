@@ -37,7 +37,7 @@ import org.jetbrains.bazel.languages.starlark.psi.expressions.StarlarkCallExpres
 import org.jetbrains.bazel.languages.starlark.references.LabelResolveUtils;
 import org.jetbrains.bazel.target.TargetStorage;
 import org.jetbrains.bazel.workspacemodel.entities.BazelGoPackageEntity;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -342,8 +342,8 @@ public class BazelGoPackage extends GoPackage {
         // Don't resolve to a test target if we can.
         // TODO: migrate to full compound key
         for (Label it : labels) {
-            BuildTarget targetSummary = targetUtils.getTargetSummary(it);
-            if (targetSummary != null && targetSummary.getKind().ruleType() == RuleType.LIBRARY) {
+            BuildTargetInfo targetInfo = TargetStorage.getTargetInfo(targetUtils, it);
+            if (targetInfo != null && targetInfo.kind().ruleType() == RuleType.LIBRARY) {
                 return it;
             }
         }

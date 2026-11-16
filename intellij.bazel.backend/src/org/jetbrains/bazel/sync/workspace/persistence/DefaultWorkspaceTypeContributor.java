@@ -12,9 +12,8 @@ import org.jetbrains.bazel.label.DependencyLabel;
 import org.jetbrains.bazel.label.DependencyLabel.DependencyLabelKind;
 import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceTypeContributor.WorkspaceTypeEntry;
 import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot;
-import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.HeavyWorkspaceTarget;
 import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.PartialWorkspaceTarget;
-import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.WorkspaceTargetDeps;
+import org.jetbrains.bazel.sync.workspace.persistence.mvstore.PersistentWorkspaceSnapshot.WorkspaceTargetContent;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot.CommonWorkspaceSyncConfig;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceAspectIds;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceConfiguration;
@@ -44,8 +43,7 @@ class DefaultWorkspaceTypeContributor implements WorkspaceTypeContributor {
         // blob and MVStore envelope types
         type(result, PersistentWorkspaceSnapshot.class);
         type(result, PartialWorkspaceTarget.class);
-        type(result, WorkspaceTargetDeps.class);
-        type(result, HeavyWorkspaceTarget.class);
+        type(result, WorkspaceTargetContent.class);
 
         // configuration
         type(result, WorkspaceConfigurationId.class);

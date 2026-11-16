@@ -47,6 +47,7 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
 
     private final Project myProject;
     private final Path myBazelOutputBase;
+    private final Path myBazelExternalDir;
 
     /**
      * We can only create hard links in the same filesystem and same partition as Bazel's output base (BAZEL-3113).
@@ -69,6 +70,7 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
     ) {
         myProject = project;
         myBazelOutputBase = bazelInfo.outputBase();
+        myBazelExternalDir = myBazelOutputBase.resolve("external");
         myCacheDir = myBazelOutputBase.resolve(HARDLINKS_DIR_NAME);
     }
 
@@ -116,7 +118,8 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
                 else {
                     // We can be missing directory symlinks here by only resolving the last path segment. But this is much quicker than toRealPath on macOS.
                     // This is OK for C++ virtual headers that only symlink files (see, e.g., VirtualIncludesTest), but can be problematic in the future.
-                    return PathUtil.readSymbolicLinkTarget(originalFile);
+                    Path target = PathUtil.readSymbolicLinkTarget(originalFile);
+                    return target != null ? resolveExternalRepositoryRoot(target) : null;
                 }
             }, limitedDispatcher()));
         }
@@ -151,8 +154,6 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
                     continue;
                 }
 
-                Path bazelOutRelativePath = myBazelOutputBase.relativize(originalFile);
-
                 /*
                  * Don't recreate the hard link unnecessarily to avoid spamming the file watcher (and because creating a link is expensive).
                  * Also, the hard link may exist on disk, but if we delete the original file
@@ -161,7 +162,7 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
                 // Use await() on a Deferred instead of a blocking computeIfAbsent to avoid thread starvation (BAZEL-3095)
                 CompletableFuture<HardLink> hardLink = myHardLinksDuringSync.computeIfAbsent(originalFile, it ->
                     BazelCoroutineService.getInstance(myProject).startAsync(() ->
-                        createHardLink(bazelOutRelativePath, rootDirPath, realFile, it)
+                        createHardLink(rootDirPath, realFile, it)
                     )
                 );
                 if (hardLinkedPaths == null) {
@@ -187,8 +188,8 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
     }
 
     // consulo: the body of upstream `withContext(limitedDispatcher) { ... }` in createOutputFileHardLinks
-    private CompletableFuture<HardLink> createHardLink(Path bazelOutRelativePath, Path rootDirPath, Path realFile, Path originalFile) {
-        Path targetHardLink = myCacheDir.resolve(bazelOutRelativePath);
+    private CompletableFuture<HardLink> createHardLink(Path rootDirPath, Path realFile, Path originalFile) {
+        Path targetHardLink = PathUtil.rebase(originalFile, /* from = */ myBazelOutputBase, /* to = */ myCacheDir);
         return CompletableFuture
             .supplyAsync(() -> readAttributesOrNull(targetHardLink), limitedDispatcher())
             .thenCompose(targetHardLinkAttributes ->
@@ -214,7 +215,7 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
         try {
             if (shouldCreateSymLink(realFile, rootDirPath)) {
                 if (targetHardLinkAttributes != null && targetHardLinkAttributes.isSymbolicLink() &&
-                    realFile.equals(toRealPathOrNull(targetHardLink))) {
+                    realFile.equals(PathUtil.toRealPathOrNull(targetHardLink))) {
                     return CompletableFuture.completedFuture(null);  // The symlink stayed the same
                 }
                 try {
@@ -255,6 +256,24 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
         catch (IOException | UncheckedIOException e) {
             return CompletableFuture.failedFuture(e);
         }
+    }
+
+    /**
+     * The {@code target} with the root of its external repository resolved, when that root is a symlink.
+     * Bazel links the root of a local repository into the workspace, see {@link #shouldCreateSymLink}.
+     * This reads only the one symlink of the root. {@link Path#toRealPath} resolves each parent directory,
+     * and that is slow on macOS (BAZEL-3580).
+     */
+    private Path resolveExternalRepositoryRoot(Path target) {
+        if (!target.startsWith(myBazelExternalDir) || target.getNameCount() <= myBazelExternalDir.getNameCount()) {
+            return target;
+        }
+        Path repositoryRoot = myBazelExternalDir.resolve(target.getName(myBazelExternalDir.getNameCount()));
+        Path repositoryRootTarget = PathUtil.readSymbolicLinkTarget(repositoryRoot);
+        if (repositoryRootTarget == null) {
+            return target;
+        }
+        return PathUtil.rebase(target, /* from = */ repositoryRoot, /* to = */ repositoryRootTarget);
     }
 
     private boolean shouldCreateSymLink(Path realFile, Path rootDirPath) {
@@ -336,11 +355,8 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
 
     @Override
     public Path resolveCachedPath(Path fileOrDir) {
-        if (!fileOrDir.startsWith(myBazelOutputBase)) {
-            return fileOrDir;
-        }
-        Path bazelOutRelativePath = myBazelOutputBase.relativize(fileOrDir);
-        return myCacheDir.resolve(bazelOutRelativePath);
+        Path rebased = PathUtil.rebaseOrNull(fileOrDir, /* from = */ myBazelOutputBase, /* to = */ myCacheDir);
+        return rebased != null ? rebased : fileOrDir;
     }
 
     @Override
@@ -438,16 +454,6 @@ public class DefaultBazelOutputFileHardLinks implements BazelOutFileHardLinks {
     private static @Nullable BasicFileAttributes readAttributesOrNull(Path path) {
         try {
             return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        }
-        catch (Exception e) {
-            return null;
-        }
-    }
-
-    // consulo: runCatching { toRealPath() }.getOrNull()
-    private static @Nullable Path toRealPathOrNull(Path path) {
-        try {
-            return path.toRealPath();
         }
         catch (Exception e) {
             return null;

@@ -30,13 +30,11 @@ import org.junit.jupiter.api.condition.OS
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class CcLocalToolchainTest(override val bazelVersion: String) : BazelVersionedTest {
 
-  @EnabledOnOs(OS.LINUX)
+  @DisabledOnOs(OS.MAC, disabledReason = "apple_support requests an outdated macOS SDK on Bazel 7")
   class Bazel7 : CcLocalToolchainTest(BazelVersions.BAZEL_7)
 
-  @EnabledOnOs(OS.LINUX)
   class Bazel8 : CcLocalToolchainTest(BazelVersions.BAZEL_8)
 
-  @DisabledOnOs(OS.WINDOWS)
   class Bazel9 : CcLocalToolchainTest(BazelVersions.BAZEL_9)
 
   private val project by clionBazelProjectFixture("clion/simple", buildProject = true, bazelVersion = bazelVersion)
@@ -49,8 +47,10 @@ abstract class CcLocalToolchainTest(override val bazelVersion: String) : BazelVe
     val compilerSettingsC = project.findCompilerSetting("main/util.c", language = CLanguageKind.C)
     val compilerSettingsCPP = project.findCompilerSetting("main/main.cc", language = CLanguageKind.CPP)
 
-    assertThat(compilerSettingsCPP).hasCompilerKindWrapper()
-    assertThat(compilerSettingsC).hasCompilerKindWrapper()
+    if (!SystemInfoRt.isWindows) {
+      assertThat(compilerSettingsCPP).hasCompilerKindWrapper()
+      assertThat(compilerSettingsC).hasCompilerKindWrapper()
+    }
 
     assertThat(compilerSettingsCPP)
       .hasCompiler(platformDefaultCompiler())
@@ -99,13 +99,16 @@ abstract class CcLocalToolchainTest(override val bazelVersion: String) : BazelVe
       .extractData<CcToolchainBuildTarget>()
       .assertNotNull()
 
-    assertThat(toolchain.xcodeInfo?.xcodeVersion).isNotNull().isNotBlank()
-    assertThat(toolchain.xcodeInfo?.macosSdkVersion).isNotNull().isNotBlank()
+    val xcodeInfo = toolchain.xcodeInfo.assertNotNull()
+    assertThat(xcodeInfo.developerDir).startsWith("/").doesNotContain("__BAZEL_XCODE_")
+    assertThat(xcodeInfo.sdkRoot).startsWith("/").doesNotContain("__BAZEL_XCODE_")
 
     val compiler = project.findCompiler(target).assertNotNull()
 
-    assertThat(compiler.environment).containsKey("DEVELOPER_DIR")
-    assertThat(compiler.environment).containsKey("SDKROOT")
+    assertThat(compiler.environment).containsEntry("DEVELOPER_DIR", xcodeInfo.developerDir)
+    assertThat(compiler.environment).containsEntry("SDKROOT", xcodeInfo.sdkRoot)
+
+    assertThat(compiler.cSwitches + compiler.cppSwitches).noneMatch { it.contains("__BAZEL_") }
   }
 }
 
@@ -113,6 +116,7 @@ private fun platformDefaultCompiler(): OCCompilerId {
   return when {
     SystemInfoRt.isLinux -> OCCompilerId.GCC
     SystemInfoRt.isMac -> OCCompilerId.APPLE_CLANG
+    SystemInfoRt.isWindows -> OCCompilerId.MSVC
     else -> fail("unsupported platform")
   }
 }

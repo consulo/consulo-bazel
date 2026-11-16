@@ -11,42 +11,75 @@ import org.jspecify.annotations.Nullable;
 import java.util.List;
 import java.util.stream.Stream;
 
-public interface BuildTarget {
-    WorkspaceTargetKey getKey();
+// TODO: make concrete data class in 2027.1, keep it sealed
+public sealed interface BuildTarget permits BuildTargetImpl {
+    BuildTargetInfo getInfo();
 
-    TargetKind getKind();
-
-    TargetLoadOptions getLoaded();
-
-    // TargetSection.INFO
-    @Nullable String getGeneratorName();
-
-    boolean isTestOnly();
-
-    List<String> getTags();
-
-    String getWorkspaceName();
-
-    // TargetSection.DEPS
     List<DependencyLabel> getDependencies();
 
-    // TargetSection.FILE_SETS
     OutputLocationCollection getSources();
 
     OutputLocationCollection getResources();
 
-    // language-specific data, selected by TargetLoadOptions.targetData
     List<BuildTargetData> getData();
 
-    static Label getId(BuildTarget receiver) {
-        return receiver.getKey().label();
+    default WorkspaceTargetKey getKey() {
+        return getInfo().key();
+    }
+
+    default TargetKind getKind() {
+        return getInfo().kind();
+    }
+
+    default @Nullable String getGeneratorName() {
+        return getInfo().generatorName();
+    }
+
+    default boolean isTestOnly() {
+        return getInfo().isTestOnly();
+    }
+
+    default List<String> getTags() {
+        return getInfo().tags();
+    }
+
+    default String getWorkspaceName() {
+        return getInfo().workspaceName();
     }
 
     /**
-     * whether this target already carries every section, i.e. reading it triggers no further loading
+     * @deprecated BuildTarget always has all its sections
      */
-    static boolean isFull(BuildTarget receiver) {
-        return receiver.getLoaded().equals(TargetLoadOptions.ALL);
+    @Deprecated
+    default TargetLoadOptions getLoaded() {
+        return TargetLoadOptions.ALL;
+    }
+
+    // consulo: upstream top-level factory function BuildTarget(info, dependencies, sources, resources, data)
+    static BuildTarget create(
+        BuildTargetInfo info,
+        List<DependencyLabel> dependencies,
+        OutputLocationCollection sources,
+        OutputLocationCollection resources,
+        List<BuildTargetData> data
+    ) {
+        return new BuildTargetImpl(info, dependencies, sources, resources, data);
+    }
+
+    // consulo: upstream extension BuildTarget.copy(...) with default arguments; pass receiver.getX() for an unchanged value
+    static BuildTarget copy(
+        BuildTarget receiver,
+        BuildTargetInfo info,
+        List<DependencyLabel> dependencies,
+        OutputLocationCollection sources,
+        OutputLocationCollection resources,
+        List<BuildTargetData> data
+    ) {
+        return create(info, dependencies, sources, resources, data);
+    }
+
+    static Label getId(BuildTarget receiver) {
+        return receiver.getKey().label();
     }
 
     static <T extends BuildTargetData> @Nullable T data(BuildTarget receiver, Class<T> type) {
@@ -68,16 +101,45 @@ public interface BuildTarget {
         return filtered.size() == 1 ? filtered.get(0) : null;
     }
 
-    /**
-     * From Bazel doc (https://bazel.build/reference/be/common-definitions)
-     * manual tag will exclude the target from expansion of target pattern wildcards (..., :*, :all, etc.) and test_suite rules which do not
-     * list the test explicitly when computing the set of top-level targets to build/run for the build, test, and coverage commands
-     */
     static boolean isManual(BuildTarget receiver) {
-        return receiver.getTags().contains(BuildTargetTag.MANUAL);
+        return BuildTargetInfo.isManual(receiver.getInfo());
     }
 
     static Stream<OutputLocation> nonGeneratedSources(BuildTarget receiver) {
         return receiver.getSources().getOutputLocations().filter(OutputLocation::isSource);
+    }
+}
+
+// consulo: upstream private data class BuildTargetImpl of BuildTarget.kt
+record BuildTargetImpl(
+    BuildTargetInfo info,
+    List<DependencyLabel> dependencies,
+    OutputLocationCollection sources,
+    OutputLocationCollection resources,
+    List<BuildTargetData> data
+) implements BuildTarget {
+    @Override
+    public BuildTargetInfo getInfo() {
+        return info;
+    }
+
+    @Override
+    public List<DependencyLabel> getDependencies() {
+        return dependencies;
+    }
+
+    @Override
+    public OutputLocationCollection getSources() {
+        return sources;
+    }
+
+    @Override
+    public OutputLocationCollection getResources() {
+        return resources;
+    }
+
+    @Override
+    public List<BuildTargetData> getData() {
+        return data;
     }
 }

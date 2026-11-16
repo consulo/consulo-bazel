@@ -4,7 +4,6 @@ import com.intellij.execution.ExecutionException
 import com.intellij.execution.Executor
 import com.intellij.execution.configurations.JavaCommandLineState
 import com.intellij.execution.configurations.JavaParameters
-import com.intellij.execution.configurations.ParametersList
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.application.PathManager
@@ -15,8 +14,10 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.util.SlowOperations
+import org.jetbrains.annotations.Nls
 import org.jetbrains.bazel.config.BazelPluginBundle
 import org.jetbrains.bazel.run.BazelRunHandler
+import org.jetbrains.bazel.run.commandLine.parseAsProgramArguments
 import org.jetbrains.bazel.run.config.BazelRunConfiguration
 import org.jetbrains.idea.devkit.DevKitBundle
 import org.jetbrains.idea.devkit.projectRoots.IdeaJdk
@@ -43,12 +44,12 @@ internal class IntellijPluginRunHandler(private val configuration: BazelRunConfi
 
   override val state: IntellijPluginRunHandlerState = IntellijPluginRunHandlerState()
 
-  override val name: String
-    get() = "IntelliJ Plugin Run Handler"
+  override val name: @Nls String
+    get() = BazelDevKitBundle.message("intellij.plugin.run.handler.name")
 
   override val isTestHandler: Boolean = false
 
-  // Mostly copied from org.jetbrains.idea.devkit.run.PluginRunConfiguration
+  // Mostly copied from com.intellij.devkit.ide.run.PluginRunConfiguration
   override fun getRunProfileState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
     val ideaJdk =
       findIdeaJdk(state.intellijSdkName) ?: throw ExecutionException(
@@ -78,11 +79,11 @@ internal class IntellijPluginRunHandler(private val configuration: BazelRunConfi
         val ideaJdkHome = checkNotNull(ideaJdk.homePath)
 
         val params = JavaParameters()
-        fillParameterList(params.programParametersList, state.programArguments)
+        params.programParametersList.addAll(parseAsProgramArguments(state.programArguments))
 
         val vm = params.vmParametersList
 
-        fillParameterList(vm, state.javaVmOptions)
+        vm.addAll(parseAsProgramArguments(state.javaVmOptions))
 
         vm.defineProperty(PathManager.PROPERTY_CONFIG_PATH, canonicalSandbox + File.separator + "config")
         vm.defineProperty(PathManager.PROPERTY_SYSTEM_PATH, canonicalSandbox + File.separator + "system")
@@ -140,16 +141,6 @@ internal class IntellijPluginRunHandler(private val configuration: BazelRunConfi
           else -> entry.replace("/Contents", "")
         }
       }
-
-  private fun fillParameterList(parameterList: ParametersList, parameters: String?) {
-    if (!parameters.isNullOrEmpty()) {
-      for (parameter in parameters.split(" ")) {
-        if (parameter.isNotEmpty()) {
-          parameterList.add(parameter)
-        }
-      }
-    }
-  }
 
   private fun findIdeaJdk(name: String?): Sdk? {
     val jdkType = IdeaJdk.getInstance()

@@ -36,8 +36,13 @@ public class ProjectViewPsiSection extends ProjectViewBaseElement {
     public static @Nullable ProjectViewPsiSection findByName(PsiElement psi, String name) {
         return PsiTreeUtil.getChildrenOfTypeAsList(psi, ProjectViewPsiSection.class)
             .stream()
-            .filter(it -> it.getKeyword().getText().trim().equals(name))
+            .filter(it -> sectionName(it).equals(name))
             .findFirst()
             .orElse(null);
+    }
+
+    // consulo: upstream internal top-level extension function ProjectViewPsiSection.sectionName()
+    public static String sectionName(ProjectViewPsiSection receiver) {
+        return receiver.getKeyword().getText().trim();
     }
 }

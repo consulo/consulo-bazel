@@ -1,13 +1,10 @@
 package org.jetbrains.bazel.python.gutter
 
 import com.intellij.execution.PsiLocation
-import com.intellij.openapi.project.Project
+import com.intellij.openapi.application.runReadActionBlocking
 import com.intellij.psi.PsiFile
 import com.intellij.psi.util.PsiUtilCore
-import com.intellij.testFramework.builders.ModuleFixtureBuilder
-import com.intellij.testFramework.fixtures.CodeInsightFixtureTestCase
 import com.intellij.testFramework.fixtures.CodeInsightTestFixture
-import com.intellij.testFramework.fixtures.ModuleFixture
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -15,44 +12,35 @@ import io.kotest.matchers.shouldBe
 import org.jetbrains.bazel.commons.RuleType
 import org.jetbrains.bazel.commons.TargetKind
 import org.jetbrains.bazel.label.Label
-import org.jetbrains.bazel.project.BazelProjectFixtures.initializeBazelProject
-import org.jetbrains.bazel.python.lang.PythonBuildTarget
 import org.jetbrains.bazel.python.lang.PythonLanguageClass
-import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey
-import org.jetbrains.bazel.target.targetStorage
-import org.jetbrains.bazel.test.framework.target.TestBuildTarget
+import org.jetbrains.bazel.test.framework.BazelTestApplication
+import org.jetbrains.bazel.test.framework.bazelCodeInsightFixture
+import org.jetbrains.bazel.test.framework.testBazel
+import org.jetbrains.bazel.test.framework.testproject.TestBazelProject
+import org.jetbrains.bazel.test.framework.testproject.pythonTarget
+import org.jetbrains.bazel.test.framework.testproject.sync
 import org.jetbrains.bazel.ui.gutters.BazelContainingTargetsLocationsProvider
-import org.jetbrains.bazel.ui.gutters.NonImportedBuildTarget
-import org.jetbrains.bazel.workspace.model.test.framework.setTargets
-import org.jetbrains.bsp.protocol.OutputLocationCollection
-import org.jetbrains.bazel.workspace.model.test.framework.testLocation
-import org.jetbrains.bsp.protocol.StringsCollection
-import org.junit.Before
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.JUnit4
+import org.jetbrains.bsp.protocol.BuildTargetInfo
+import org.junit.jupiter.api.Test
 import java.nio.file.Path
 
-@RunWith(JUnit4::class)
-internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<ModuleFixtureBuilder<ModuleFixture>>() {
-  private val bazelPyRunConfigurationProducer = BazelPyRunConfigurationProducer()
+@BazelTestApplication
+internal class BazelPyRunConfigurationProducerTest {
+  private val myFixture by bazelCodeInsightFixture()
+  private val testBazel: TestBazelProject get() = myFixture.testBazel
 
-  @Before
-  fun beforeEach() {
-    initializeBazelProject(project, myFixture.tempDirPath)
-  }
+  private val bazelPyRunConfigurationProducer = BazelPyRunConfigurationProducer()
 
   @Test
   fun `should show bazel-related run actions when the py file is the main file`() {
     // GIVEN
     val mainFile = myFixture.runnablePythonFile("main_file.py")
 
-    project.addPyBinaryTarget(label = LABEL, mainFile = mainFile)
-    project.addFileToTarget(mainFile, LABEL)
+    addPyBinaryTarget(label = LABEL, mainFile = mainFile, sources = listOf(mainFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(mainFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(mainFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -63,12 +51,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
     // GIVEN
     val mainFile = myFixture.runnablePythonFile(LABEL.targetName + ".py")
 
-    project.addPyBinaryTarget(label = LABEL, mainFile = null)
-    project.addFileToTarget(mainFile, LABEL)
+    addPyBinaryTarget(label = LABEL, mainFile = null, sources = listOf(mainFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(mainFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(mainFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -80,13 +67,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
     val mainFile = myFixture.runnablePythonFile("main_file.py")
     val otherFile = myFixture.runnablePythonFile("other_file.py")
 
-    project.addPyBinaryTarget(label = LABEL, mainFile = mainFile)
-    project.addFileToTarget(mainFile, LABEL)
-    project.addFileToTarget(otherFile, LABEL)
+    addPyBinaryTarget(label = LABEL, mainFile = mainFile, sources = listOf(mainFile, otherFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(otherFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(otherFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldBeNull()
@@ -97,12 +82,13 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
     // GIVEN
     val notInTargetFile = myFixture.runnablePythonFile("not_in_target_file.py")
 
-    project.addPyBinaryTarget(label = LABEL, mainFile = null)
-    project.removeFileFromAllTargets(notInTargetFile)
+    addPyBinaryTarget(label = LABEL, mainFile = null)
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(notInTargetFile, myFixture.caretOffset)!!
-    val bazelRunLocations = BazelContainingTargetsLocationsProvider().getAlternativeLocations(PsiLocation(elementAtCaret))
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(notInTargetFile, myFixture.caretOffset) }
+    val bazelRunLocations = runReadActionBlocking {
+      BazelContainingTargetsLocationsProvider().getAlternativeLocations(PsiLocation(elementAtCaret))
+    }
 
     // THEN
     bazelRunLocations.shouldBeEmpty()
@@ -113,12 +99,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
     // GIVEN
     val runnableFile = myFixture.runnablePythonFile(LABEL.targetName + ".py")
 
-    project.addPyBinaryTarget(label = LABEL, mainModule = "some.module")
-    project.addFileToTarget(runnableFile, LABEL)
+    addPyBinaryTarget(label = LABEL, mainModule = "some.module", sources = listOf(runnableFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(runnableFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(runnableFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldBeNull()
@@ -136,12 +121,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -159,12 +143,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -184,12 +167,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -211,12 +193,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -238,12 +219,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldNotBeNull()
@@ -262,12 +242,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldBeNull()
@@ -285,12 +264,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
         """.trimIndent(),
       )
 
-    project.addPyTestTarget(label = LABEL)
-    project.addFileToTarget(testFile, LABEL)
+    addPyTestTarget(label = LABEL, sources = listOf(testFile))
 
     // WHEN
-    val elementAtCaret = PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset)!!
-    val gutterAction = bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget)
+    val elementAtCaret = runReadActionBlocking { PsiUtilCore.getElementAtOffset(testFile, myFixture.caretOffset) }
+    val gutterAction = runReadActionBlocking { bazelPyRunConfigurationProducer.getGutterAction(elementAtCaret, executableTarget) }
 
     // THEN
     gutterAction.shouldBeNull()
@@ -308,10 +286,11 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
   private fun CodeInsightTestFixture.pythonFile(fileName: String, content: String): PsiFile =
     configureByText(fileName, content)
 
-  private fun Project.addPyBinaryTarget(
+  private fun addPyBinaryTarget(
     label: Label,
     mainFile: PsiFile? = null,
     mainModule: String? = null,
+    sources: List<PsiFile> = emptyList(),
   ) {
     addPythonTarget(
       label = label,
@@ -319,66 +298,48 @@ internal class BazelPyRunConfigurationProducerTest : CodeInsightFixtureTestCase<
       ruleType = RuleType.BINARY,
       mainFile = mainFile,
       mainModule = mainModule,
+      sources = sources,
     )
   }
 
-  private fun Project.addPyTestTarget(label: Label) {
+  private fun addPyTestTarget(label: Label, sources: List<PsiFile>) {
     addPythonTarget(
       label = label,
       ruleKind = "py_test",
       ruleType = RuleType.TEST,
       mainFile = null,
       mainModule = null,
+      sources = sources,
     )
   }
 
-  private fun Project.addPythonTarget(
+  private fun addPythonTarget(
     label: Label,
     ruleKind: String,
     ruleType: RuleType,
     mainFile: PsiFile?,
     mainModule: String?,
+    sources: List<PsiFile>,
   ) {
-    setTargets(
-      listOf(
-        TestBuildTarget(
-          key = WorkspaceTargetKey(label = label),
-          dependencies = emptyList(),
-          kind =
-            TargetKind(
-              kind = ruleKind,
-              languageClasses = setOf(PythonLanguageClass.PYTHON),
-              ruleType = ruleType,
-            ),
-          sources = OutputLocationCollection.EMPTY,
-          resources = OutputLocationCollection.EMPTY,
-          data = listOf(
-            PythonBuildTarget(
-              version = "3.8",
-              interpreter = testLocation(Path.of(myFixture.tempDirPath, "python3")),
-              StringsCollection.EMPTY,
-              OutputLocationCollection.EMPTY,
-              OutputLocationCollection.EMPTY,
-              mainFile = mainFile?.virtualFile?.toNioPath()?.let(::testLocation),
-              mainModule = mainModule,
-            ),
-          ),
-        ),
-      ),
-    )
-  }
-
-  private fun Project.addFileToTarget(file: PsiFile, target: Label) {
-    targetStorage.addFileToTargetIdEntry(file.virtualFile.toNioPath(), listOf(target))
-  }
-
-  private fun Project.removeFileFromAllTargets(file: PsiFile) {
-    targetStorage.removeFileToTargetIdEntry(file.virtualFile.toNioPath())
+    testBazel.sync {
+      targets(
+        pythonTarget(
+          label,
+          ruleKind,
+          ruleType,
+          interpreter = Path.of(myFixture.tempDirPath, "python3"),
+          mainFile = mainFile?.virtualFile?.toNioPath(),
+          mainModule = mainModule,
+        ) {
+          srcs(*sources.map { it.name }.toTypedArray())
+        },
+      )
+    }
   }
 
   companion object {
     private val LABEL = Label.parse("//foo:bar")
     private val executableTarget =
-      NonImportedBuildTarget(LABEL, TargetKind("py_test", setOf(PythonLanguageClass.PYTHON), RuleType.TEST))
+      BuildTargetInfo(LABEL, TargetKind("py_test", setOf(PythonLanguageClass.PYTHON), RuleType.TEST))
   }
 }

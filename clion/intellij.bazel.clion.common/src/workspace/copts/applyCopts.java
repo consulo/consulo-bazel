@@ -5,6 +5,7 @@ import org.jetbrains.bazel.clion.workspace.CcCompilerKind;
 import org.jetbrains.bazel.clion.workspace.CcImportContext;
 import org.jspecify.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,24 @@ public final class applyCopts {
         new GnuCoptsProcessor("-iquote", CcCompilerSwitches.Builder::withQuoteIncludePath),
         new GnuCoptsProcessor("--sysroot", "=", CcCompilerSwitches.Builder::withSysroot)
     );
+
+    private static final List<CoptsProcessor> MSVC_PROCESSORS = List.of(
+        new MsvcCoptsProcessor("/I", CcCompilerSwitches.Builder::withIncludePath),
+        new MsvcCoptsProcessor("/external:I", CcCompilerSwitches.Builder::withSystemIncludePath)
+    );
+
+    private static final List<CoptsProcessor> CLANG_CL_PROCESSORS = concat(MSVC_PROCESSORS, List.of(
+        new GnuCoptsProcessor("/clang:-I", "/clang:", CcCompilerSwitches.Builder::withIncludePath),
+        new GnuCoptsProcessor("/clang:-iquote", "/clang:", CcCompilerSwitches.Builder::withQuoteIncludePath),
+        new GnuCoptsProcessor("/clang:-isystem", "/clang:", CcCompilerSwitches.Builder::withSystemIncludePath)
+    ));
+
+    // consulo: Kotlin `list + list`
+    private static List<CoptsProcessor> concat(List<CoptsProcessor> first, List<CoptsProcessor> second) {
+        List<CoptsProcessor> result = new ArrayList<>(first);
+        result.addAll(second);
+        return List.copyOf(result);
+    }
 
     /**
      * The GNU and Clang spelling of the forward options.
@@ -111,13 +130,26 @@ public final class applyCopts {
 
     // consulo: upstream `context(ctx: CcImportContext) suspend fun CompilerSpecificSwitchBuilder.applyCopts(kind, options)`
     public static void applyCopts(CcImportContext ctx, CcCompilerSwitches.Builder receiver, CcCompilerKind kind, List<String> options) {
-        // TODO: add support for other compiler, e.g. MSVC
-        // consulo: Set.of rejects a null lookup, the id of an unknown kind is null
+        List<CoptsProcessor> processors;
+        List<CoptsForwarder> forwarders;
+        // consulo: Set.of rejects a null lookup, the id of an unknown kind is null; the ids are the CIDR OCCompilerId values
         @Nullable String id = kind.getId();
-        boolean isGnu = id != null && GNU_COMPILERS.contains(id);
-
-        List<CoptsProcessor> processors = isGnu ? GNU_PROCESSORS : List.of();
-        List<CoptsForwarder> forwarders = isGnu ? GNU_FORWARDERS : List.of();
+        if (id != null && GNU_COMPILERS.contains(id)) {
+            processors = GNU_PROCESSORS;
+            forwarders = GNU_FORWARDERS;
+        }
+        else if ("MSVC".equals(id)) {
+            processors = MSVC_PROCESSORS;
+            forwarders = List.of();
+        }
+        else if ("CLANG_CL".equals(id)) {
+            processors = CLANG_CL_PROCESSORS;
+            forwarders = List.of();
+        }
+        else {
+            processors = List.of();
+            forwarders = List.of();
+        }
 
         CoptsProcessorStream stream = new CoptsProcessorStream(receiver, processors);
         Map<String, CoptsForwardGroup> forwardStreams = new LinkedHashMap<>();

@@ -8,6 +8,10 @@ quickfix.run.gazelle:
     text: "Run {0} and resync project"
 quickfix.run.gazelle.family.name:
     text: "Run Gazelle and resync project"
+go.run.handler.name:
+    text: "Go Run Handler"
+go.test.handler.name:
+    text: "Go Test Handler"
 sync.gazelle.run.target:
     text: "Run Gazelle target"
 sync.gazelle.target.hint:

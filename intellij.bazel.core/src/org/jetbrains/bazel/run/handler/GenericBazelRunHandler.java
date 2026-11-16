@@ -1,5 +1,6 @@
 package org.jetbrains.bazel.run.handler;
 
+import consulo.bazel.core.localize.BazelPluginLocalize;
 import consulo.execution.configuration.RunProfileState;
 import consulo.execution.executor.Executor;
 import consulo.execution.runner.ExecutionEnvironment;
@@ -17,7 +18,7 @@ class GenericBazelRunHandler implements BazelRunHandler {
 
     @Override
     public String getName() {
-        return "Generic BSP Run Handler";
+        return BazelPluginLocalize.genericRunHandlerName().get();
     }
 
     @Override

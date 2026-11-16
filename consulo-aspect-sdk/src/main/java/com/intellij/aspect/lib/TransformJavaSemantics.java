@@ -16,7 +16,7 @@
 package com.intellij.aspect.lib;
 
 // consulo: declared in upstream sdk/lib/transformers.kt (a Kotlin object)
-public final class TransformJavaSemantics extends TransformFieldLoad {
+final class TransformJavaSemantics extends TransformFieldLoad {
     public static final TransformJavaSemantics INSTANCE = new TransformJavaSemantics();
 
     private TransformJavaSemantics() {

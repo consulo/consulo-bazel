@@ -4,6 +4,7 @@ import consulo.application.ReadAction;
 import consulo.externalSystem.model.ProjectSystemId;
 import consulo.logging.Logger;
 import consulo.project.Project;
+import consulo.util.io.FileUtil;
 import consulo.virtualFileSystem.LocalFileSystem;
 import consulo.virtualFileSystem.VirtualFile;
 import org.jetbrains.bazel.config.BazelPluginConstants;
@@ -13,6 +14,10 @@ import org.jspecify.annotations.Nullable;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * A Bazel project is the open project itself: the link closes {@link Project} and opens its base path as a Bazel project.
+ * The link therefore takes only the base path of the project. A path below or outside the project stays unlinked.
+ */
 // TODO consulo: ExternalSystemUnlinkedProjectAware (auto-link of unlinked projects) is missing in Consulo; the class is not
 // registered. ExternalSystemProjectLinkListener and the subscribe(...) override are dropped with it.
 public class BazelUnlinkedProjectAware {
@@ -31,6 +36,12 @@ public class BazelUnlinkedProjectAware {
     }
 
     public CompletableFuture<?> linkAndLoadProjectAsync(Project project, String externalProjectPath) {
+        String basePath = project.getBasePath();
+        if (basePath == null || !FileUtil.pathsEqual(basePath, externalProjectPath)) {
+            LOG.warn("Bazel cannot link " + externalProjectPath + " into '" + project.getName() +
+                "': a Bazel project replaces the open project, and this path is not its base path");
+            return CompletableFuture.completedFuture(null);
+        }
         return BazelApplicationCoroutineScopeService.getInstance().launch(() -> {
             @Nullable Path file = ReadAction.<@Nullable Path, RuntimeException>compute(() -> {
                 VirtualFile projectDir = LocalFileSystem.getInstance().findFileByPath(externalProjectPath);

@@ -8,6 +8,7 @@ import consulo.execution.configuration.ConfigurationFactory;
 import consulo.execution.configuration.RunConfigurationBase;
 import consulo.execution.configuration.RunConfigurationExtensionsManager;
 import consulo.language.psi.PsiElement;
+import consulo.project.Project;
 import consulo.util.lang.ref.SimpleReference;
 import org.jetbrains.bazel.languages.starlark.repomapping.BazelRepoMappingUtils;
 import org.jetbrains.bazel.run.BazelRunConfigurationState;
@@ -18,7 +19,10 @@ import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
 import org.jetbrains.bazel.run.state.Common.HasEnv;
 import org.jetbrains.bazel.run.state.Common.HasProgramArguments;
 import org.jetbrains.bazel.run.state.Test.HasTestFilter;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
+import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.HashMap;
@@ -48,8 +52,8 @@ public abstract class BazelRunConfigurationProducer extends RunConfigurationProd
         if (!(context.getLocation() instanceof BazelRunLocation location)) {
             return false;
         }
-        BuildTarget target = location.getTarget();
-        if (!acceptsTarget(target)) {
+        BuildTargetInfo target = location.getTarget();
+        if (!acceptsTarget(context.getProject(), target)) {
             return false;
         }
         PsiElement element = location.getOriginalLocation().getPsiElement();
@@ -57,7 +61,10 @@ public abstract class BazelRunConfigurationProducer extends RunConfigurationProd
         if (gutterAction == null) {
             return false;
         }
-        configuration.updateTargets(List.of(BuildTarget.getId(target)), RunHandlerProvider.getRunHandlerProvider(context.getProject(), List.of(target)));
+        configuration.updateTargets(
+            List.of(target.id()),
+            RunHandlerProvider.getRunHandlerProvider(context.getProject(), List.of(target))
+        );
         BazelRunHandler handler = configuration.getHandler();
         if (handler == null) {
             return false;
@@ -67,7 +74,7 @@ public abstract class BazelRunConfigurationProducer extends RunConfigurationProd
         if (extensionsManager != null) {
             extensionsManager.extendCreatedConfiguration(configuration, location);
         }
-        String targetName = BazelRepoMappingUtils.toShortString(BuildTarget.getId(target), context.getProject());
+        String targetName = BazelRepoMappingUtils.toShortString(target.id(), context.getProject());
         String additionalLocationString = gutterAction.getAdditionalLocationString();
         configuration.setName(
             additionalLocationString != null
@@ -85,11 +92,11 @@ public abstract class BazelRunConfigurationProducer extends RunConfigurationProd
         if (!(context.getLocation() instanceof BazelRunLocation location)) {
             return false;
         }
-        BuildTarget target = location.getTarget();
-        if (!acceptsTarget(target)) {
+        BuildTargetInfo target = location.getTarget();
+        if (!acceptsTarget(context.getProject(), target)) {
             return false;
         }
-        if (!configuration.getTargets().equals(List.of(BuildTarget.getId(target)))) {
+        if (!configuration.getTargets().equals(List.of(target.id()))) {
             return false;
         }
         PsiElement element = location.getOriginalLocation().getPsiElement();
@@ -101,11 +108,38 @@ public abstract class BazelRunConfigurationProducer extends RunConfigurationProd
         return handler != null && gutterAction.isFromContext(handler.getState());
     }
 
-    public abstract @Nullable GutterAction getGutterAction(
+    /**
+     * @deprecated Use getGutterAction(PsiElement, BuildTargetInfo)
+     */
+    @Deprecated
+    public @Nullable GutterAction getGutterAction(
         PsiElement element,
         BuildTarget target
-    );
+    ) {
+        return null;
+    }
 
+    public @Nullable GutterAction getGutterAction(
+        PsiElement element,
+        BuildTargetInfo target
+    ) {
+        // the deprecated overload takes a complete target, so this fallback pays a full load
+        WorkspaceSnapshot snapshot = WorkspaceHelpers.getWorkspaceSnapshotOrNull(element.getProject());
+        BuildTarget fullTarget = snapshot == null ? null : snapshot.targets().findTargetByKey(target.key());
+        if (fullTarget == null) {
+            return null;
+        }
+        return getGutterAction(element, fullTarget);
+    }
+
+    protected boolean acceptsTarget(Project project, BuildTargetInfo target) {
+        return target.kind().isExecutable();
+    }
+
+    /**
+     * @deprecated Use acceptsTarget(BuildTargetInfo)
+     */
+    @Deprecated
     protected boolean acceptsTarget(BuildTarget target) {
         return target.getKind().isExecutable();
     }

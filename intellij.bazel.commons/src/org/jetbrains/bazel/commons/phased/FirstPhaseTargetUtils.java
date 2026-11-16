@@ -60,7 +60,7 @@ public final class FirstPhaseTargetUtils {
     static List<String> getListAttribute(Target receiver, String name) {
         for (Build.Attribute it : receiver.getRule().getAttributeList()) {
             if (it.getName().equals(name)) {
-                return it.getStringListValueList();
+                return List.copyOf(it.getStringListValueList());
             }
         }
         return List.of();

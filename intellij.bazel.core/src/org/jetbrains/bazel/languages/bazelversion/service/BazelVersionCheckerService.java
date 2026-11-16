@@ -65,9 +65,9 @@ public class BazelVersionCheckerService implements PersistentStateComponent<Baze
     public void loadState(BazelVersionCheckerService.State state) {
         myResolverId = state.resolverId;
         myCurrentBazelVersion =
-            state.currentBazelVersion != null ? BazelVersionLiteral.toBazelVersionLiteral(state.currentBazelVersion) : null;
+            state.currentBazelVersion != null ? BazelVersionLiteral.fromString(state.currentBazelVersion) : null;
         myLatestBazelVersion =
-            state.latestBazelVersion != null ? BazelVersionLiteral.toBazelVersionLiteral(state.latestBazelVersion) : null;
+            state.latestBazelVersion != null ? BazelVersionLiteral.fromString(state.latestBazelVersion) : null;
     }
 
     public CompletableFuture<Void> refreshLatestBazelVersion(Project project, @Nullable BazelVersionLiteral currentVersion) {

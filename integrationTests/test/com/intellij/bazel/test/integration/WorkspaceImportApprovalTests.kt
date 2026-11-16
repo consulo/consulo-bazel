@@ -13,12 +13,11 @@ import com.intellij.testFramework.junit5.SystemProperty
 import com.intellij.testFramework.junit5.fixture.projectFixture
 import com.intellij.testFramework.replaceService
 import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import org.jetbrains.bazel.base.IdeStarterBaseProjectTest
 import org.jetbrains.bazel.languages.projectview.ProjectView
 import org.jetbrains.bazel.languages.projectview.ProjectViewFactory
 import org.jetbrains.bazel.languages.projectview.ProjectViewService
+import org.jetbrains.bazel.languages.projectview.checker.ProjectViewProblem
 import org.jetbrains.bazel.project.BazelProjectFixtures
 import org.jetbrains.bazel.test.framework.BazelPathManager
 import org.junit.jupiter.api.AfterEach
@@ -172,10 +171,10 @@ internal class WorkspaceImportApprovalTests {
       project.replaceService(
         serviceInterface = ProjectViewService::class.java,
         instance = object : ProjectViewService {
-          override val projectViewState: StateFlow<ProjectView>
-            get() = MutableStateFlow(ProjectViewFactory.from(project, projectView))
+          override val projectView: ProjectView
+            get() = checkNotNull(ProjectViewFactory.fromOrNull(project, projectView))
 
-          override suspend fun forceReparseCurrentProjectViewFiles() {}
+          override suspend fun forceReparseCurrentProjectViewFiles(onEachProblem: ((ProjectViewProblem) -> Unit)?) {}
 
           override val projectViewPath: Path = projectView
         },

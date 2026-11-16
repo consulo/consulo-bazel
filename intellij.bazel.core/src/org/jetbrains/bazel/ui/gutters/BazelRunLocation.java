@@ -4,17 +4,17 @@ import consulo.annotation.access.RequiredReadAction;
 import consulo.execution.action.PsiLocation;
 import consulo.language.psi.PsiElement;
 import consulo.project.Project;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 
 public class BazelRunLocation extends PsiLocation<PsiElement> {
-    private final BuildTarget myTarget;
+    private final BuildTargetInfo myTarget;
     /**
      * If provided, this can be, for example, a test method in PSI, from which a test filter can be derived.
      */
     private final PsiLocation<?> myOriginalLocation;
 
     public BazelRunLocation(
-        BuildTarget target,
+        BuildTargetInfo target,
         PsiLocation<?> originalLocation
     ) {
         super(originalLocation.getProject(), null, new PsiBazelTarget(originalLocation.getProject(), target));
@@ -26,11 +26,11 @@ public class BazelRunLocation extends PsiLocation<PsiElement> {
      * No other information except the target itself is available, e.g., from Bazel target tool window.
      */
     @RequiredReadAction
-    public BazelRunLocation(Project project, BuildTarget target) {
+    public BazelRunLocation(Project project, BuildTargetInfo target) {
         this(target, new PsiLocation<>(new PsiBazelTarget(project, target)));
     }
 
-    public BuildTarget getTarget() {
+    public BuildTargetInfo getTarget() {
         return myTarget;
     }
 

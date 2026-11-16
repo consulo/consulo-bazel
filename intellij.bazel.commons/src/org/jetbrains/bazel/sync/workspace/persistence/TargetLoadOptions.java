@@ -8,6 +8,8 @@ import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+// TODO: Remove completely in 2027.1
+
 /**
  * Describes which sections of a target are loaded eagerly.
  * Sections not loaded eagerly will be loaded at access time.
@@ -15,6 +17,7 @@ import java.util.Set;
  * @param sections   Eagerly loaded sections, everything not listed here is loaded lazily
  * @param targetData Select what {@link BuildTargetData} types to load eagerly
  */
+@Deprecated // Use dedicated BuildTarget/BuildTargetInfo loading
 public record TargetLoadOptions(
     Set<TargetSection> sections,
     BuildTargetLoadHint targetData

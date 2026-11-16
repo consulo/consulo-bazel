@@ -7,10 +7,10 @@ import org.jetbrains.bazel.commons.RepoMapping.LocalRepositoryMapping;
 import org.jetbrains.bazel.label.Label;
 import org.jetbrains.bazel.label.Label.Canonical;
 import org.jetbrains.bazel.label.Label.Main;
+import org.jetbrains.bazel.label.Label.RepoType;
 import org.jetbrains.bazel.label.Label.ResolvedLabel;
 import org.jspecify.annotations.Nullable;
 
-import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,8 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class BazelPathsResolver {
-    private static final String BAZEL_COMPONENT_SEPARATOR = "/";
-
     private final BazelInfo myBazelInfo;
 
     public BazelPathsResolver(BazelInfo bazelInfo) {
@@ -74,8 +72,7 @@ public class BazelPathsResolver {
             return fileLocation;
         }
         // Update relative path, keeping bazel's file-system hierarchy separator
-        String newRelativePath =
-            localPath.toString().replace(File.separator, BAZEL_COMPONENT_SEPARATOR) + "/" + fileLocation.getRelativePath();
+        String newRelativePath = invariantSeparatorsPathString(localPath) + "/" + fileLocation.getRelativePath();
         return ArtifactLocation.newBuilder()
             .setRootPath("")
             .setRelativePath(newRelativePath)
@@ -157,10 +154,10 @@ public class BazelPathsResolver {
      * converts a path object to a relative path string with Bazel separator
      */
     public String getWorkspaceRelativePath(Path path) {
-        return myBazelInfo.workspaceRoot()
-            .relativize(path)
-            .toString()
-            .replace(File.separator, BAZEL_COMPONENT_SEPARATOR);
+        return invariantSeparatorsPathString(
+            myBazelInfo.workspaceRoot()
+                .relativize(path)
+        );
     }
 
     public Path resolve(Path path) {
@@ -176,33 +173,63 @@ public class BazelPathsResolver {
     }
 
     public Path toDirectoryPath(ResolvedLabel label, RepoMapping repoMapping) {
-        Path repoPath = repoMapping instanceof BzlmodRepoMapping bzlmodRepoMapping ? toRepoPath(label, bzlmodRepoMapping) : null;
-        if (repoPath == null) {
-            repoPath = toRepoPathForBazel7(label);
-        }
-        return repoPath.resolve(Label.toPath(label.packagePath()));
+        return toRepositoryPath(label.repo(), repoMapping).resolve(Label.toPath(label.packagePath()));
     }
 
-    private @Nullable Path toRepoPath(ResolvedLabel receiver, BzlmodRepoMapping repoMapping) {
-        String canonicalName;
-        if (receiver.repo() instanceof Canonical || receiver.repo() instanceof Main) {
-            canonicalName = receiver.repo().repoName();
+    /**
+     * Returns the root directory of the repository of {@code repo}.
+     * This is the workspace root for the main repository and the source directory for a local repository.
+     * For another external repository, this is its directory under the output base.
+     * The path is normalized, because a {@code local_path_override} path can contain {@code .} and {@code ..} segments.
+     */
+    public Path toRepositoryPath(RepoType repo, RepoMapping repoMapping) {
+        Path repoPath = repoMapping instanceof BzlmodRepoMapping bzlmodRepoMapping ? toRepoPath(repo, bzlmodRepoMapping) : null;
+        if (repoPath == null) {
+            repoPath = toRepoPathForBazel7(repo);
+        }
+        return repoPath.normalize();
+    }
+
+    /**
+     * Returns the directory under {@code bazel-bin} that holds the outputs of the repository of {@code repo}.
+     */
+    public Path toBinRepositoryPath(RepoType repo, RepoMapping repoMapping) {
+        if (repo instanceof Main) {
+            return myBazelInfo.bazelBin();
+        }
+        String canonicalName = repoMapping instanceof BzlmodRepoMapping bzlmodRepoMapping ? canonicalRepoName(repo, bzlmodRepoMapping) : null;
+        if (canonicalName == null) {
+            canonicalName = repo.repoName();
+        }
+        return myBazelInfo.bazelBin().resolve("external").resolve(canonicalName);
+    }
+
+    private @Nullable Path toRepoPath(RepoType receiver, BzlmodRepoMapping repoMapping) {
+        String canonicalName = canonicalRepoName(receiver, repoMapping);
+        return canonicalName == null ? null : repoMapping.getCanonicalRepoNameToPath().get(canonicalName);
+    }
+
+    private @Nullable String canonicalRepoName(RepoType receiver, BzlmodRepoMapping repoMapping) {
+        if (receiver instanceof Canonical || receiver instanceof Main) {
+            return receiver.repoName();
         }
         else {
-            canonicalName = repoMapping.getApparentRepoNameToCanonicalName().get(receiver.repo().repoName());
-            if (canonicalName == null) {
-                return null;
-            }
+            return repoMapping.getApparentRepoNameToCanonicalName().get(receiver.repoName());
         }
-        return repoMapping.getCanonicalRepoNameToPath().get(canonicalName);
     }
 
-    private Path toRepoPathForBazel7(ResolvedLabel receiver) {
-        if (receiver.repo() instanceof Main) {
+    private Path toRepoPathForBazel7(RepoType receiver) {
+        if (receiver instanceof Main) {
             return myBazelInfo.workspaceRoot();
         }
         else {
-            return relativePathToExecRootAbsolute(Path.of("external", receiver.repo().repoName()));
+            return relativePathToExecRootAbsolute(Path.of("external", receiver.repoName()));
         }
+    }
+
+    // consulo: Kotlin Path.invariantSeparatorsPathString
+    private static String invariantSeparatorsPathString(Path path) {
+        String separator = path.getFileSystem().getSeparator();
+        return separator.equals("/") ? path.toString() : path.toString().replace(separator, "/");
     }
 }

@@ -55,7 +55,8 @@ public class BazelBuildTaskListener implements BazelTaskListener {
         int line,
         int character,
         MessageEvent.Kind severity,
-        String message
+        String message,
+        @Nullable String description
     ) {
         @Nullable Path path = textDocument;
         if (textDocument != null) {
@@ -70,7 +71,7 @@ public class BazelBuildTaskListener implements BazelTaskListener {
             line,
             character,
             LocalizeValue.of(message),
-            null,
+            description,
             severity
         );
     }

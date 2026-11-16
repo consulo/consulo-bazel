@@ -96,14 +96,9 @@ public class ReplaceWithIndexQuickFix extends LocalQuickFixAndIntentionActionOnP
         sections.forEach(it -> Utils.deleteContent(it));
     }
 
-    // consulo: upstream getPresentation(context, element) returned Presentation.of(text)
+    // consulo: upstream getFamilyName(); Consulo intention actions have no family name, the text is the family name of upstream
     @Override
     public LocalizeValue getText() {
         return BazelProjectViewLocalize.quickfixDeprecatedSectionReplacePresentation(myTargetSectionName);
-    }
-
-    // consulo: Consulo intention actions have no family name; kept from upstream
-    public LocalizeValue getFamilyName() {
-        return BazelProjectViewLocalize.quickfixDeprecatedSectionReplaceDescription();
     }
 }

@@ -1,6 +1,5 @@
 package org.jetbrains.bazel.server.bep;
 
-import com.google.common.collect.Queues;
 import consulo.logging.Logger;
 import org.jetbrains.bazel.commons.BazelInfo.BazelRelease;
 import org.jetbrains.bazel.server.bep.BepOutputBuilder.TextProtoDepSet;
@@ -10,7 +9,6 @@ import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceTargetKey;
 
 import java.nio.file.Path;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -48,6 +46,14 @@ public class BepOutput {
         this(Set.of(), Map.of(), Set.of(), List.of(), Map.of(), BazelRelease.FALLBACK_VERSION);
     }
 
+    Set<String> getInfoOutputGroupFileSets() {
+        return myInfoOutputGroupFileSets;
+    }
+
+    Map<String, TextProtoDepSet> getTextProtoFileSets() {
+        return myTextProtoFileSets;
+    }
+
     public List<String> getOptions() {
         return myOptions;
     }
@@ -74,7 +80,7 @@ public class BepOutput {
             return Set.of();
         }
         Set<Path> result = new HashSet<>(rootIds.size());
-        ArrayDeque<String> toVisit = Queues.newArrayDeque(rootIds);
+        ArrayDeque<String> toVisit = new ArrayDeque<>(rootIds);
         Set<String> visited = new HashSet<>(rootIds);
         while (!toVisit.isEmpty()) {
             String fileSetId = toVisit.remove();
@@ -119,54 +125,15 @@ public class BepOutput {
         );
     }
 
-
     public BepOutput merge(BepOutput anotherBepOutput) {
-        Set<String> infoOutputGroupFileSets = new LinkedHashSet<>(myInfoOutputGroupFileSets);
-        infoOutputGroupFileSets.addAll(anotherBepOutput.myInfoOutputGroupFileSets);
-
-        Set<String> textProtoFileSetKeys = new LinkedHashSet<>(myTextProtoFileSets.keySet());
-        textProtoFileSetKeys.addAll(anotherBepOutput.myTextProtoFileSets.keySet());
-        Map<String, TextProtoDepSet> textProtoFileSets = new LinkedHashMap<>();
-        for (String k : textProtoFileSetKeys) {
-            TextProtoDepSet left = myTextProtoFileSets.getOrDefault(k, new TextProtoDepSet(List.of(), List.of()));
-            TextProtoDepSet right = anotherBepOutput.myTextProtoFileSets.getOrDefault(k, new TextProtoDepSet(List.of(), List.of()));
-            List<Path> files = new ArrayList<>(left.files());
-            files.addAll(right.files());
-            List<String> children = new ArrayList<>(left.children());
-            children.addAll(right.children());
-            textProtoFileSets.put(k, new TextProtoDepSet(files, children));
-        }
-
-        Set<WorkspaceTargetKey> rootTargets = new LinkedHashSet<>(myRootTargets);
-        rootTargets.addAll(anotherBepOutput.myRootTargets);
-
-        List<String> options = new ArrayList<>(myOptions);
-        options.addAll(anotherBepOutput.myOptions);
-
-        Map<WorkspaceConfigurationId, WorkspaceConfiguration> configurations = new LinkedHashMap<>(myConfigurations);
-        configurations.putAll(anotherBepOutput.myConfigurations);
-
-        // pick first that isn't `BazelRelease.FALLBACK_VERSION`
-        BazelRelease buildToolVersion;
-        if (!myBuildToolVersion.equals(BazelRelease.FALLBACK_VERSION)) {
-            buildToolVersion = myBuildToolVersion;
-        }
-        else if (!anotherBepOutput.myBuildToolVersion.equals(BazelRelease.FALLBACK_VERSION)) {
-            buildToolVersion = anotherBepOutput.myBuildToolVersion;
-        }
-        else {
-            buildToolVersion = BazelRelease.FALLBACK_VERSION;
-        }
-
-        return new BepOutput(
-            infoOutputGroupFileSets,
-            textProtoFileSets,
-            rootTargets,
-            options,
-            configurations,
-            buildToolVersion
-        );
+        return mergeAll(List.of(this, anotherBepOutput));
     }
 
     private static final Logger LOG = Logger.getInstance(BepOutput.class);
+
+    public static BepOutput mergeAll(Iterable<BepOutput> outputs) {
+        BepOutputBuilder builder = new BepOutputBuilder();
+        outputs.forEach(builder::add);
+        return builder.build();
+    }
 }

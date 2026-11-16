@@ -21,8 +21,6 @@ import org.jetbrains.bazel.commons.RepoMapping;
 import org.jetbrains.bazel.commons.constants.Constants;
 import org.jetbrains.bazel.coroutines.BazelCoroutineService;
 import org.jetbrains.bazel.label.Label;
-import org.jetbrains.bazel.languages.projectview.ProjectView;
-import org.jetbrains.bazel.languages.projectview.ProjectViewService;
 import org.jetbrains.bazel.progress.TaskConsole;
 import org.jetbrains.bazel.progress.util;
 import org.jetbrains.bazel.run.task.BazelBuildTaskListener;
@@ -30,6 +28,7 @@ import org.jetbrains.bazel.server.BazelServerConnection;
 import org.jetbrains.bazel.server.BazelServerFacade;
 import org.jetbrains.bazel.sync.ProjectPostSyncHook;
 import org.jetbrains.bazel.sync.ProjectPreSyncHook;
+import org.jetbrains.bazel.sync.ProjectSyncAbortException;
 import org.jetbrains.bazel.sync.ProjectSyncHook;
 import org.jetbrains.bazel.sync.ProjectSyncHook.ProjectSyncHookEnvironment;
 import org.jetbrains.bazel.sync.ProjectSyncOutcome;
@@ -41,7 +40,6 @@ import org.jetbrains.bazel.sync.projectStructure.ProjectModelApplicationTask;
 import org.jetbrains.bazel.sync.status.SyncStatusService.SyncAlreadyInProgressException;
 import org.jetbrains.bazel.sync.status.SyncStatusService;
 import org.jetbrains.bazel.sync.task.ProjectSyncResult.ProjectSyncPhase;
-import org.jetbrains.bazel.sync.task.ProjectSyncResult.ProjectSyncPhaseDuration;
 import org.jetbrains.bazel.sync.task.SyncWorkspaceProvider.SyncPhase;
 import org.jetbrains.bazel.sync.task.SyncWorkspaceProvider.SyncWorkspaceContext;
 import org.jetbrains.bazel.sync.task.SyncWorkspaceProvider.SyncWorkspaceStatus;
@@ -50,7 +48,7 @@ import org.jetbrains.bazel.sync.workspace.persistence.WorkspaceSnapshotService;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.target.TargetStorage;
 import org.jetbrains.bazel.taskEvents.BazelTaskEventsService;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.TaskId;
 import org.jetbrains.bsp.protocol.TaskId.TaskGroupId;
 import org.jspecify.annotations.Nullable;
@@ -58,12 +56,15 @@ import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 // consulo: suspend functions return CompletableFuture; the workspace model (MutableEntityStorage) is the classic
 // BazelModelBuilder; telemetry and usage statistics are not ported
@@ -274,7 +275,7 @@ public class ProjectSyncTask {
     private CompletableFuture<ProjectSyncResult> doSync(TaskId taskId, SyncPhase phase, boolean buildProject) {
         LocalizeValue syncActivityName = BazelBackendLocalize.consoleTaskSyncActivityName(Constants.BAZEL_DISPLAY_NAME);
         SaveAndSyncHandler saveAndSyncHandler = SaveAndSyncHandler.getInstance();
-        List<ProjectSyncPhaseDuration> phaseDurations = new ArrayList<>();
+        Map<ProjectSyncPhase, Long> phaseDurations = new ConcurrentHashMap<>();
         CompletableFuture<ProjectSyncResult> pipeline = preSync().thenCompose(ignored -> {
             // consulo: withBackgroundProgress + reportSequentialProgress -> background task with a progress indicator,
             // UnindexedFilesScannerExecutor.suspendScanningAndIndexingThenExecute -> DumbService.suspendIndexingAndRun,
@@ -301,13 +302,16 @@ public class ProjectSyncTask {
         return pipeline.handle((syncResult, error) -> {
             if (error == null) {
                 // consulo: SaveAndSyncHandler.scheduleProjectSave has no Consulo counterpart, the project is saved by the platform
-                return new ProjectSyncResult(syncResult.completionResult(), syncResult.statistics(), List.copyOf(phaseDurations), syncResult.failureCause());
+                return syncResult.withPhaseDurations(phaseDurations);
             }
             Throwable e = unwrap(error);
             if (e instanceof CancellationException) {
-                return new ProjectSyncResult(ProjectSyncCompletionResult.CANCELLED, null, List.copyOf(phaseDurations), e);
+                return new ProjectSyncResult(ProjectSyncCompletionResult.CANCELLED, e).withPhaseDurations(phaseDurations);
             }
-            return new ProjectSyncResult(ProjectSyncCompletionResult.FAILURE, null, List.copyOf(phaseDurations), e);
+            if (e instanceof ProjectSyncAbortException) {
+                return new ProjectSyncResult(ProjectSyncCompletionResult.FAILURE).withPhaseDurations(phaseDurations);
+            }
+            return new ProjectSyncResult(ProjectSyncCompletionResult.FAILURE, e).withPhaseDurations(phaseDurations);
         });
     }
 
@@ -316,20 +320,11 @@ public class ProjectSyncTask {
         TaskId taskId,
         SyncPhase phase,
         boolean buildProject,
-        List<ProjectSyncPhaseDuration> phaseDurations
+        Map<ProjectSyncPhase, Long> phaseDurations
     ) {
         boolean[] shouldUpdateProjectModel = {false};
         ProjectSyncScope[] syncScope = {myScope};
         CompletableFuture<ProjectSyncResult> pipeline = executePreSyncHooks(progressReporter, taskId).thenCompose(ignored -> {
-            // A required `import` in the project view (e.g. `import local.bazelproject`) whose file is
-            // missing leaves the project view effectively empty. Without stopping here the sync still
-            // contacts the Bazel server and tries to resolve configurations/targets from that empty view,
-            // which fails slowly with misleading secondary errors instead of the real cause. Stop now;
-            // the offending import was already reported as an error by ReparseProjectViewFilePreSyncHook.
-            if (!ProjectView.unresolvedRequiredImports(ProjectViewService.getInstance(myProject).getProjectView()).isEmpty()) {
-                return CompletableFuture.completedFuture(new ProjectSyncResult(ProjectSyncCompletionResult.FAILURE));
-            }
-
             return BazelServerConnection.getConnection(myProject).runWithServer(taskId, server ->
                 withOutFileHardLinksSync(
                     server,
@@ -367,7 +362,7 @@ public class ProjectSyncTask {
         TaskId taskId,
         SyncPhase phase,
         boolean buildProject,
-        List<ProjectSyncPhaseDuration> phaseDurations
+        Map<ProjectSyncPhase, Long> phaseDurations
     ) {
         String deprecated = server.getBazelInfo().release().deprecated();
         if (deprecated != null) {
@@ -392,7 +387,7 @@ public class ProjectSyncTask {
 
         BazelModelBuilder storage = Application.get().runReadAction((java.util.function.Supplier<BazelModelBuilder>) () -> new BazelModelBuilder(myProject));
 
-        return ProjectSyncResult.<SyncWorkspaceUpdate>trackSyncPhase(phaseDurations, ProjectSyncPhase.COLLECT_PROJECT_DETAILS, () ->
+        return this.<SyncWorkspaceUpdate>trackSyncPhase(phaseDurations, ProjectSyncPhase.COLLECT_PROJECT_DETAILS, () ->
             util.<SyncWorkspaceUpdate>withSubtask(
                 util.getSyncConsole(myProject),
                 taskId.subTask("base-project-sync-subtask-id"),
@@ -427,23 +422,17 @@ public class ProjectSyncTask {
             if (syncWorkspace.status() == SyncWorkspaceStatus.FATAL) {
                 storage.dispose();
                 return CompletableFuture.completedFuture(Pair.<ProjectSyncResult, @Nullable ProjectSyncScope>create(
-                    new ProjectSyncResult(
-                        ProjectSyncCompletionResult.FAILURE,
-                        ProjectSyncResult.syncStatistics(List.of()),
-                        List.of(),
-                        null
-                    ),
+                    new ProjectSyncResult(ProjectSyncCompletionResult.FAILURE),
                     null
                 ));
             }
 
             WorkspaceSnapshot workspaceSnapshot = syncWorkspace.snapshot();
-            List<BuildTarget> syncedTargets = workspaceSnapshot.targets().allTargets().toList();
-            ProjectSyncResult.ProjectSyncStatistics statistics = ProjectSyncResult.syncStatistics(syncedTargets);
+            List<BuildTargetInfo> syncedTargets = workspaceSnapshot.targets().allTargetInfos().toList();
             if (phase == SyncPhase.FIRST) {
                 List<Label> ids = new ArrayList<>();
-                for (BuildTarget it : syncedTargets) {
-                    ids.add(BuildTarget.getId(it));
+                for (BuildTargetInfo it : syncedTargets) {
+                    ids.add(it.id());
                 }
                 myAllKnownTargets = ids;
                 myKnownRepoMapping = workspaceSnapshot.repoMapping();
@@ -480,7 +469,7 @@ public class ProjectSyncTask {
                     }
                 ))
                 .thenCompose(ignored -> server.getOutFileHardLinks().onBeforeProjectModelUpdate())
-                .thenCompose(ignored -> ProjectSyncResult.<Void>trackSyncPhase(phaseDurations, ProjectSyncPhase.APPLY_PROJECT_MODEL, () ->
+                .thenCompose(ignored -> this.<Void>trackSyncPhase(phaseDurations, ProjectSyncPhase.APPLY_PROJECT_MODEL, () ->
                     updateProjectModel(progressReporter, storage, taskId)
                         .thenCompose(ignored2 -> importerHelper.invokeLate(progressReporter, workspaceSnapshot, taskId))
                 ))
@@ -489,8 +478,12 @@ public class ProjectSyncTask {
                         syncWorkspace.status() == SyncWorkspaceStatus.PARTIAL
                             ? ProjectSyncCompletionResult.PARTIAL_SUCCESS
                             : ProjectSyncCompletionResult.SUCCESS,
-                        statistics,
-                        List.of(),
+                        new ProjectSyncResult.ProjectSyncStatistics(
+                            syncedTargets.size(),
+                            syncedTargets.stream().map(it -> it.kind().languageClasses()).toList(),
+                            importerHelper.getTimePerImporter(),
+                            Map.of()
+                        ),
                         null
                     ),
                     syncWorkspace.scope()
@@ -578,35 +571,31 @@ public class ProjectSyncTask {
     private <T> CompletableFuture<Void> forEachSubtask(List<T> receiver, TaskId taskId, Function<T, CompletableFuture<Void>> action) {
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
         for (T item : receiver) {
-            chain = chain.thenCompose(ignored -> {
-                CompletableFuture<Void> result;
-                try {
-                    result = action.apply(item);
-                }
-                catch (Throwable e) {
-                    result = CompletableFuture.failedFuture(e);
-                }
-                return result.exceptionally(error -> {
-                    Throwable e = unwrap(error);
-                    if (e instanceof CancellationException) {
-                        throw new CompletionException(e);
-                    }
-                    TaskConsole syncConsole = util.getSyncConsole(myProject);
-                    if (syncConsole.registerException(taskId, e)) {
-                        syncConsole.addDiagnosticMessage(
-                            taskId,
-                            null, -1, -1,
-                            LocalizeValue.of(e.getMessage() != null ? e.getMessage() : "Unknown error"),
-                            null,
-                            MessageEvent.Kind.ERROR
-                        );
-                    }
-                    LOG.error(e);
-                    return null;
-                });
-            });
+            chain = chain.thenCompose(ignored ->
+                util.isolateSubtaskFailure(util.getSyncConsole(myProject), taskId, () -> action.apply(item)).thenAccept(result -> {
+                })
+            );
         }
         return chain;
+    }
+
+    private <T> CompletableFuture<T> trackSyncPhase(
+        Map<ProjectSyncPhase, Long> receiver,
+        ProjectSyncPhase phase,
+        Supplier<CompletableFuture<T>> action
+    ) {
+        long startedAt = System.currentTimeMillis();
+        CompletableFuture<T> result;
+        try {
+            result = action.get();
+        }
+        catch (Throwable e) {
+            result = CompletableFuture.failedFuture(e);
+        }
+        // consulo: the upstream finally block runs when the future completes
+        return result.whenComplete(
+            (value, error) -> receiver.merge(phase, System.currentTimeMillis() - startedAt, Long::sum)
+        );
     }
 
     private static Throwable unwrap(Throwable error) {

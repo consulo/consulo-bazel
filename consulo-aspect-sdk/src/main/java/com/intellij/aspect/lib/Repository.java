@@ -16,7 +16,7 @@
 package com.intellij.aspect.lib;
 
 // consulo: declared in upstream sdk/lib/loads.kt
-public sealed interface Repository permits Repository.Relative, Repository.Absolute, Repository.External {
+sealed interface Repository permits Repository.Relative, Repository.Absolute, Repository.External {
     final class Relative implements Repository {
         public static final Relative INSTANCE = new Relative();
 

@@ -131,7 +131,7 @@ public class StarlarkDebugRunner extends AsyncProgramRunner<StarlarkDebugRunner.
         int port,
         StarlarkDebugTaskListener taskListener,
         Label target,
-        CompletableFuture<AnalysisDebugResult> futureProxy
+        CompletableFuture<Integer> futureProxy
     ) {
         return BazelServerConnection.getConnection(project).runWithServer(server ->
             CompletableFuture.<CompletableFuture<?>>completedFuture(
@@ -148,7 +148,7 @@ public class StarlarkDebugRunner extends AsyncProgramRunner<StarlarkDebugRunner.
         StarlarkDebugTaskListener taskListener,
         Label target,
         BazelServerFacade server,
-        CompletableFuture<AnalysisDebugResult> futureProxy
+        CompletableFuture<Integer> futureProxy
     ) {
         byte[] randomBytes = new byte[8];
         ThreadLocalRandom.current().nextBytes(randomBytes);
@@ -160,7 +160,7 @@ public class StarlarkDebugRunner extends AsyncProgramRunner<StarlarkDebugRunner.
         return buildDeferred.handle((result, e) -> {
             try {
                 if (e == null) {
-                    futureProxy.complete(result);
+                    futureProxy.complete(result.exitCode());
                 }
                 else {
                     buildDeferred.cancel(true);

@@ -20,6 +20,8 @@ import org.jetbrains.bazel.run.BazelRunHandler;
 import org.jetbrains.bazel.run.RunHandlerProvider;
 import org.jetbrains.bazel.run.config.BazelRunConfiguration;
 import org.jetbrains.bazel.run.config.BazelRunConfigurationType;
+import org.jetbrains.bazel.run.handler.GenericRunHandlerProvider;
+import org.jetbrains.bazel.run.handler.GenericTestHandlerProvider;
 import org.jetbrains.bazel.run.state.Common;
 import org.jetbrains.bazel.sync.ProjectSyncHook;
 import org.jspecify.annotations.Nullable;
@@ -98,7 +100,7 @@ public class ImportRunConfigurationsSyncHook implements ProjectSyncHook {
         return element.getName().equals("configuration") ? element : null;
     }
 
-    private RunnerAndConfigurationSettings loadGoogleBazelRunConfiguration(Project project, Element runConfigurationXml) {
+    private @Nullable RunnerAndConfigurationSettings loadGoogleBazelRunConfiguration(Project project, Element runConfigurationXml) {
         String name = Objects.requireNonNull(runConfigurationXml.getAttributeValue("name"));
         Element blazeSettings = Objects.requireNonNull(runConfigurationXml.getChild("blaze-settings"));
         String googleHandlerId = Objects.requireNonNull(blazeSettings.getAttributeValue("handler-id"));
@@ -127,8 +129,18 @@ public class ImportRunConfigurationsSyncHook implements ProjectSyncHook {
         BazelRunConfiguration configuration = (BazelRunConfiguration) settings.getConfiguration();
         List<Label> targets = List.of(target);
         RunHandlerProvider googleRunHandler = GooglePluginAwareRunHandlerProvider.getRunHandlerProvider(googleHandlerId, bazelCommand);
-        RunHandlerProvider runHandler =
-            googleRunHandler != null ? googleRunHandler : RunHandlerProvider.getRunHandlerProviderOrThrow(project, targets);
+        RunHandlerProvider runHandler = googleRunHandler;
+        if (runHandler == null) {
+            RunHandlerProvider provider = RunHandlerProvider.getRunHandlerProviderOrNull(project, targets);
+            if (provider != null && !(provider instanceof GenericRunHandlerProvider || provider instanceof GenericTestHandlerProvider)) {
+                runHandler = provider;
+            }
+        }
+        if (runHandler == null) {
+            runHandler = GooglePluginAwareRunHandlerProvider.isTestCommand(bazelCommand)
+                ? new GenericTestHandlerProvider()
+                : new GenericRunHandlerProvider();
+        }
         configuration.updateTargets(targets, runHandler);
         BazelRunHandler handler = configuration.getHandler();
         BazelRunConfigurationState<?> state = handler == null ? null : handler.getState();

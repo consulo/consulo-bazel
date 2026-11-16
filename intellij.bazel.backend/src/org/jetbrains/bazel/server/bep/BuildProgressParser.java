@@ -24,7 +24,9 @@ public class BuildProgressParser {
         ActionMatch action = null;
         String phaseInChunk = null;
         for (int i = lines.size() - 1; i >= 0; i--) {
-            String trimmed = lines.get(i).trim();
+            String whitesapaceTrimmed = lines.get(i).trim();
+            Matcher timestampMatch = TIMESTAMP_REGEX.matcher(whitesapaceTrimmed);
+            String trimmed = timestampMatch.matches() ? timestampMatch.group("rest") : whitesapaceTrimmed;
             if (action == null) {
                 action = parseActionLine(trimmed);
             }
@@ -83,6 +85,8 @@ public class BuildProgressParser {
     private record ActionMatch(String line, @Nullable String details, double fraction) {
     }
 
+    private static final Pattern TIMESTAMP_REGEX =
+        Pattern.compile("(?<timestamp>\\([0-9][0-9]:[0-9][0-9]:[0-9][0-9]\\) )(?<rest>.*)");
     private static final Pattern PROGRESS_OUTPUT_REGEX =
         Pattern.compile("\\[(?<progress>[.,0-9]+)\\s*/\\s*(?<total>[.,0-9]+)]\\s*(?<details>.*)");
     private static final Pattern EVERYTHING_EXCEPT_DIGITS_REGEX = Pattern.compile("[^0-9]");

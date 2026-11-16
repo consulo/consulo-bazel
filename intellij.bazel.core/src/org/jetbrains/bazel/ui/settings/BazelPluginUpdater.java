@@ -3,6 +3,8 @@ package org.jetbrains.bazel.ui.settings;
 import consulo.container.plugin.PluginDescriptor;
 import consulo.container.plugin.PluginId;
 import consulo.container.plugin.PluginManager;
+import org.jetbrains.bazel.settings.bazel.BazelApplicationSettingsService;
+import org.jetbrains.bazel.settings.bazel.UpdateChannel;
 import org.jspecify.annotations.Nullable;
 
 // TODO consulo: UpdateChecker, UpdateSettings.storedPluginHosts and IdeaPluginDescriptorImpl/PluginMainDescriptor
@@ -36,7 +38,7 @@ public final class BazelPluginUpdater {
         }
         // TODO consulo: UpdateSettings.storedPluginHosts is missing
         //val updateSettings = UpdateSettings.getInstance()
-        //val nightlyRepo = UpdateChannel.NIGHTLY.getPluginUrlFromId(BAZEL_PLUGIN_ID)
+        //val nightlyRepo = UpdateChannel.NIGHTLY.bazelPluginUrl
         //updateSettings.storedPluginHosts.remove(nightlyRepo)
         //
         //when (newUpdateChannel) {

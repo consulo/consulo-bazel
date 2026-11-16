@@ -1,21 +1,23 @@
 package org.jetbrains.bazel.workspace.importer
 
+import com.intellij.testFramework.junit5.fixture.tempPathFixture
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSingleElement
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe
 import org.jetbrains.bazel.commons.RuleType
 import org.jetbrains.bazel.commons.TargetKind
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner
 import org.jetbrains.bazel.label.Label
 import org.jetbrains.bazel.sync.JavaLanguageClass
 import org.jetbrains.bazel.sync.workspace.languages.jvm.JvmBuildTarget
 import org.jetbrains.bazel.sync.workspace.languages.jvm.KotlinBuildTarget
 import org.jetbrains.bazel.sync.workspace.languages.jvm.ScalaBuildTarget
-import org.jetbrains.bazel.test.framework.target.TestBuildTarget
+import org.jetbrains.bazel.test.framework.BazelTestApplication
 import org.jetbrains.bazel.workspace.model.test.framework.createTestBuildTarget
 import org.jetbrains.bazel.workspace.model.test.framework.resolveTestLocation
 import org.jetbrains.bazel.workspace.model.test.framework.testLocation
-import org.jetbrains.bazel.workspace.model.test.framework.MockProjectBaseTest
+import org.jetbrains.bsp.protocol.BuildTarget
 import org.jetbrains.bsp.protocol.BuildTargetData
 import org.jetbrains.bsp.protocol.StringsCollection
 import org.junit.jupiter.api.DynamicTest
@@ -27,14 +29,13 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.createFile
 import kotlin.io.path.createSymbolicLinkPointingTo
 
-class ResourceRootBuilderTest : MockProjectBaseTest() {
-
-  private val projectName = "test-project"
+@BazelTestApplication
+class ResourceRootBuilderTest {
 
   @TempDir
   private lateinit var tempDir: Path
 
-  private val projectRoot: Path get() = projectDir.get()
+  private val projectRoot by tempPathFixture()
 
   @Test
   fun `should mark resources as JAVA_RESOURCE_ROOT_TYPE by default`() {
@@ -234,6 +235,67 @@ class ResourceRootBuilderTest : MockProjectBaseTest() {
     val roots = resolve(target)
 
     roots.map { it.resourcePath } shouldContainExactlyInAnyOrder listOf(srcMainResources, javaPrefix, javatestsPrefix)
+  }
+
+  @Test
+  fun `should ignore a Java root above the workspace root`() {
+    val workspaceRoot = projectRoot.resolve("src/repo")
+    val javaPrefix = workspaceRoot.resolve("res/java")
+    val resource = javaPrefix.resolve("foo/a.txt").also { it.parent.createDirectories() }.createFile()
+    val target = javaTarget(resources = listOf(resource))
+
+    val roots = resolve(target, workspaceRoot = workspaceRoot)
+
+    roots.map { it.resourcePath } shouldContainExactlyInAnyOrder listOf(javaPrefix)
+  }
+
+  @Test
+  fun `should find a Maven layout below a nested src directory`() {
+    val srcMainJava = projectRoot.resolve("src/foo/src/main/java")
+    val resource = srcMainJava.resolve("a.txt").also { it.parent.createDirectories() }.createFile()
+    val target = javaTarget(resources = listOf(resource))
+
+    val roots = resolve(target)
+
+    roots.map { it.resourcePath } shouldContainExactlyInAnyOrder listOf(srcMainJava)
+  }
+
+  @Test
+  fun `should find a nested src root below a java directory at the workspace root`() {
+    val nestedSrc = projectRoot.resolve("java/x/src")
+    val resource = nestedSrc.resolve("com/foo/a.txt").also { it.parent.createDirectories() }.createFile()
+    val target = javaTarget(resources = listOf(resource))
+
+    val roots = resolve(target)
+
+    roots.map { it.resourcePath } shouldContainExactlyInAnyOrder listOf(nestedSrc)
+  }
+
+  @Test
+  fun `should ignore a Kotlin marker above the workspace root`() {
+    val workspaceRoot = projectRoot.resolve("src/repo").createDirectories()
+    workspaceRoot.resolve("BUILD").createFile()
+    val resources = workspaceRoot.resolve("app/src/main/resources")
+    val flat = resources.resolve("a.txt").also { it.parent.createDirectories() }.createFile()
+    val nested = resources.resolve("x/b.txt").also { it.parent.createDirectories() }.createFile()
+    val target = kotlinTarget(resources = listOf(flat, nested))
+
+    val roots = resolve(target, workspaceRoot = workspaceRoot)
+
+    roots.map { it.resourcePath to it.relativeOutputPath } shouldContainExactlyInAnyOrder listOf(resources to "")
+  }
+
+  @Test
+  fun `should ignore a Scala marker above the workspace root`() {
+    val workspaceRoot = projectRoot.resolve("java/repo").createDirectories()
+    workspaceRoot.resolve("BUILD").createFile()
+    val resources = workspaceRoot.resolve("app/resources")
+    val resource = resources.resolve("c.txt").also { it.parent.createDirectories() }.createFile()
+    val target = scalaTarget(resources = listOf(resource))
+
+    val roots = resolve(target, workspaceRoot = workspaceRoot)
+
+    roots.map { it.resourcePath to it.relativeOutputPath } shouldContainExactlyInAnyOrder listOf(resources to "")
   }
 
   @Test
@@ -840,12 +902,11 @@ class ResourceRootBuilderTest : MockProjectBaseTest() {
     }
   }
 
-  private fun resolve(target: TestBuildTarget, sourceContentRoots: List<Path> = emptyList(), baseDirectory: Path? = null) =
+  private fun resolve(target: BuildTarget, baseDirectory: Path? = null, workspaceRoot: Path = projectRoot) =
     ResourceRootBuilder.resolve(
       target = target,
       baseDirectory = baseDirectory,
-      bazelProjectName = projectName,
-      workspaceRoot = projectRoot,
+      symlinksScanner = BazelConvenienceSymlinksScanner(workspaceRoot),
       resolveLocation = ::resolveTestLocation,
     )
 
@@ -856,7 +917,7 @@ class ResourceRootBuilderTest : MockProjectBaseTest() {
     resources: List<Path> = emptyList(),
     data: List<BuildTargetData> = listOf(JvmBuildTarget()),
     isTestOnly: Boolean = false,
-  ): TestBuildTarget = createTestBuildTarget(
+  ): BuildTarget = createTestBuildTarget(
     id = Label.parse(label),
     kind = TargetKind(
       kind = "java_library",
@@ -882,7 +943,7 @@ class ResourceRootBuilderTest : MockProjectBaseTest() {
         moduleName = null,
       ),
     ),
-  ): TestBuildTarget = createTestBuildTarget(
+  ): BuildTarget = createTestBuildTarget(
     id = Label.parse(label),
     kind = TargetKind(
       kind = "kt_jvm_library",
@@ -904,7 +965,7 @@ class ResourceRootBuilderTest : MockProjectBaseTest() {
         scalacOptions = StringsCollection.EMPTY,
       ),
     ),
-  ): TestBuildTarget = createTestBuildTarget(
+  ): BuildTarget = createTestBuildTarget(
     id = Label.parse(label),
     kind = TargetKind(
       kind = "scala_library",
@@ -919,7 +980,7 @@ class ResourceRootBuilderTest : MockProjectBaseTest() {
   private fun filegroupTarget(
     label: String = "//target",
     resources: List<Path> = emptyList(),
-  ): TestBuildTarget = createTestBuildTarget(
+  ): BuildTarget = createTestBuildTarget(
     id = Label.parse(label),
     kind = TargetKind(
       kind = "filegroup",

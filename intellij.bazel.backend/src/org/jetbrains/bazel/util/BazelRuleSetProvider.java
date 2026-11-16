@@ -10,6 +10,7 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 @ExtensionAPI(ComponentScope.APPLICATION)
@@ -29,7 +30,13 @@ public interface BazelRuleSetProvider {
         boolean isBundled,
         List<String> autoloadHints,
         List<String> hostLocations,
-        @Nullable String deprecated
+        @Nullable String deprecated,
+        /*
+         * An optional requirement that only a certain minimal version of this rule set can be used, together
+         * with a regular expression describing how the version can be read off from the URL.
+         */
+        @Nullable Integer minimalVersion,
+        @Nullable Pattern versionRegex
     ) {
         // consulo: overloads for the upstream default arguments
         public BazelRuleSet(Rules aspectLanguage, List<String> rulesetNames, boolean isBundled) {
@@ -48,6 +55,17 @@ public interface BazelRuleSetProvider {
             List<String> hostLocations
         ) {
             this(aspectLanguage, rulesetNames, isBundled, autoloadHints, hostLocations, null);
+        }
+
+        public BazelRuleSet(
+            Rules aspectLanguage,
+            List<String> rulesetNames,
+            boolean isBundled,
+            List<String> autoloadHints,
+            List<String> hostLocations,
+            @Nullable String deprecated
+        ) {
+            this(aspectLanguage, rulesetNames, isBundled, autoloadHints, hostLocations, deprecated, null, null);
         }
     }
 

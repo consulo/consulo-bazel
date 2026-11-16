@@ -22,7 +22,9 @@ import org.jspecify.annotations.NullMarked;
  * <li>generated protobuf classes of {@code sdk/proto}. The classes are generated with the full protobuf API
  * (not lite): the plugin parses the aspect text output;</li>
  * <li>{@code com.intellij.aspect.lib}: {@code sdk/lib/*.kt} converted to Java (deploy and read the aspect);</li>
- * <li>{@code archive_ide.zip} at the module root: the aspect Starlark sources ({@code src/main/aspect}).</li>
+ * <li>{@code archive_ide.zip} at the module root: the aspect Starlark sources ({@code src/main/aspect});</li>
+ * <li>{@code config/*.textproto}: the bundled aspect definitions ({@code Aspect.AspectConfiguration} of
+ * {@code sdk/proto/aspect.proto}), read by {@code com.intellij.aspect.lib.Definition}.</li>
  * </ul>
  *
  * @author VISTALL

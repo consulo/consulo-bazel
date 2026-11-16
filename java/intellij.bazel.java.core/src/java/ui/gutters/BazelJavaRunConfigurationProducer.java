@@ -14,7 +14,7 @@ import consulo.util.lang.Pair;
 import consulo.virtualFileSystem.VirtualFile;
 import consulo.virtualFileSystem.archive.ArchiveFileSystem;
 import org.jetbrains.bazel.ui.gutters.BazelRunConfigurationProducer;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
@@ -26,7 +26,7 @@ import java.util.Map;
 public class BazelJavaRunConfigurationProducer extends BazelRunConfigurationProducer {
     @Override
     @RequiredReadAction
-    public @Nullable GutterAction getGutterAction(PsiElement element, BuildTarget target) {
+    public @Nullable GutterAction getGutterAction(PsiElement element, BuildTargetInfo target) {
         // consulo: JarFileSystem -> ArchiveFileSystem
         PsiFile containingFile = element.getContainingFile();
         VirtualFile virtualFile = containingFile != null ? containingFile.getVirtualFile() : null;

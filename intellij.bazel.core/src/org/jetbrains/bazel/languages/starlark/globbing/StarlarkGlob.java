@@ -14,9 +14,6 @@
 
 package org.jetbrains.bazel.languages.starlark.globbing;
 
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheLoader;
 import consulo.application.Application;
 import consulo.application.progress.ProgressManager;
 import consulo.bazel.languages.localize.StarlarkLocalize;
@@ -68,7 +65,7 @@ public class StarlarkGlob {
         myPathFilter = pathFilter;
     }
 
-    private final Cache<String, Pattern> myCache = createCache();
+    private final ConcurrentHashMap<String, Pattern> myCache = createCache();
 
     /**
      * Checks if given file matches the glob pattern.
@@ -421,7 +418,7 @@ public class StarlarkGlob {
     }
 
     /**
-     * Calls {@link #partMatches(String, String, Cache) matches(pattern, str, null)}
+     * Calls {@link #partMatches(String, String, ConcurrentHashMap) matches(pattern, str, null)}
      */
     public static boolean partMatches(String pattern, String str) {
         return partMatches(pattern, str, null);
@@ -431,7 +428,7 @@ public class StarlarkGlob {
         List<String> patternParts,
         String path,
         boolean excludeDirectories,
-        @Nullable Cache<String, Pattern> patternCache
+        @Nullable ConcurrentHashMap<String, Pattern> patternCache
     ) {
         int slashIndex = path.indexOf('/');
         String pathPart = slashIndex < 0 ? path : path.substring(0, slashIndex);
@@ -509,7 +506,7 @@ public class StarlarkGlob {
     private static boolean partMatches(
         String pattern,
         String str,
-        @Nullable Cache<String, Pattern> patternCache
+        @Nullable ConcurrentHashMap<String, Pattern> patternCache
     ) {
         if (pattern.isEmpty() || str.isEmpty()) {
             return false;
@@ -542,13 +539,9 @@ public class StarlarkGlob {
             return str.startsWith(pattern.substring(0, lastIndex));
         }
 
-        Pattern regex = patternCache == null ? null : patternCache.getIfPresent(pattern);
-        if (regex == null) {
-            regex = makePatternFromWildcard(pattern);
-            if (patternCache != null) {
-                patternCache.put(pattern, regex);
-            }
-        }
+        Pattern regex = patternCache != null
+            ? patternCache.computeIfAbsent(pattern, StarlarkGlob::makePatternFromWildcard)
+            : makePatternFromWildcard(pattern);
         return regex.matcher(str).matches();
     }
 
@@ -601,16 +594,7 @@ public class StarlarkGlob {
         return new Builder(path);
     }
 
-    public static Cache<String, Pattern> createCache() {
-        return CacheBuilder
-            .newBuilder()
-            .build(
-                new CacheLoader<String, Pattern>() {
-                    @Override
-                    public Pattern load(String wildcard) {
-                        return makePatternFromWildcard(wildcard);
-                    }
-                }
-            );
+    public static ConcurrentHashMap<String, Pattern> createCache() {
+        return new ConcurrentHashMap<>();
     }
 }

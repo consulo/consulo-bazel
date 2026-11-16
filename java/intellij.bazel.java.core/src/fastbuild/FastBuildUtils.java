@@ -42,7 +42,7 @@ import org.jetbrains.bazel.server.tasks.BuildTargetTask;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceHelpers;
 import org.jetbrains.bazel.sync.workspace.snapshot.WorkspaceSnapshot;
 import org.jetbrains.bazel.target.TargetStorage;
-import org.jetbrains.bsp.protocol.BuildTarget;
+import org.jetbrains.bsp.protocol.BuildTargetInfo;
 import org.jetbrains.bsp.protocol.JvmToolchainInfo;
 import org.jspecify.annotations.Nullable;
 
@@ -131,15 +131,15 @@ public final class FastBuildUtils {
         Path workspaceRoot = org.jetbrains.bazel.config.project.getRootDir(project).toNioPath();
         TargetStorage targetUtils = TargetStorage.getTargetStorage(project);
         FastBuildStatusService fastBuildService = FastBuildStatusService.getInstance(project);
-        Map<VirtualFile, BuildTarget> buildInfos = new LinkedHashMap<>();
+        Map<VirtualFile, BuildTargetInfo> buildInfos = new LinkedHashMap<>();
         for (VirtualFile file : files) {
             List<Label> targetsForFile = targetUtils.getTargetsForFile(file);
             if (targetsForFile.isEmpty()) {
                 continue;
             }
-            BuildTarget targetSummary = targetUtils.getTargetSummary(targetsForFile.get(0));
-            if (targetSummary != null) {
-                buildInfos.put(file, targetSummary);
+            BuildTargetInfo targetInfo = TargetStorage.getTargetInfo(targetUtils, targetsForFile.get(0));
+            if (targetInfo != null) {
+                buildInfos.put(file, targetInfo);
             }
         }
 
@@ -150,13 +150,13 @@ public final class FastBuildUtils {
         // consulo: the suspend loop is a chain of futures, one per entry; a thrown ExecutionException fails the chain (wrapped in a
         // CompletionException)
         CompletableFuture<?> chain = CompletableFuture.completedFuture(null);
-        for (Map.Entry<VirtualFile, BuildTarget> entry : buildInfos.entrySet()) {
+        for (Map.Entry<VirtualFile, BuildTargetInfo> entry : buildInfos.entrySet()) {
             chain = chain.thenCompose(ignored -> {
                 VirtualFile inputFile = entry.getKey();
-                Label id = BuildTarget.getId(entry.getValue());
+                Label id = entry.getValue().id();
                 String canonicalFilePath = inputFile.getCanonicalPath();
                 String canonicalWorkspaceRootPath = Objects.requireNonNull(FileUtil.toCanonicalPath(workspaceRoot.toString()));
-                if (!(canonicalFilePath != null && canonicalFilePath.startsWith(canonicalWorkspaceRootPath))) {
+                if (canonicalFilePath == null || !Path.of(canonicalFilePath).startsWith(Path.of(canonicalWorkspaceRootPath))) {
                     throw new CompletionException(
                         new ExecutionException(
                             BazelPluginLocalize.widgetFastbuildErrorWrongCanonicalPath(
@@ -187,8 +187,8 @@ public final class FastBuildUtils {
 
                 if (Files.notExists(originalParamsFile)) {
                     List<Label> ids = new ArrayList<>();
-                    for (BuildTarget it : buildInfos.values()) {
-                        ids.add(BuildTarget.getId(it));
+                    for (BuildTargetInfo it : buildInfos.values()) {
+                        ids.add(it.id());
                     }
                     BazelCoroutineService.getInstance(project).start(() -> BuildTargetTask.runBuildTargetTask(ids, project));
                     throw new CompletionException(new ExecutionException(BazelPluginLocalize.widgetFastbuildErrorParamsNotFound()));
@@ -223,7 +223,7 @@ public final class FastBuildUtils {
                                         originalParamsFile,
                                         tempDir,
                                         outputJar,
-                                        Path.of(Objects.requireNonNull(inputFile.getCanonicalPath())),
+                                        Path.of(Objects.requireNonNull(canonicalFilePath)),
                                         Path.of(canonicalWorkspaceRootPath),
                                         targetJar
                                     );

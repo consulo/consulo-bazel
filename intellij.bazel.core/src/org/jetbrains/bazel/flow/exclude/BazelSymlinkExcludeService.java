@@ -15,8 +15,7 @@ import consulo.project.Project;
 import consulo.virtualFileSystem.util.VirtualFileUtil;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import org.jetbrains.bazel.commons.symlinks.BazelSymlinksCalculator;
-import org.jetbrains.bazel.config.BazelFeatureFlags;
+import org.jetbrains.bazel.commons.symlinks.BazelConvenienceSymlinksScanner;
 import org.jetbrains.bazel.performance.BspTracer;
 import org.jetbrains.bazel.workspace.ExcludeSymlinksFromFileWatcher;
 import org.jetbrains.bazel.workspacemodel.entities.BazelProjectDirectoriesEntity;
@@ -59,7 +58,7 @@ public class BazelSymlinkExcludeService implements DumbAware, Disposable {
             "BazelSymlinkExcludeService.scanForBazelSymlinksToExclude.ms",
             () -> CompletableFuture.supplyAsync(() -> {
                 LOG.info("Scanning directory for bazel symlinks to exclude: " + bazelWorkspace);
-                return BazelSymlinksCalculator.calculateBazelSymlinksToExclude(bazelWorkspace, BazelFeatureFlags.getSymlinkScanMaxDepth());
+                return new BazelConvenienceSymlinksScanner(bazelWorkspace).scan();
             }, AppExecutorUtil.getAppExecutorService())
         );
 
