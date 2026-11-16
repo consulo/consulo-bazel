@@ -108,6 +108,7 @@ module consulo.bazel.go {
     requires consulo.nativeDev.debugger.api;
 
     exports consulo.bazel.go.localize;
+    exports consulo.bazel.go.workspace;
     exports org.jetbrains.bazel.golang;
     exports org.jetbrains.bazel.golang.coverage;
     exports org.jetbrains.bazel.golang.debug;

@@ -155,6 +155,13 @@ public final class CcWorkspaceModel {
             return myLanguageSettings.get(languageKind);
         }
 
+        /**
+         * All language settings, by language kind (read by {@link CcWorkspaceModelSerializer}).
+         */
+        public Map<FileType, CompilerSettings> getAllLanguageCompilerSettings() {
+            return Collections.unmodifiableMap(myLanguageSettings);
+        }
+
         @Override
         public String toString() {
             return "Configuration(" + myId + ", " + myName + ")";

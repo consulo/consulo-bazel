@@ -18,27 +18,35 @@ package consulo.bazel.workspace;
 import consulo.annotation.component.ComponentScope;
 import consulo.annotation.component.ServiceAPI;
 import consulo.annotation.component.ServiceImpl;
+import consulo.application.Application;
+import consulo.application.WriteAction;
 import consulo.component.persist.PersistentStateComponent;
 import consulo.component.persist.State;
 import consulo.component.persist.Storage;
 import consulo.component.persist.StoragePathMacros;
 import consulo.content.library.Library;
 import consulo.module.Module;
+import consulo.module.ModuleManager;
+import consulo.module.content.ModuleRootManager;
+import consulo.module.content.layer.ModifiableRootModel;
 import consulo.project.Project;
 import consulo.util.xml.serializer.XmlSerializerUtil;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Remembers which modules and libraries were created by Bazel sync (persisted) and holds the data of upstream custom
- * workspace entities published by the last {@link BazelModelBuilder#commit()} (in memory).
+ * Remembers which modules and libraries were created by Bazel sync (workspace file) and gives access to the data of the
+ * upstream custom workspace entities published by the last {@link BazelModelBuilder#commit()}.
+ * <p>
+ * The data is persisted, as the IntelliJ workspace model caches the upstream entities: module data in the
+ * {@link BazelModuleExtension} of the module, project and library data in {@link BazelProjectDataStorage}.
  *
  * @author VISTALL
  * @since 2026-10-24
@@ -57,11 +65,16 @@ public class BazelProjectModelService implements PersistentStateComponent<BazelP
         return project.getInstance(BazelProjectModelService.class);
     }
 
+    private final Project myProject;
+    private final BazelProjectDataStorage myDataStorage;
+
     private State myState = new State();
 
-    private volatile Map<Class<?>, Object> myProjectData = Map.of();
-    private volatile Map<String, Map<Class<?>, Object>> myModuleData = Map.of();
-    private volatile Map<String, Map<Class<?>, Object>> myLibraryData = Map.of();
+    @Inject
+    public BazelProjectModelService(Project project, BazelProjectDataStorage dataStorage) {
+        myProject = project;
+        myDataStorage = dataStorage;
+    }
 
     public List<String> getOwnedModuleNames() {
         return List.copyOf(myState.modules);
@@ -76,18 +89,40 @@ public class BazelProjectModelService implements PersistentStateComponent<BazelP
     }
 
     public <T> @Nullable T getProjectData(Class<T> type) {
-        return type.cast(myProjectData.get(type));
+        return myDataStorage.getProjectData(type);
     }
 
     public <T> @Nullable T getModuleData(Module module, Class<T> type) {
-        Map<Class<?>, Object> data = myModuleData.get(module.getName());
-        return data == null ? null : type.cast(data.get(type));
+        BazelModuleExtension extension = ModuleRootManager.getInstance(module).getExtension(BazelModuleExtensionProvider.ID);
+        return extension == null ? null : extension.getData(type);
     }
 
     public <T> @Nullable T getLibraryData(Library library, Class<T> type) {
         String name = library.getName();
-        Map<Class<?>, Object> data = name == null ? null : myLibraryData.get(name);
-        return data == null ? null : type.cast(data.get(type));
+        return name == null ? null : myDataStorage.getLibraryData(name, type);
+    }
+
+    /**
+     * Whether the Bazel data of the project was restored from disk, complete and written by the current plugin version
+     * (upstream: the workspace model was loaded from its cache). False before the first sync, after a failed restore and
+     * when a module of the last sync lost its data.
+     */
+    public boolean isLoadedFromCache() {
+        if (!myDataStorage.isLoadedFromCache()) {
+            return false;
+        }
+        ModuleManager moduleManager = ModuleManager.getInstance(myProject);
+        for (String name : myState.modules) {
+            Module module = moduleManager.findModuleByName(name);
+            if (module == null) {
+                continue;
+            }
+            BazelModuleExtension extension = ModuleRootManager.getInstance(module).getExtension(BazelModuleExtensionProvider.ID);
+            if (extension != null && !extension.isComplete()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -97,42 +132,49 @@ public class BazelProjectModelService implements PersistentStateComponent<BazelP
      * TODO consulo: Consulo has no public API to fire a roots change, so file index contributors and exclude policies
      * reading this data see the new value on the next roots change
      */
-    public synchronized <T> void putProjectData(Class<T> type, T data) {
-        Map<Class<?>, Object> copy = new HashMap<>(myProjectData);
-        copy.put(type, data);
-        myProjectData = Map.copyOf(copy);
+    public <T> void putProjectData(Class<T> type, T data) {
+        myDataStorage.putProjectData(type, data);
     }
 
     /**
      * Replaces one data value of a module outside a sync (upstream modifies the module entity with
-     * {@code WorkspaceModel.update}), see {@link #putProjectData}
+     * {@code WorkspaceModel.update}): the {@link BazelModuleExtension} of the module is changed with a root model commit,
+     * right away in a write action, otherwise in a later write action.
      */
-    public synchronized <T> void putModuleData(Module module, Class<T> type, T data) {
-        Map<String, Map<Class<?>, Object>> copy = new HashMap<>(myModuleData);
-        Map<Class<?>, Object> moduleCopy = new HashMap<>(copy.getOrDefault(module.getName(), Map.of()));
-        moduleCopy.put(type, data);
-        copy.put(module.getName(), Map.copyOf(moduleCopy));
-        myModuleData = Map.copyOf(copy);
+    public <T> void putModuleData(Module module, Class<T> type, T data) {
+        Runnable update = () -> {
+            if (module.isDisposed()) {
+                return;
+            }
+            ModifiableRootModel model = ModuleRootManager.getInstance(module).getModifiableModel();
+            BazelMutableModuleExtension extension = model.getExtensionWithoutCheck(BazelModuleExtensionProvider.ID);
+            if (extension == null) {
+                model.dispose();
+                return;
+            }
+            extension.setEnabled(true);
+            extension.putData(type, data);
+            model.commit();
+        };
+        if (Application.get().isWriteAccessAllowed()) {
+            update.run();
+        }
+        else {
+            WriteAction.runLater(update);
+        }
     }
 
     void update(
         Collection<String> modules,
         Collection<String> libraries,
         Map<Class<?>, Object> projectData,
-        Map<String, Map<Class<?>, Object>> moduleData,
         Map<String, Map<Class<?>, Object>> libraryData
     ) {
         State state = new State();
         state.modules = new ArrayList<>(modules);
         state.libraries = new ArrayList<>(libraries);
         myState = state;
-        myProjectData = Map.copyOf(projectData);
-        Map<String, Map<Class<?>, Object>> copy = new HashMap<>();
-        moduleData.forEach((name, data) -> copy.put(name, Map.copyOf(data)));
-        myModuleData = Map.copyOf(copy);
-        Map<String, Map<Class<?>, Object>> libraryCopy = new HashMap<>();
-        libraryData.forEach((name, data) -> libraryCopy.put(name, Map.copyOf(data)));
-        myLibraryData = Map.copyOf(libraryCopy);
+        myDataStorage.update(projectData, libraryData);
     }
 
     @Override

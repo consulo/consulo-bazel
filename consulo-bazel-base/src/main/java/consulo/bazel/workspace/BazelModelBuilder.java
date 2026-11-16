@@ -46,8 +46,9 @@ import java.util.Set;
  * created here is owned by Bazel. {@link #commit()} applies everything in one write action and removes the Bazel-owned
  * modules and libraries of the previous sync that were not created again, which is what upstream's
  * {@code replaceBySource(BazelEntitySource)} does. Data of the upstream custom workspace entities (which have no
- * classic counterpart) is collected with {@link #putProjectData} / {@link #putModuleData} and published to
- * {@link BazelProjectModelService} on commit.
+ * classic counterpart) is collected with {@link #putProjectData} / {@link #putModuleData} / {@link #putLibraryData} and
+ * published on commit: module data in the {@link BazelModuleExtension} of the module, project and library data in
+ * {@link BazelProjectDataStorage}; both are saved with the project and restored when it opens.
  *
  * @author VISTALL
  * @since 2026-10-24
@@ -226,14 +227,31 @@ public final class BazelModelBuilder {
             }
         }
 
+        // module data goes into the BazelModuleExtension of the module and is committed (and saved) with its root model;
+        // a module filled by this sync starts with a cleared root model, so the data of the previous sync is gone
+        for (Map.Entry<String, Map<Class<?>, Object>> entry : myModuleData.entrySet()) {
+            Module module = myModuleModel.findModuleByName(entry.getKey());
+            if (module == null) {
+                continue;
+            }
+            ModifiableRootModel model = myRootModels.computeIfAbsent(module, it -> ModuleRootManager.getInstance(it).getModifiableModel());
+            BazelMutableModuleExtension extension = model.getExtensionWithoutCheck(BazelModuleExtensionProvider.ID);
+            if (extension != null) {
+                extension.setEnabled(true);
+                extension.setData(entry.getValue());
+            }
+        }
+
+        // consulo: published before the roots change of the commit, so that exclude policies and indexable set contributors
+        // see the new project data when the commit fires it (upstream replaces the whole entity storage at once)
+        modelService.update(myModuleNames, myLibraryNames, myProjectData, myLibraryData);
+
         for (Library.ModifiableModel model : myLibraryModels.values()) {
             model.commit();
         }
         myLibraryModel.commit();
 
         ModifiableModelCommitter.getInstance(myProject).multiCommit(myRootModels.values().toArray(ModifiableRootModel[]::new), myModuleModel);
-
-        modelService.update(myModuleNames, myLibraryNames, myProjectData, myModuleData, myLibraryData);
     }
 
     /**

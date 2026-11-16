@@ -98,8 +98,11 @@ public class BazelStartupActivity extends BazelProjectActivity {
         TargetStorage targetStorage = project.getInstance(TargetStorage.class);
         return targetStorage.awaitLoaded().thenApply(unused ->
             targetStorage.getTotalTargetCount() == 0 ||
-                // consulo: upstream checks that the IntelliJ workspace model was loaded from its cache; the Bazel data of the
-                // classic project model (BazelProjectModelService) is kept in memory, so it is missing after a restart
+                // consulo: upstream !(WorkspaceModel as WorkspaceModelImpl).loadedFromCache, i.e. the Bazel entities of the last
+                // sync were not restored. Here: the Bazel data of the classic project model (module extensions and
+                // BazelProjectDataStorage) was not restored complete and of this plugin version, or it has no
+                // BazelProjectDirectoriesEntity (the project was never synced)
+                !BazelProjectModelService.getInstance(project).isLoadedFromCache() ||
                 BazelProjectModelService.getInstance(project).getProjectData(BazelProjectDirectoriesEntity.class) == null ||
                 !bazelExecPathExists(project)
         );

@@ -116,6 +116,7 @@ module consulo.bazel.base {
     exports consulo.bazel.documentation;
     exports consulo.bazel.projectview;
     exports consulo.bazel.workspace;
+    exports consulo.bazel.workspace.serializer;
 
     exports org.jetbrains.bazel.languages;
     exports org.jetbrains.bazel.languages.bazelquery;

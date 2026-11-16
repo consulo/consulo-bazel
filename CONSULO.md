@@ -166,8 +166,23 @@ by hand.
 - Ownership is persisted by `consulo.bazel.workspace.BazelProjectModelService` (workspace file).
 - Upstream custom entities (`workspacemodel/entities`, `CcToolchainCompilerInfoEntity`, ...) become plain records with
   the upstream names. Their data is attached with `BazelModelBuilder.putProjectData/putModuleData/putLibraryData` and
-  read through `BazelProjectModelService` (accessors like `extensions.getBazelModuleExtension(module)`). This data is
-  kept in memory, rebuilt by every sync. TODO: persist or rebuild it from the persisted workspace snapshot on startup.
+  read through `BazelProjectModelService` (accessors like `extensions.getBazelModuleExtension(module)`). The data is
+  persisted, as the IntelliJ workspace model caches the upstream entities:
+  - module data in the Consulo-only module extension `consulo.bazel.workspace.BazelModuleExtension` (id `bazel`, system
+    only: not editable in the module settings), enabled and filled by `BazelModelBuilder.commit()` and saved with the module;
+  - project data and library data (by library name) in `consulo.bazel.workspace.BazelProjectDataStorage`
+    (`.consulo/bazelProjectData.xml`, not roamed).
+  Every stored type needs a `consulo.bazel.workspace.BazelDataSerializer` (`@ExtensionAPI`), registered by the library
+  that owns the type (base: `consulo.bazel.workspace.serializer`, Go: `consulo.bazel.go.workspace`, C/C++:
+  `consulo.bazel.cpp.workspace`). Records of strings, primitives, enums, collections, other records and `OutputLocation`
+  extend `BazelRecordDataSerializer` (`BazelRecordXml`, reflection over public records of exported packages, no `opens`);
+  types holding IDE objects get a hand-written serializer (`CcWorkspaceModelSerializer` writes file type and compiler
+  kind ids and rebuilds the model through its API; `GoPackageEntitiesSerializer` writes the entity records and rebuilds the
+  lookup maps). A `data` element without a serializer (its language plugin is not installed) is kept as unknown XML and
+  written back. The XML carries a format version, the plugin version and a `complete` flag (false when a value had no
+  serializer or could not be written or read); a mismatch or an error drops the data and the project resyncs.
+  The data is restored when the module and the storage service load, before any reader, so a restore needs no roots
+  change. `BazelModelBuilder.commit()` publishes the project and library data before its roots change.
 - `VirtualFileUrl` -> VFS url `String`; `VirtualFileUrlManager` is dropped.
 - `WorkspaceFileIndexContributor` -> `IndexableSetContributor` (indexable roots) + `DirectoryIndexExcludePolicy`
   (excluded roots). Upstream's "content but not indexable" project root (`CONTENT_NON_INDEXABLE`) has no classic
@@ -200,8 +215,9 @@ by hand.
   `CompilerRunner` that builds the targets of the affected modules; `ProjectTaskContext` is the `CompileContext`.
 - `ModuleEntity` in core APIs (`ModuleTargetService`, `TargetsToBuildProvider`) is the classic `Module`; indexes over the
   entity storage are `CachedValue`s that depend on `ProjectRootManager`.
-- Startup resync: upstream resyncs when the workspace model was not loaded from its cache; here, when the in-memory
-  Bazel project data (`BazelProjectDirectoriesEntity`) is missing, i.e. after every restart until that data is persisted.
+- Startup resync: upstream resyncs when the workspace model was not loaded from its cache; here, when the persisted Bazel
+  data was not restored complete and of the current plugin version (`BazelProjectModelService.isLoadedFromCache()`), or
+  has no `BazelProjectDirectoriesEntity`.
 - Documentation: the Consulo-only bridge `consulo.bazel.documentation` also has `DocumentationSymbol`,
   `PsiDocumentationTargetProvider`, `DocumentationLinkHandler` and `LinkResolveResult`; references to symbols resolve
   to `BazelDocumentationElement`. One `BazelDocumentationProviderBase` subclass per language

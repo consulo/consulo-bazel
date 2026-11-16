@@ -310,6 +310,8 @@ jvm.run.handler.name:
     text: "JVM Run Handler"
 jvm.test.handler.name:
     text: "JVM Test Handler"
+module.extension.bazel.name:
+    text: "Bazel"
 notification.unresolved.imports:
     text: "Unresolved imports detected"
 notificationGroup.Bazel.title:
