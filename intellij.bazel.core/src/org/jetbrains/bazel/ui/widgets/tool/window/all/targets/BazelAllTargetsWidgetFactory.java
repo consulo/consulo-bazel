@@ -38,10 +38,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 @ExtensionImpl
@@ -176,10 +179,10 @@ public class BazelAllTargetsWidgetFactory implements
         private final ExecutorService myExecutor =
             Application.get().getInstance(ApplicationConcurrency.class).createSequentialApplicationPoolExecutor("BazelAllTargetsWidget");
         private final AtomicBoolean myScheduled = new AtomicBoolean();
-        private volatile @Nullable Runnable myCollector;
+        private volatile @Nullable Supplier<CompletableFuture<?>> myCollector;
         private volatile boolean myDisposed;
 
-        void setCollector(Runnable collector) {
+        void setCollector(Supplier<CompletableFuture<?>> collector) {
             myCollector = collector;
         }
 
@@ -202,10 +205,18 @@ public class BazelAllTargetsWidgetFactory implements
             );
         }
 
+        // consulo: like the upstream collector, which suspends until the panel is updated, wait for each update, so the updates are
+        // applied in order: they all depend on the panel future, which runs its dependents in reverse order once it completes,
+        // and an update of an older snapshot (e.g. the empty one before the persisted snapshot is loaded) must not win
         private void collect() {
-            Runnable collector = myCollector;
+            Supplier<CompletableFuture<?>> collector = myCollector;
             if (!myDisposed && collector != null) {
-                collector.run();
+                try {
+                    collector.get().join();
+                }
+                catch (CompletionException | CancellationException e) {
+                    LOG.warn(e);
+                }
             }
         }
 
