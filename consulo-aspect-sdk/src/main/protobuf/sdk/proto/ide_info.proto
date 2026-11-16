@@ -325,6 +325,43 @@ message RustCrateInfo {
   repeated string cfg_options = 1001;
 }
 
+// Consulo fork: .NET (rules_dotnet) assembly information, see modules/dotnet_info.bzl.
+// The aspect does not resolve the rules_dotnet toolchain type (that would download
+// the .NET SDK for every workspace), `dotnet` is read from the compile action.
+message DotNetAssemblyInfo {
+  // DotnetAssemblyCompileInfo.name
+  string assembly_name = 1;
+  // "csharp", "fsharp" or "vb" (from the rule kind)
+  string language = 2;
+  // resolved target framework, e.g. "net8.0"
+  string target_framework = 3;
+  // srcs, including external ones like the shim of csharp_nunit_test
+  repeated ArtifactLocation sources = 4;
+  // reference assemblies of the targeting pack
+  repeated ArtifactLocation framework_references = 5;
+  // reference assemblies of direct deps / exports that are not rules_dotnet
+  // compile rules (NuGet import_library etc.)
+  repeated ArtifactLocation package_references = 6;
+  // `defines` attribute
+  repeated string defines = 7;
+  // `langversion` attribute, empty for the default
+  string language_version = 8;
+  // `nullable` attribute
+  string nullable = 9;
+  bool allow_unsafe_blocks = 10;
+  // the built assembly (DotnetBinaryInfo.dll for binaries and tests, else the
+  // runtime lib of the target)
+  ArtifactLocation assembly = 11;
+  ArtifactLocation pdb = 12;
+  repeated string internals_visible_to = 13;
+  string project_sdk = 14;
+  // binary or test
+  bool executable = 15;
+  // the dotnet executable of the CSharpCompile/FSharpCompile action (hermetic
+  // SDK), if found
+  ArtifactLocation dotnet = 16;
+}
+
 message TestInfo {
   string size = 1;
 }
@@ -408,4 +445,5 @@ message TargetIdeInfo {
 
   // Consulo fork
   RustCrateInfo rust_crate_info = 1000;
+  DotNetAssemblyInfo dotnet_assembly_info = 1001;
 }

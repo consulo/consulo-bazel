@@ -46,6 +46,7 @@ _IntelliJKotlinInfo = _create_module_provider()
 _IntelliJScalaInfo = _create_module_provider()
 _IntelliJGoInfo = _create_module_provider()
 _IntelliJRustInfo = _create_module_provider()  # Consulo fork: rules_rust
+_IntelliJDotNetInfo = _create_module_provider()  # Consulo fork: rules_dotnet
 _IntelliJPyInfo = _create_module_provider()  # used by CLwB
 _IntelliJPythonInfo = _create_module_provider()  # used by the JB plugin
 _IntelliJLegacyRulesProtoInfo = _create_module_provider()  # used for legacy rules_proto
@@ -70,6 +71,7 @@ _ORDERED = [
     _IntelliJJvmInfo,
     _IntelliJGoInfo,
     _IntelliJRustInfo,
+    _IntelliJDotNetInfo,
     _IntelliJPyInfo,
     _IntelliJPythonInfo,
     _IntelliJLegacyRulesProtoInfo,
@@ -104,6 +106,7 @@ intellij_provider = struct(
     ScalaInfo = _IntelliJScalaInfo,
     GoInfo = _IntelliJGoInfo,
     RustInfo = _IntelliJRustInfo,
+    DotNetInfo = _IntelliJDotNetInfo,
     PyInfo = _IntelliJPyInfo,
     PythonInfo = _IntelliJPythonInfo,
     LegacyRulesProtoInfo = _IntelliJLegacyRulesProtoInfo,

@@ -7,11 +7,18 @@ The Starlark sources in this directory, and the protos in `../protobuf/sdk/proto
 (`git_override` of `intellij_aspect_sdk`). Always vendor the commit that `MODULE.bazel` pins, so the aspect output
 matches what the ported plugin code reads.
 
-Our fork adds Rust on top of that commit (fork commit `edbec1d`, "Merge intellij-aspect 326afd3c", over `2ee9e50`
-"Add the Rust module"): `modules/rust_info.bzl`, `RustInfo` in `common/provider.bzl`, `rust_info` in the `MODULES` of
-`intellij/modules.bzl`, the `RustCrateInfo` / `RustToolchainInfo` / `RustCrateLocation` messages and the
-`rust_crate_info = 1000` field in `ide_info.proto`, and `Rules.RUST` in the SDK library (`aspectchoice.kt`). Vendor
-the fork commit that merged the pinned upstream commit, not upstream itself, or the Rust module is lost.
+Our fork adds Rust and .NET on top of that commit (fork commit `da9dd3a`, "Add the .NET module", over `edbec1d`
+"Merge intellij-aspect 326afd3c", which merged `2ee9e50` "Add the Rust module"):
+
+- Rust: `modules/rust_info.bzl`, `RustInfo` in `common/provider.bzl`, `rust_info` in the `MODULES` of
+  `intellij/modules.bzl`, the `RustCrateInfo` / `RustToolchainInfo` / `RustCrateLocation` messages and the
+  `rust_crate_info = 1000` field in `ide_info.proto`, and `Rules.RUST` in the SDK library (`aspectchoice.kt`).
+- .NET (rules_dotnet): `modules/dotnet_info.bzl`, `DotNetInfo` in `common/provider.bzl`, `dotnet_info` in the
+  `MODULES` of `intellij/modules.bzl`, the `DotNetAssemblyInfo` message and the `dotnet_assembly_info = 1001` field in
+  `ide_info.proto`, and `Rules.DOTNET` in the SDK library (`aspectchoice.kt`).
+
+Vendor the fork commit that merged the pinned upstream commit (or a later fork commit on top of it), not upstream
+itself, or the fork modules are lost.
 
 They are the inputs of upstream's `//:archive_ide` target (`pkg_zip` of the `aspect_lib` targets `//common`,
 `//intellij` and `//modules`). The Maven build (`maven-antrun-plugin`, `generate-resources`) zips this directory

@@ -14,6 +14,7 @@
 
 load("//modules:cc_info.bzl", cc_info = "module")
 load("//modules:cc_toolchain_info.bzl", cc_toolchain_info = "module")
+load("//modules:dotnet_info.bzl", dotnet_info = "module")
 load("//modules:extra_rules_info.bzl", extra_rules_info = "module")
 load("//modules:foreign_cc_info.bzl", foreign_cc = "module")
 load("//modules:go_info.bzl", go_info = "module")
@@ -47,6 +48,7 @@ MODULES = [
     scala_info,
     go_info,
     rust_info,
+    dotnet_info,
     py_info,
     python_info,
     protobuf_info,

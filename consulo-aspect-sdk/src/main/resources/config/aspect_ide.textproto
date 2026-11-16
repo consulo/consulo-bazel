@@ -60,6 +60,10 @@ modules {
   rulesets: "RUST"
 }
 modules {
+  file: "dotnet_info"
+  rulesets: "DOTNET"
+}
+modules {
   file: "py_info"
   rulesets: "PYTHON"
 }

@@ -415,5 +415,10 @@ Rules for our changes in the fork:
 - Rust: `modules/rust_info.bzl` (fork commits `2ee9e50`, merged with upstream `326afd3c` in `edbec1d`) reads the crate from
   rules_rust's `CrateInfo` and the toolchain from the crate's own `Rustc` action instead of toolchain resolution, so a
   workspace without Rust does not download the Rust toolchain. `consulo-aspect-sdk` vendors the fork commit.
+- .NET: `modules/dotnet_info.bzl` (fork commit `da9dd3a`, on top of `edbec1d`) reads the assembly from rules_dotnet's
+  `DotnetAssemblyCompileInfo` / `DotnetAssemblyRuntimeInfo` / `DotnetBinaryInfo`, the framework reference assemblies
+  from the target's targeting pack and the `dotnet` executable from the target's own `CSharpCompile` / `FSharpCompile`
+  action instead of toolchain resolution, so a workspace without .NET does not download the .NET SDK.
+  `consulo-aspect-sdk` vendors the fork commit.
 - Our new fields in `ide_info.proto` use field numbers **1000 and up**, so they never clash with upstream.
 - Bug fixes are also sent upstream as pull requests, so our diff shrinks over time.
