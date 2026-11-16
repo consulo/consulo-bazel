@@ -1,5 +1,6 @@
 package org.jetbrains.bazel.assets;
 
+import consulo.platform.base.icon.PlatformIconGroup;
 import consulo.bazel.core.icon.BazelPluginIconGroup;
 import consulo.ui.image.Image;
 
@@ -38,9 +39,11 @@ public final class BazelPluginIcons {
         return BazelPluginIconGroup.bazelwarning();
     }
 
-    // consulo: upstream references these two by path in intellij.bazel.core.xml (icon="/icons/resync.svg", "/icons/buildAndResync.svg")
+    // consulo: upstream references these two by path in intellij.bazel.core.xml (icon="/icons/resync.svg", "/icons/buildAndResync.svg").
+    //   Upstream's resync.svg is the old-UI filled refresh glyph without a new-UI mapping; the platform refresh icon is the same action
+    //   in the new-UI style
     public static Image resync() {
-        return BazelPluginIconGroup.resync();
+        return PlatformIconGroup.actionsRefresh();
     }
 
     public static Image buildAndResync() {
