@@ -96,8 +96,7 @@ final class BazelPythonImportCompletionProvider implements CompletionProvider {
                 item = psiManager.findFile(virtualFile);
             }
             if (item instanceof PsiFileSystemItem fileSystemItem) {
-                // consulo: the Consulo PyModuleType.buildFileLookupElement has no `originalFile` parameter
-                LookupElementBuilder lookupElement = PyModuleType.buildFileLookupElement(fileSystemItem, existingNames);
+                LookupElementBuilder lookupElement = PyModuleType.buildFileLookupElement(parameters.getOriginalFile(), fileSystemItem, existingNames);
                 if (lookupElement != null) {
                     result.addElement(lookupElement);
                 }

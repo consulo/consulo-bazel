@@ -1,7 +1,6 @@
 package com.intellij.bazel.python.backend;
 
 import com.jetbrains.python.impl.codeInsight.imports.AutoImportQuickFix;
-import com.jetbrains.python.impl.codeInsight.imports.ImportFromExistingAction;
 import com.jetbrains.python.impl.codeInsight.imports.PyImportCandidateProvider;
 import com.jetbrains.python.impl.psi.PyUtil;
 import com.jetbrains.python.impl.psi.search.PyProjectScopeBuilder;
@@ -85,9 +84,8 @@ public class BazelPyImportCandidateProvider implements PyImportCandidateProvider
 
             // If it's a single-file source root, the candidate file must be its parent.
             // Otherwise, the generated import will be just "import symbol" without its qualified path
-            // consulo: IntelliJ PyUtil.isRoot -> ImportFromExistingAction.isRoot (the same check in Consulo)
             PsiFileSystemItem candidateFile;
-            if (ImportFromExistingAction.isRoot(containingFile)) {
+            if (PyUtil.isRoot(containingFile)) {
                 PsiDirectory parent = containingFile.getParent();
                 candidateFile = parent != null ? parent : containingFile;
             }

@@ -1,7 +1,7 @@
 package com.intellij.bazel.python.backend;
 
 import com.jetbrains.python.psi.impl.PyImportResolver;
-import com.jetbrains.python.psi.resolve.QualifiedNameResolveContext;
+import com.jetbrains.python.psi.resolve.PyQualifiedNameResolveContext;
 import consulo.annotation.component.ExtensionImpl;
 import consulo.application.ReadAction;
 import consulo.language.psi.PsiElement;
@@ -17,12 +17,11 @@ import java.util.Map;
 
 @ExtensionImpl
 public class BazelPyImportResolver implements PyImportResolver {
-    // consulo: the Consulo PyImportResolver has no `withRoots` parameter (upstream does not use it) and takes a
-    // QualifiedNameResolveContext (IntelliJ PyQualifiedNameResolveContext)
     @Override
     public @Nullable PsiElement resolveImportReference(
         QualifiedName name,
-        QualifiedNameResolveContext context
+        PyQualifiedNameResolveContext context,
+        boolean withRoots
     ) {
         if (!org.jetbrains.bazel.config.project.isBazelProject(context.getProject())) {
             return null;
@@ -53,7 +52,7 @@ public class BazelPyImportResolver implements PyImportResolver {
      * Root import is an absolute import, whose qualified name aligns with the project file structure.
      * For example {@code import aaa.bbb.ccc} that references {@code aaa/bbb/ccc.py} file or {@code aaa/bbb/ccc} directory.
      */
-    private @Nullable PsiElement resolveRootImport(QualifiedName name, QualifiedNameResolveContext context) {
+    private @Nullable PsiElement resolveRootImport(QualifiedName name, PyQualifiedNameResolveContext context) {
         // VirtualFile.findFileByRelativePath always expects a slash ("/"), even on Windows
         String relativeToRoot = String.join("/", name.getComponents());
         return ReadAction.compute(() -> findDirectoryOrPythonFile(relativeToRoot, context));
@@ -78,7 +77,7 @@ public class BazelPyImportResolver implements PyImportResolver {
      * The paragraph above mentions looking "for each directory",
      * but this function is only responsible for looking in one (the project root).
      */
-    private @Nullable PsiElement findDirectoryOrPythonFile(String pathRelativeToRoot, QualifiedNameResolveContext context) {
+    private @Nullable PsiElement findDirectoryOrPythonFile(String pathRelativeToRoot, PyQualifiedNameResolveContext context) {
         VirtualFile rootDir = org.jetbrains.bazel.config.project.getRootDir(context.getProject());
         PsiManager psiManager = context.getPsiManager();
         VirtualFile directory = directoryOrNull(rootDir.findFileByRelativePath(pathRelativeToRoot));
@@ -113,7 +112,7 @@ public class BazelPyImportResolver implements PyImportResolver {
         }
     }
 
-    private @Nullable PsiElement resolveShortImport(QualifiedName name, QualifiedNameResolveContext context) {
+    private @Nullable PsiElement resolveShortImport(QualifiedName name, PyQualifiedNameResolveContext context) {
         Map<QualifiedName, Path> sourcesIndex = context.getProject().getInstance(PythonResolveIndexService.class).getResolveIndex();
         Path path = sourcesIndex.get(name);
         if (path == null) {

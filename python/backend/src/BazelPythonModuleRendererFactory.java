@@ -75,9 +75,8 @@ public class BazelPythonModuleRendererFactory /* : ModuleRendererFactory() */ {
     }
 
     private static @Nullable String getBazelPackageForFile(PyElement receiver, PsiFile containingFile) {
-        // consulo: the Consulo PyElementPresentation.getPackageForFile returns "" instead of null when there is no package
         String nativePackage = PyElementPresentation.getPackageForFile(containingFile);
-        if (!nativePackage.isEmpty()) {
+        if (nativePackage != null) {
             return nativePackage;
         }
 
